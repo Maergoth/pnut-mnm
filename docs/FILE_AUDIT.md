@@ -13,6 +13,7 @@ Parses, Navigation, und Timers. Reviewed October 5, 2026, for public publication
 | `mnmparse/app/probe.py` | Optional `--probe-stalls` diagnostics used by the desktop application. |
 | `PNUT M&M.cmd`, `make_shortcut.ps1` | Desktop source launcher and shortcut installer. `run.cmd` starts the CLI, so these launchers are not duplicates. |
 | `mnmparser.spec`, `build_exe.ps1`, `requirements.txt` | Reproducible executable build and pinned runtime dependencies. PyInstaller is a separate build dependency documented in `requirements.txt`. |
+| `scripts/package_release.py`, `mnmparse/app/smoke.py` | Validate the actual frozen executable and the extracted release ZIP before publication. |
 | `config.example.json`, `cc.json` | Portable settings documentation and crowd-control registry. Never substitute personal `config.json` or `triggers.json`. |
 | `mnmparse/trigger_presets.py` | Portable starter triggers, including their stable identities. Personal edits remain in ignored `triggers.json`. |
 | `assets/icon.ico`, `mnmparse/app/icon.py` | Windows executable/shortcut resource and its generator. Although reproducible, keeping the icon makes builds and shortcuts straightforward. |

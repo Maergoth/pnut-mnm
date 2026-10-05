@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import glob
 import os
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -23,6 +24,15 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = Path(SPECPATH).resolve()
 APP_NAME = "PNUT M&M"
 ICON = ROOT / "assets" / "icon.ico"
+
+# Resolve native dependencies against this Python installation and Windows, never
+# unrelated programs in the caller's PATH. In particular, Qt uses Windows' ICU:
+# a Poppler/Conda ICU with the same filename has incompatible versioned exports.
+# Keep this in the spec so direct PyInstaller builds get the same isolation.
+windows = Path(os.environ["SystemRoot"])
+os.environ["PATH"] = os.pathsep.join(str(p) for p in (
+    Path(sys.prefix) / "Scripts", Path(sys.base_prefix), windows / "System32", windows,
+))
 
 # ---------------------------------------------------------------------------
 # Hidden imports: the winrt projection modules are imported lazily inside ocr.py and the
@@ -197,7 +207,7 @@ def _keep(entry: tuple) -> bool:
 
 
 a.binaries = [b for b in a.binaries if _keep(b)]
-a.datas = [d for d in a.datas if _keep(d)]
+a.datas = [d for d in a.datas if _keep(d) and Path(d[0]).name != "direct_url.json"]
 
 pyz = PYZ(a.pure)
 

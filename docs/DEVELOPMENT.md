@@ -2,6 +2,23 @@
 
 [User guide](../README.md) · [File audit](FILE_AUDIT.md)
 
+### Building and publishing Windows releases
+
+Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
+searches to the selected Python environment and Windows; third-party tools in the
+caller's PATH must never supply DLLs to the app. Version 0.1.0 accidentally collected a
+Poppler ICU library whose exports were incompatible with the Windows ICU expected by Qt.
+
+The build script must pass the produced executable's `--smoke-test --report PATH` check.
+It creates temporary offscreen windows and settings without game capture. A successful
+PyInstaller build or a process that remains alive is not sufficient validation: a crash
+dialog can keep a failed process alive too.
+
+Then run `.venv\Scripts\python.exe scripts/package_release.py`. It creates the versioned
+ZIP under `dist/releases/`, extracts it into a temporary directory, and runs that extracted
+EXE with a minimal Windows PATH. Publish only the ZIP and its `.sha256` file after this
+check passes. Machine-specific install metadata and smoke reports are not release assets.
+
 
 ### Repository map
 

@@ -68,6 +68,11 @@ code-signed, so the first time Windows SmartScreen may say "Windows protected yo
 (`triggers.json`), logs and learned spellings (`logs\`) are created next to the exe and are never
 part of a download, so to update, unzip a newer release over the same folder.
 
+**Updating from 0.1.0:** replace the entire `_internal` folder, or extract 0.1.1 or later
+into a fresh folder. Merging files alone leaves an incompatible DLL from 0.1.0 behind and
+can still cause the QtCore startup error. Preserve your `config.json`, `triggers.json`,
+and `logs` when updating.
+
 **From source.** With Python 3.14 installed:
 
 ```
