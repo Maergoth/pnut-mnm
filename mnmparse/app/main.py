@@ -1820,6 +1820,10 @@ class App(QApplication):
         if self.window is not None:
             self.window.prepare_quit()
             self.window.save_state()
+        # QApplication.quit() closes windows before emitting aboutToQuit. Freeze
+        # preferences first so those hide events cannot turn an open map into a
+        # saved "closed" map on the next launch (including an update restart).
+        self.shutdown()
         self.quit()
 
     def shutdown(self) -> None:
