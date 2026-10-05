@@ -152,22 +152,103 @@ class MapWindowTests(unittest.TestCase):
             self.window._hide_header()
         self.assertFalse(self.window.header.isVisible())
 
-    def test_frameless_window_retains_native_resize_and_move(self):
+    def test_edges_resize_only_when_unlocked(self):
         from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
         from PySide6.QtGui import QMouseEvent
         from unittest.mock import Mock
         self.window.show()
         handle = Mock()
         with patch.object(self.window, "windowHandle", return_value=handle):
-            for point, watched in ((QPoint(1, 100), self.window.view.viewport()),
-                                   (QPoint(100, 6), self.window.header)):
-                event = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(point),
-                                   QPointF(self.window.mapToGlobal(point)),
-                                   Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
-                                   Qt.KeyboardModifier.NoModifier)
-                self.window.eventFilter(watched, event)
+            point = QPoint(1, 100)
+            event = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(point),
+                               QPointF(self.window.mapToGlobal(point)),
+                               Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                               Qt.KeyboardModifier.NoModifier)
+            self.window.set_locked(True)
+            self.window.eventFilter(self.window.view.viewport(), event)
+            handle.startSystemResize.assert_not_called()
+            self.window.set_locked(False)
+            self.window.eventFilter(self.window.view.viewport(), event)
         handle.startSystemResize.assert_called_once_with(Qt.Edge.LeftEdge)
-        handle.startSystemMove.assert_called_once_with()
+
+    def test_drag_anchor_moves_window_and_saves_position_without_native_move(self):
+        from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        self.window.show()
+        self.window.set_locked(False)
+        self.window._show_header()
+        self.app.processEvents()
+        grip = self.window.drag_handle
+        self.assertTrue(grip.isVisible())
+        origin = self.window.pos()
+        start = grip.mapToGlobal(grip.rect().center())
+        def mouse(kind, position, button, buttons):
+            event = QMouseEvent(kind, QPointF(grip.mapFromGlobal(position)), QPointF(position),
+                               button, buttons, Qt.KeyboardModifier.NoModifier)
+            self.app.sendEvent(grip, event)
+        mouse(QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, start + QPoint(80, 40), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.window.pos(), origin + QPoint(80, 40))
+        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+            self.window._hide_header()
+        self.assertTrue(self.window.header.isVisible())
+        mouse(QEvent.Type.MouseMove, start + QPoint(120, 70), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, start + QPoint(120, 70), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+        self.assertEqual(self.window.pos(), origin + QPoint(120, 70))
+        self.assertEqual(self.settings.value("map/geometry").topLeft(), self.window.pos())
+        self.assertIsNone(self.window._drag_offset)
+        self.window.set_locked(True)
+        self.assertFalse(grip.isVisible())
+        self.window._begin_drag(grip, start)
+        self.assertIsNone(self.window._drag_offset)
+
+    def test_lock_during_drag_cancels_grab_and_fullscreen_hides_anchor(self):
+        self.window.show()
+        self.window.set_locked(False)
+        self.window._show_header()
+        self.window._begin_drag(self.window.drag_handle, self.window.pos())
+        self.window.set_locked(True)
+        self.assertIsNone(self.window._drag_offset)
+        self.assertFalse(self.window.drag_handle.isVisible())
+        self.window.set_locked(False)
+        self.window.toggle_fullscreen()
+        self.assertFalse(self.window.drag_handle.isVisible())
+        self.window.exit_fullscreen()
+        self.window._show_header()
+        self.assertTrue(self.window.drag_handle.isVisible())
+
+    def test_zoomed_map_is_clipped_to_transparent_rounded_frame(self):
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import QPoint
+        image = QImage(100, 100, QImage.Format.Format_RGB32)
+        image.fill(0xffffff)
+        self.window.resize(400, 300)
+        self.window.show()
+        self.app.processEvents()
+        self.window.view.set_image(image)
+        self.window.view.zoom(3)
+        self.window.set_appearance(0.4, 1.5)
+        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+            self.window._hide_header()
+        captured = self.window.grab().toImage()
+        self.assertEqual(captured.pixelColor(0, 0).alpha(), 0)
+        self.assertEqual(captured.pixelColor(captured.width() - 1, captured.height() - 1).alpha(), 0)
+        self.assertEqual(captured.pixelColor(captured.width() // 2, captured.height() // 2).alpha(), 255)
+        self.assertFalse(self.window.view.mask().contains(QPoint(0, 0)))
+
+    def test_narrow_header_popups_still_fit_long_zone_names(self):
+        self.window.resize(360, 260)
+        self.window.set_locked(False)
+        self.window.set_appearance(0.85, 2.0)
+        self.window.show()
+        self.window._show_header()
+        self.window.zone.showPopup()
+        self.app.processEvents()
+        required = max(self.window.zone.fontMetrics().horizontalAdvance(self.window.zone.itemText(i))
+                       for i in range(self.window.zone.count()))
+        self.assertGreaterEqual(self.window.zone.view().width(), required)
+        self.assertGreater(self.window.zone.view().width(), self.window.zone.width())
+        self.window.zone.hidePopup()
 
     def test_zone_edit_stays_visible_until_enter(self):
         from PySide6.QtCore import QPoint, Qt

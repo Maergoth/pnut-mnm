@@ -319,8 +319,24 @@ uses the Triggers page's volume and output device.
   also has a warning N seconds before the end and an end alert (sound or speech).
 
 The bar at the top sets the volume, voice, speech rate and audio output for all triggers.
-Triggers are saved as you edit them, in `triggers.json`; Import / Export share them as .json
-files. "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
+Triggers are saved as you edit them, in `triggers.json`. **Import timers…** accepts shared
+JSON files and older `triggers.json` files, converting legacy overlap settings. Existing
+timers stay intact; duplicates are skipped and conflicting versions are added as separate
+copies. **Export timers…** lets you share the selected entry or all entries, including colors,
+duration, speech and overlap settings. Global voice/output preferences stay local. Custom sound
+files must be shared separately and selected on the recipient's computer.
+For in-game sharing, select **one** trigger and choose **Export timers… > Selected timer for
+game chat…**. Copy and paste the single code into a chat channel visible in the recipient's
+capture area while PNUT is running. Each code contains exactly one trigger and preserves its
+settings. Chat export is limited to 255 characters; unusually large definitions use JSON file
+export instead, with no splitting or truncation. After the code is read and passes validation,
+PNUT shows a **Review timer…** notice. The recipient can inspect it and choose **Import** or
+**Dismiss**; nothing is imported or played automatically. If OCR misreads the code, resend the
+share or use the JSON file instead. File export still supports a whole collection.
+Use a clear chat font, such as Arial or Georgia. Some fonts, including Times New Roman, can
+merge encoded characters; if a code is not detected, change the font or use JSON import.
+Corrupted codes are rejected rather than imported with changed settings.
+"Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
 Healkick starts disabled, matching the original preset; enable it when wanted. Existing custom
 triggers are preserved, and **Restore starter triggers** restores missing starters.
@@ -338,9 +354,11 @@ overlay's bottom edge, double-click it, or right-click > Snap to overlay); the a
 then docks under the overlay directly.
 
 **Map overlay.** Click **Map** in the top bar to open a separate always-on-top map window.
-Hover over its top edge to reveal the single header with zone/map selectors and a fullscreen
-icon. The header hides when you move away. Drag the header's empty space to move the window
-(or Alt-drag anywhere), and drag its edges to resize. F11 fills the screen, and Escape
+The map uses the overlay's rounded frame, colors, opacity and font scale. Hover over its top
+edge to reveal the single header with zone/map selectors and a fullscreen icon. The header
+hides when you move away. Turn off **Lock overlay** to show the header's dotted drag handle;
+drag that handle to move the window, or drag its edges to resize. Locking fixes the window's
+position and size while zone selection, panning and zoom remain available. F11 fills the screen, and Escape
 restores the window. Scroll to zoom and drag to pan. A recognized
 "You have entered ..." or "Entering ..." line switches the map automatically. Keep zone
 messages in the cropped Combat chat. You can also choose a zone manually and select another

@@ -558,6 +558,7 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
         outer.addWidget(self._build_top_bar())
         outer.addWidget(self._build_warning_banner())
+        outer.addWidget(self._build_timer_share_banner())
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -759,6 +760,36 @@ class MainWindow(QMainWindow):
     def _dismiss_warning(self) -> None:
         self._warning_latch.dismiss()
         self._warning_banner.hide()
+
+    def _build_timer_share_banner(self) -> QWidget:
+        banner = QFrame(self)
+        banner.setObjectName("timerShareBanner")
+        banner.setStyleSheet(f"QFrame#timerShareBanner {{ background: {theme.BG2}; border-bottom: 1px solid {theme.LINE}; }}")
+        layout = QHBoxLayout(banner)
+        layout.setContentsMargins(16, 6, 12, 6)
+        self._timer_share_text = QLabel(banner)
+        self._timer_share_text.setTextFormat(Qt.TextFormat.PlainText)
+        self._timer_share_text.setWordWrap(True)
+        layout.addWidget(self._timer_share_text, 1)
+        review = QPushButton("Review timer…", banner)
+        review.setObjectName("Chip")
+        review.clicked.connect(self._review_shared_timer)
+        layout.addWidget(review)
+        banner.hide()
+        self._timer_share_banner = banner
+        return banner
+
+    def set_timer_share_notice(self, message: str) -> None:
+        """Keep an incoming share reviewable without opening or focusing a window."""
+        self._timer_share_text.setText(message)
+        self._timer_share_banner.setVisible(bool(message))
+
+    def _review_shared_timer(self) -> None:
+        page = self.page("triggers")
+        review = getattr(page, "review_chat_shares", None)
+        if callable(review):
+            self.show_page("triggers")
+            review()
 
     def warning_visible(self) -> bool:
         """True while the capture warning banner is shown."""
@@ -966,10 +997,10 @@ class MainWindow(QMainWindow):
 
     # -- overlay switches ----------------------------------------------------------------
 
-    def set_overlay_available(self, available: bool) -> None:
-        """Enable/disable the overlay switches (no overlay module -> disabled)."""
+    def set_overlay_available(self, available: bool, *, lock_available: bool | None = None) -> None:
+        """Enable available controls; a map window can still use the shared lock."""
         self._overlay_switch.setEnabled(available)
-        self._lock_switch.setEnabled(available)
+        self._lock_switch.setEnabled(available if lock_available is None else lock_available)
         if not available:
             self._overlay_switch.setToolTip(
                 "Overlay unavailable: " + _IMPORT_ERRORS.get("mnmparse.app.overlay", "module missing")
@@ -1147,6 +1178,8 @@ class App(QApplication):
                 that many seconds (the integrator's smoke test).
         """
         self.cfg = cfg
+        from mnmparse.trigger_chat import ChatShareAssembler
+        self._chat_shares = ChatShareAssembler()
         app_icon.ensure_icon_file(project_path("assets") / "icon.ico")
         self.engine = self._make_engine(cfg)
         self.overlay = self._make_overlay(cfg)
@@ -1167,10 +1200,12 @@ class App(QApplication):
             log.warning("No system tray available; closing the window quits the app")
         self.window.show()
 
-        locked = _overlay_locked(self.overlay, bool(getattr(cfg, "overlay_locked", True)))
-        self.window.set_lock_state(locked)
-        self.tray.set_overlay_locked(locked)
-        self.tray.set_overlay_available(self.overlay is not None)
+        locked = self._current_overlay_lock()
+        self._on_overlay_locked(locked)
+        self._sync_map_appearance()
+        lock_available = self.overlay is not None or self.map_overlay is not None
+        self.window.set_overlay_available(self.overlay is not None, lock_available=lock_available)
+        self.tray.set_overlay_available(self.overlay is not None, lock_available=lock_available)
 
         show_overlay = self.settings.value("main/overlay_visible", bool(getattr(cfg, "overlay_enabled", False)), type=bool)
         if selftest_seconds is not None:
@@ -1231,6 +1266,7 @@ class App(QApplication):
         self._connect_optional(engine, "encounter_updated", window.on_encounter_updated)
         self._connect_optional(engine, "notice", window.show_message)
         engine.message.connect(window.on_message)
+        engine.message.connect(self._on_chat_share)
         if self.map_overlay is not None:
             engine.message.connect(self.map_overlay.on_message)
             self.map_overlay.visibility_changed.connect(self._on_map_visibility)
@@ -1245,6 +1281,7 @@ class App(QApplication):
             page = window.page("triggers")
             if page is not None and callable(getattr(page, "set_runner", None)):
                 page.set_runner(self.triggers)
+                self._connect_optional(page, "chat_share_pending", self._on_chat_share_pending)
             if overlay is not None and callable(getattr(overlay, "set_trigger_runner", None)):
                 overlay.set_trigger_runner(self.triggers)
         self._connect_optional(engine, "session", window.on_session)
@@ -1261,6 +1298,7 @@ class App(QApplication):
             self._connect_optional(overlay, "group_override_requested", self.set_group_override)
             self._connect_optional(overlay, "pet_owner_requested", self.set_pet_owner)
             self._connect_optional(overlay, "locked_changed", self._on_overlay_locked)
+            self._connect_optional(overlay, "appearance_changed", self._sync_map_appearance)
             self._connect_optional(overlay, "click_through_changed", self._on_overlay_click_through)
             self._connect_optional(overlay, "visibility_changed", self._on_overlay_visibility)
 
@@ -1320,6 +1358,28 @@ class App(QApplication):
             tray.set_overlay_click_through(bool(self.overlay.click_through))
         tray.reset_requested.connect(self.reset_encounter)
         tray.quit_requested.connect(self.request_quit)
+
+    def _on_chat_share(self, msg: Any, event: Any) -> None:
+        if getattr(msg, "backlog", False) or self.window is None:
+            return
+        page = self.window.page("triggers")
+        offer = getattr(page, "offer_chat_share", None)
+        if not callable(offer) or self.triggers is None:
+            return
+        text = getattr(msg, "text", "") or ""
+        sender = str(getattr(event, "actor", "") or "") if getattr(event, "kind", "") == "chat" else ""
+        try:
+            for share in self._chat_shares.feed(text, sender=sender):
+                if offer(share) is False:
+                    self._chat_shares.forget(share.share_id)
+        except Exception:  # Bad OCR or a malformed share must not interrupt capture.
+            log.debug("Could not read a chat timer share", exc_info=True)
+
+    def _on_chat_share_pending(self, message: str) -> None:
+        if self.window is not None:
+            self.window.set_timer_share_notice(message)
+            if message and not self.window.isVisible() and self.tray is not None:
+                self.tray.notify("Shared PNUT timer", message + " Open PNUT to review it.")
 
     def _on_app_update_status(self, message: str) -> None:
         if self.window is not None:
@@ -1543,8 +1603,9 @@ class App(QApplication):
         self.set_overlay_visible(not current)
 
     def set_overlay_locked(self, locked: bool) -> None:
-        """Lock (no move/resize) or unlock the overlay."""
+        """Lock (no move/resize) or unlock both overlay windows."""
         if self.overlay is None:
+            self._on_overlay_locked(bool(locked))
             return
         try:
             self.overlay.set_locked(bool(locked))
@@ -1555,9 +1616,24 @@ class App(QApplication):
 
     def toggle_overlay_lock(self) -> None:
         """Tray: flip the overlay lock."""
-        if self.overlay is None:
+        self.set_overlay_locked(not self._current_overlay_lock())
+
+    def _current_overlay_lock(self) -> bool:
+        """Use the combat overlay's effective lock, or its saved preference if unavailable."""
+        default = self.settings.value("overlay/locked", bool(getattr(self.cfg, "overlay_locked", True)), type=bool)
+        return _overlay_locked(self.overlay, default)
+
+    def _sync_map_appearance(self, *_args: Any) -> None:
+        """Keep the map frame and header consistent with the combat overlay."""
+        if self.map_overlay is None:
             return
-        self.set_overlay_locked(not _overlay_locked(self.overlay, True))
+        opacity = getattr(self.overlay, "opacity", None)
+        font_scale = getattr(self.overlay, "font_scale", None)
+        if opacity is None:
+            opacity = self.settings.value("overlay/opacity", float(getattr(self.cfg, "overlay_opacity", 0.85)), type=float)
+        if font_scale is None:
+            font_scale = self.settings.value("overlay/font_scale", float(getattr(self.cfg, "overlay_font_scale", 1.0)), type=float)
+        self.map_overlay.set_appearance(float(opacity), float(font_scale))
 
     def reset_overlay_position(self) -> None:
         """Settings page "Reset position": put the overlay back at its default geometry."""
@@ -1580,13 +1656,18 @@ class App(QApplication):
     def _on_overlay_setting(self, key: str, value: Any) -> None:
         """A Settings > Overlay control changed: apply it to the overlay right away."""
         overlay = self.overlay
+        if key == "locked":
+            self.set_overlay_locked(bool(value))
+            return
         if overlay is None:
+            if key in ("opacity", "font_scale"):
+                self.settings.setValue(f"overlay/{key}", float(value))
+                self._sync_map_appearance()
+                self._sync_overlay_settings()
             return
         try:
             if key == "visible":
                 self.set_overlay_visible(bool(value))
-            elif key == "locked":
-                self.set_overlay_locked(bool(value))
             elif key == "click_through":
                 overlay.set_click_through(bool(value))
             elif key == "opacity":
@@ -1605,7 +1686,12 @@ class App(QApplication):
         overlay = self.overlay
         page = self.window.page("settings") if self.window is not None else None
         sync = getattr(page, "sync_overlay", None)
-        if overlay is None or not callable(sync):
+        if not callable(sync):
+            return
+        if overlay is None:
+            sync(locked=self._current_overlay_lock(),
+                 opacity=self.settings.value("overlay/opacity", self.cfg.overlay_opacity, type=float),
+                 font_scale=self.settings.value("overlay/font_scale", self.cfg.overlay_font_scale, type=float))
             return
         try:
             sync(
@@ -1625,10 +1711,14 @@ class App(QApplication):
             self.tray.set_overlay_click_through(bool(enabled))
 
     def _on_overlay_locked(self, locked: bool) -> None:
+        self.settings.setValue("overlay/locked", bool(locked))
+        if self.map_overlay is not None:
+            self.map_overlay.set_locked(bool(locked))
         if self.window is not None:
             self.window.set_lock_state(locked)
         if self.tray is not None:
             self.tray.set_overlay_locked(locked)
+        self._sync_overlay_settings()
 
     def _on_overlay_visibility(self, visible: bool) -> None:
         if self.window is not None:
@@ -1675,12 +1765,16 @@ class App(QApplication):
                 _call_first(self.overlay, ("set_tab",), str(getattr(cfg, "overlay_tab", "damage")))
                 _call_first(self.overlay, ("set_show_other_groups",), bool(getattr(cfg, "show_other_groups", False)))
                 _call_first(self.overlay, ("set_config",), cfg)
-                self.set_overlay_locked(bool(getattr(cfg, "overlay_locked", True)))
             except Exception:  # noqa: BLE001
                 log.exception("applying overlay settings failed")
             enabled = bool(getattr(cfg, "overlay_enabled", False))
             self.settings.setValue("main/overlay_visible", enabled)
             self.set_overlay_visible(enabled)
+        else:
+            self.settings.setValue("overlay/opacity", float(getattr(cfg, "overlay_opacity", 0.85)))
+            self.settings.setValue("overlay/font_scale", float(getattr(cfg, "overlay_font_scale", 1.0)))
+        self.set_overlay_locked(bool(getattr(cfg, "overlay_locked", True)))
+        self._sync_map_appearance()
         log.info("Configuration updated from the Settings page")
 
     # -- shutdown ------------------------------------------------------------------------

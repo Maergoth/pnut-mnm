@@ -88,6 +88,8 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertIn("MapOverlay", report["windows"])
             self.assertIn("triggers", report["pages"])
             self.assertEqual(set(report["presets"]), {"Gatekick", "Healkick", "Invis Break"})
+            self.assertGreater(report["chat_share_chars"], 0)
+            self.assertLessEqual(report["chat_share_chars"], 255)
 
 
 if __name__ == "__main__":

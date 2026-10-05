@@ -5,18 +5,64 @@ import logging
 import threading
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCursor, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
-from mnmparse.app import APP_NAME
+from mnmparse.app import APP_NAME, theme
 from mnmparse.config import project_path
 from mnmparse.maps import MapImage, MapRepository, ZONES, zone_title
 
 log = logging.getLogger(__name__)
+
+
+class _MapHeader(QWidget):
+    def paintEvent(self, event: Any) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(theme.qcolor("#ffffff", 0.14), 1))
+        painter.setBrush(theme.qcolor(theme.BG1, 0.97))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                                theme.RADIUS_CHIP, theme.RADIUS_CHIP)
+
+
+class _DragHandle(QWidget):
+    """A visible, generous mouse target; movement is owned by the map window."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAccessibleName("Move map")
+        self.setToolTip("Drag to move the map")
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def paintEvent(self, event: Any) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        if self.underMouse():
+            painter.setBrush(theme.qcolor("#ffffff", 0.08))
+            painter.drawRoundedRect(QRectF(self.rect()), 6, 6)
+        painter.setBrush(theme.qcolor(theme.ACCENT if self.underMouse() else theme.MUTED))
+        for dx in (-3, 3):
+            for dy in (-6, 0, 6):
+                painter.drawEllipse(QRectF(self.width() / 2 + dx - 1.4,
+                                           self.height() / 2 + dy - 1.4, 2.8, 2.8))
+
+
+class _MapCombo(QComboBox):
+    def showPopup(self) -> None:  # noqa: N802
+        # Compact equal-width selectors should not truncate the choices in their
+        # open menus, especially with the overlay's enlarged font setting.
+        width = max((self.fontMetrics().horizontalAdvance(self.itemText(i))
+                     for i in range(self.count())), default=0) + 44
+        screen = self.screen()
+        limit = screen.availableGeometry().width() - 16 if screen is not None else width
+        self.view().setMinimumWidth(min(max(self.width(), width), max(1, limit)))
+        super().showPopup()
 
 
 class _Result(QObject):
@@ -73,7 +119,9 @@ class MapView(QGraphicsView):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
-        self.setBackgroundBrush(Qt.GlobalColor.black)
+        self.setBackgroundBrush(Qt.GlobalColor.transparent)
+        self.setAutoFillBackground(False)
+        self.viewport().setAutoFillBackground(False)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -129,7 +177,15 @@ class MapOverlay(QWidget):
                          Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle(f"{APP_NAME} — Map")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
         self.settings = settings
+        self._locked = settings.value("overlay/locked", True, type=bool)
+        self._opacity = 0.85
+        self._font_scale = 1.0
+        self._drag_offset: QPoint | None = None
+        self._drag_press: QPoint | None = None
+        self._drag_widget: QWidget | None = None
         self.repo = repository or MapRepository(project_path("map_cache"))
         self._slots = threading.Semaphore(2)
         self._token = 0
@@ -144,21 +200,18 @@ class MapOverlay(QWidget):
         self._current_zone = str(settings.value("map/zone", "") or "")
         self.setMinimumSize(360, 240)
         self.resize(900, 650)
-        self.setStyleSheet("QWidget { background: #161c25; color: #e9edf5; } "
-                           "QComboBox { padding: 4px 6px; min-width: 0; } "
-                           "QGraphicsView { border: none; } "
-                           "QToolButton { border: none; border-radius: 4px; padding: 0; } "
-                           "QToolButton:hover { background: #303a48; }")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(2, 2, 2, 2)
         self.view = MapView(self)
         layout.addWidget(self.view)
         # Floating controls never change the map viewport when they appear/disappear.
-        self.header = QWidget(self)
+        self.header = _MapHeader(self)
         top = QHBoxLayout(self.header)
-        top.setContentsMargins(8, 8, 8, 8)
+        top.setContentsMargins(6, 6, 6, 6)
         top.setSpacing(6)
-        self.zone = QComboBox()
+        self.drag_handle = _DragHandle(self.header)
+        top.addWidget(self.drag_handle)
+        self.zone = _MapCombo()
         self.zone.setEditable(True)
         self.zone.addItem("Select zone", "")
         self.zone.addItems(ZONES)
@@ -173,7 +226,7 @@ class MapOverlay(QWidget):
         self.zone.lineEdit().textEdited.connect(self._begin_zone_edit)
         self.zone.lineEdit().editingFinished.connect(self._finish_zone_edit)
         top.addWidget(self.zone, 1)
-        self.variants = QComboBox()
+        self.variants = _MapCombo()
         self.variants.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.variants.setMinimumWidth(0)
         self.variants.setPlaceholderText("Select map")
@@ -191,16 +244,19 @@ class MapOverlay(QWidget):
         self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.status.setStyleSheet("background: transparent; color: #c2cbd8; padding: 12px;")
+        self.status.setStyleSheet(f"background: transparent; color: {theme.MUTED}; padding: 12px;")
         self._header_hide = QTimer(self)
         self._header_hide.setSingleShot(True)
         self._header_hide.setInterval(300)
         self._header_hide.timeout.connect(self._hide_header)
         for widget in (self, self.view.viewport(), self.header, self.zone,
-                       self.zone.lineEdit(), self.variants, self.fullscreen):
+                       self.zone.lineEdit(), self.variants, self.fullscreen, self.drag_handle):
             widget.setMouseTracking(True)
             widget.installEventFilter(self)
         self.header.hide()
+        self.set_appearance(settings.value("overlay/opacity", 0.85, type=float),
+                            settings.value("overlay/font_scale", 1.0, type=float))
+        self.set_locked(self._locked)
         QShortcut(QKeySequence("F11"), self).activated.connect(self.toggle_fullscreen)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self.exit_fullscreen)
         rect = settings.value("map/geometry")
@@ -212,6 +268,40 @@ class MapOverlay(QWidget):
     @property
     def current_zone(self) -> str:
         return self._current_zone
+
+    @property
+    def locked(self) -> bool:
+        return self._locked
+
+    def set_locked(self, locked: bool) -> None:
+        self._locked = bool(locked)
+        if self._locked:
+            self._end_drag()
+        self.drag_handle.setVisible(not self._locked and not self.isFullScreen())
+        self._position_chrome()
+
+    def set_appearance(self, opacity: float, font_scale: float) -> None:
+        """Share the overlay's glass and text styling; map pixels stay opaque."""
+        self._opacity = min(1.0, max(0.2, float(opacity)))
+        self._font_scale = min(2.0, max(0.6, float(font_scale)))
+        px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
+        self.setStyleSheet(theme.overlay_qss(self._opacity) + f"""
+            QWidget {{ font-size: {px}px; }}
+            QComboBox {{ background: {theme.BG2}; border: 1px solid {theme.LINE};
+                border-radius: 6px; padding: 4px 6px; min-width: 0; }}
+            QComboBox:hover {{ border-color: {theme.MUTED}; }}
+            QComboBox:focus {{ border-color: {theme.ACCENT}; }}
+            QComboBox QAbstractItemView {{ background: {theme.BG1}; color: {theme.TEXT};
+                selection-background-color: {theme.BG2}; selection-color: {theme.ACCENT}; }}
+            QComboBox QLineEdit {{ background: transparent; border: none; padding: 0; }}
+            QToolButton {{ border: none; padding: 0; }}
+            QGraphicsView {{ border: none; }}
+        """)
+        size = max(30, round(px * 2.3))
+        self.drag_handle.setFixedSize(max(24, round(px * 1.85)), size)
+        self.fullscreen.setFixedSize(size, size)
+        self._position_chrome()
+        self.update()
 
     def on_message(self, _msg: Any, event: Any) -> None:
         if event is not None and getattr(event, "kind", "") == "zone" and getattr(event, "target", ""):
@@ -325,7 +415,7 @@ class MapOverlay(QWidget):
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(Qt.GlobalColor.white, 3, Qt.PenStyle.SolidLine,
+        painter.setPen(QPen(theme.qcolor(theme.MUTED), 3, Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         for x, y, dx, dy in ((8, 8, 1, 1), (32, 8, -1, 1), (8, 32, 1, -1), (32, 32, -1, -1)):
             if fullscreen:
@@ -346,7 +436,7 @@ class MapOverlay(QWidget):
 
     def _hide_header(self) -> None:
         # A popup extends beyond the header; keep its controls until it closes.
-        if self._editing_zone or any(combo.view().isVisible() for combo in (self.zone, self.variants)):
+        if self._drag_offset is not None or self._editing_zone or any(combo.view().isVisible() for combo in (self.zone, self.variants)):
             self._header_hide.start()
         elif self.header.geometry().contains(self.mapFromGlobal(QCursor.pos())):
             return
@@ -355,7 +445,7 @@ class MapOverlay(QWidget):
 
     def _resize_edges(self, point: QPoint) -> Qt.Edge:
         edges = Qt.Edge(0)
-        if not self.isFullScreen():
+        if not self._locked and not self.isFullScreen():
             if point.x() < 5:
                 edges |= Qt.Edge.LeftEdge
             elif point.x() >= self.width() - 5:
@@ -366,8 +456,40 @@ class MapOverlay(QWidget):
                 edges |= Qt.Edge.BottomEdge
         return edges
 
+    def _begin_drag(self, widget: QWidget, point: QPoint) -> None:
+        if self._locked or self.isFullScreen():
+            return
+        self._drag_press = point
+        self._drag_offset = point - self.frameGeometry().topLeft()
+        self._drag_widget = widget
+        widget.grabMouse()
+        self._show_header()
+
+    def _end_drag(self) -> None:
+        if self._drag_offset is None:
+            return
+        if QWidget.mouseGrabber() is self._drag_widget:
+            self._drag_widget.releaseMouse()
+        self._drag_offset = self._drag_press = None
+        self._drag_widget = None
+        self.save_state()
+        self._header_hide.start()
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         kind = event.type()
+        if self._drag_offset is not None:
+            if kind == QEvent.Type.MouseMove:
+                if event.buttons() & Qt.MouseButton.LeftButton:
+                    point = event.globalPosition().toPoint()
+                    if (point - self._drag_press).manhattanLength() > 4:
+                        self.move(point - self._drag_offset)
+                    return True
+                self._end_drag()
+            elif kind == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                self._end_drag()
+                return True
+            elif kind in (QEvent.Type.WindowDeactivate, QEvent.Type.Hide) and watched is self:
+                self._end_drag()
         if kind in (QEvent.Type.Enter, QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress):
             point = self.mapFromGlobal(event.globalPosition().toPoint())
             if self.header.geometry().contains(point):
@@ -384,37 +506,65 @@ class MapOverlay(QWidget):
                     watched.setCursor(Qt.CursorShape.SizeFDiagCursor)
                 elif edges:
                     watched.setCursor(Qt.CursorShape.SizeBDiagCursor)
+                elif watched is self.drag_handle or (watched is self.header and not self._locked and not self.isFullScreen()):
+                    watched.setCursor(Qt.CursorShape.SizeAllCursor)
                 else:
                     watched.unsetCursor()
             if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 handle = self.windowHandle()
                 if handle is not None and edges:
                     return handle.startSystemResize(edges)
-                if handle is not None and not self.isFullScreen() and (
-                    watched is self.header or event.modifiers() & Qt.KeyboardModifier.AltModifier
+                if not self._locked and not self.isFullScreen() and (
+                    watched in (self.header, self.drag_handle) or event.modifiers() & Qt.KeyboardModifier.AltModifier
                 ):
-                    return handle.startSystemMove()
+                    self._begin_drag(watched, event.globalPosition().toPoint())
+                    return True
         elif kind == QEvent.Type.Leave and not self._header_hide.isActive():
             self._header_hide.start()
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event: Any) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self.header.setGeometry(0, 0, self.width(), self.header.sizeHint().height())
+        self._position_chrome()
+
+    def _position_chrome(self) -> None:
+        self.layout().activate()
+        self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
         self.status.setGeometry(16, self.header.height(), self.width() - 32,
                                 max(40, self.height() - self.header.height() * 2))
+        # A child widget's rectangular paint is not clipped by the parent's rounded
+        # background. Clip the map itself so zoomed images cannot square off the frame.
+        if self.isFullScreen():
+            self.view.clearMask()
+        else:
+            clip = QPainterPath()
+            radius = theme.RADIUS_PANEL - 2
+            clip.addRoundedRect(QRectF(self.view.rect()), radius, radius)
+            self.view.setMask(QRegion(clip.toFillPolygon().toPolygon()))
+
+    def paintEvent(self, event: Any) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = 0 if self.isFullScreen() else theme.RADIUS_PANEL
+        painter.setPen(QPen(theme.qcolor("#ffffff", 0.14), 1))
+        painter.setBrush(theme.qcolor(theme.BG0, self._opacity))
+        painter.drawRoundedRect(rect, radius, radius)
 
     def _select_map(self, index: int) -> None:
         if 0 <= index < len(self._entries):
             self.load(entry=self._entries[index])
 
     def toggle_fullscreen(self) -> None:
+        self._end_drag()
         if self.isFullScreen():
             self.exit_fullscreen()
         else:
             self._normal_geometry = self.geometry()
             self.showFullScreen()
             self._update_fullscreen_icon()
+            self.drag_handle.hide()
+            self._position_chrome()
 
     def exit_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -422,6 +572,8 @@ class MapOverlay(QWidget):
             if self._normal_geometry.isValid():
                 self.setGeometry(self._normal_geometry)
             self._update_fullscreen_icon()
+            self.drag_handle.setVisible(not self._locked)
+            self._position_chrome()
 
     def showEvent(self, event: Any) -> None:  # noqa: N802
         super().showEvent(event)
@@ -430,6 +582,7 @@ class MapOverlay(QWidget):
             self.load()
 
     def hideEvent(self, event: Any) -> None:  # noqa: N802
+        self._end_drag()
         self.save_state()
         super().hideEvent(event)
         self.visibility_changed.emit(False)

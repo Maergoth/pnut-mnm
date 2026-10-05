@@ -114,10 +114,10 @@ class TrayIcon(QSystemTrayIcon):
         self._click_through_action.setChecked(bool(enabled))
         self._click_through_action.blockSignals(False)
 
-    def set_overlay_available(self, available: bool) -> None:
-        """Disable the overlay actions when no overlay window exists."""
+    def set_overlay_available(self, available: bool, *, lock_available: bool | None = None) -> None:
+        """Disable unavailable overlay actions; the map can still share the lock control."""
         self._overlay_action.setEnabled(available)
-        self._lock_action.setEnabled(available)
+        self._lock_action.setEnabled(available if lock_available is None else lock_available)
         self._click_through_action.setEnabled(available)
 
     def set_status_text(self, text: str) -> None:

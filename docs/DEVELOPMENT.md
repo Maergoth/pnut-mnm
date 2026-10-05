@@ -39,6 +39,8 @@ mnmparse/            library + CLI
   importer.py        re-parse a .log / .jsonl (or several in a row: import_files) into encounters + a session
   swing.py           auto-attack delay from your swings (one bar per weapon type)
   triggers.py        Trigger, match_trigger (fuzzy word matching), TriggerStore (triggers.json), TimerBoard
+  trigger_exchange.py validated JSON sharing, legacy timer conversion and duplicate-safe merging
+  trigger_chat.py    compact single-trigger chat encoding, checksums and bounded fragment assembly
   export.py          one-line clipboard summaries of a fight: presets, templates, format_snapshot
   party.py           PartyRoster: the viewer's party from the chat and shared fights, manual in/out choices, party.json
   logwriter.py       logs/combat_*.log (EQ style) and logs/events_*.jsonl, each starting with a format header
@@ -55,6 +57,7 @@ mnmparse/            library + CLI
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)
     timer_panel.py   TimerPanel: trigger countdowns with radial rings, docked under the overlay
     triggers_page.py TriggersPage: trigger list and editor, audio settings
+    trigger_share_dialog.py single-message chat copy and explicit received-timer review
     triggers_runtime.py  TriggerRunner (match lines, fire, run timers) and AudioOut (sounds, files, speech)
     overlay.py       OverlayWindow (translucent, topmost; lock = no move/resize, optional click-through)
     widgets.py       MeterTable (model/proxy/delegate, cell tooltips), FeedView, ToggleSwitch, StatusChip

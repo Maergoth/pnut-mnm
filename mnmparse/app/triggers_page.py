@@ -9,14 +9,13 @@ volume, voice, speech rate, output device) apply to every trigger.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QSettings, QSize, QStringListModel, Qt, QTimer
+from PySide6.QtCore import QSettings, QSize, QStringListModel, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -32,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -43,11 +43,14 @@ from PySide6.QtWidgets import (
 from mnmparse.app.pages import _label, _page_qss, _panel
 from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, token
 from mnmparse.config import Config, project_path
+from mnmparse.trigger_exchange import export_trigger_file, external_sound_files, merge_triggers, read_trigger_file
 from mnmparse.triggers import BUILTIN_SOUNDS, MODES, Trigger, fill_placeholders, match_trigger
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
     from mnmparse.app.triggers_runtime import TriggerRunner
+    from mnmparse.trigger_chat import ReceivedShare
+    from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +63,7 @@ TIMER_MODE_TITLES = {"replace": "Replace", "retain": "Retain", "stack": "Add ano
 TIMER_COLOR_TOKENS = {"timer_color": "SUCCESS", "timer_warn_color": "ACCENT", "timer_low_color": "DANGER"}
 RECENT_LINES = 500
 SAVE_DELAY_MS = 400
+MAX_PENDING_SHARES = 20
 
 
 def _combo(items: dict[str, str], width: int = 200) -> QComboBox:
@@ -91,6 +95,8 @@ class _FitScroll(QScrollArea):
 class TriggersPage(QWidget):
     """The trigger list and editor (see module docstring)."""
 
+    chat_share_pending = Signal(str)
+
     def __init__(self, engine: "Engine", cfg: Config, settings: QSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._engine = engine
@@ -100,6 +106,10 @@ class TriggersPage(QWidget):
         self._current: Trigger | None = None
         self._loading = False
         self._recent: deque[str] = deque(maxlen=RECENT_LINES)
+        self._pending_shares: deque[ReceivedShare] = deque()
+        self._seen_shares: deque[tuple[str, str]] = deque(maxlen=128)
+        self._chat_dialog: TriggerSharePrompt | None = None
+        self._chat_export_dialog: TriggerChatExportDialog | None = None
         self.setStyleSheet(_page_qss())
 
         self._save_timer = QTimer(self)
@@ -169,6 +179,40 @@ class TriggersPage(QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._refill_list)
         lay.addWidget(self.search)
+        self.import_timers = QPushButton("Import timers…")
+        self.import_timers.setObjectName("Chip")
+        self.import_timers.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_timers.setToolTip("Add shared timers or triggers from a JSON file, including older PNUT files")
+        self.import_timers.clicked.connect(self._on_import)
+        lay.addWidget(self.import_timers)
+        self.export_timers = QPushButton("Export timers…")
+        self.export_timers.setObjectName("Chip")
+        self.export_timers.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_timers.setToolTip("Share the selected timer or all timers and triggers")
+        menu = QMenu(self.export_timers)
+        self.export_selected = menu.addAction("Selected timer")
+        self.export_selected.triggered.connect(lambda: self._on_export(selected=True))
+        self.export_all = menu.addAction("All timers")
+        self.export_all.triggered.connect(lambda: self._on_export())
+        menu.addSeparator()
+        self.export_chat = menu.addAction("Selected timer for game chat…")
+        self.export_chat.triggered.connect(self._on_export_chat)
+        self.export_timers.setMenu(menu)
+        self.export_selected.setEnabled(False)
+        self.export_all.setEnabled(False)
+        self.export_chat.setEnabled(False)
+        lay.addWidget(self.export_timers)
+        self.sharing_status = QLabel()
+        self.sharing_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.sharing_status.setWordWrap(True)
+        self.sharing_status.hide()
+        lay.addWidget(self.sharing_status)
+        self.chat_notice = QPushButton("Review shared timer…")
+        self.chat_notice.setObjectName("Chip")
+        self.chat_notice.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chat_notice.clicked.connect(self.review_chat_shares)
+        self.chat_notice.hide()
+        lay.addWidget(self.chat_notice)
         self.list = QListWidget()
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list.setFrameShape(QFrame.Shape.NoFrame)
@@ -197,20 +241,6 @@ class TriggersPage(QWidget):
             b.clicked.connect(slot)
             row.addWidget(b)
         lay.addLayout(row)
-        row2 = QHBoxLayout()
-        row2.setSpacing(6)
-        for text, slot, tip in (
-            ("Import…", self._on_import, "Add triggers from a .json file"),
-            ("Export…", self._on_export, "Save all triggers to a .json file"),
-        ):
-            b = QPushButton(text)
-            b.setObjectName("Chip")
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setToolTip(tip)
-            b.clicked.connect(slot)
-            row2.addWidget(b)
-        row2.addStretch(1)
-        lay.addLayout(row2)
         starters = QPushButton("Restore starter triggers")
         starters.setObjectName("Chip")
         starters.setToolTip("Add missing Gatekick, Healkick and Invis Break starters; keep existing trigger settings")
@@ -504,6 +534,9 @@ class TriggersPage(QWidget):
         finally:
             self.list.blockSignals(False)
         self.empty.setVisible(not self._store_triggers())
+        self.export_all.setEnabled(bool(self._store_triggers()))
+        self.export_selected.setEnabled(self._current is not None)
+        self.export_chat.setEnabled(self._current is not None)
         if select is not None:
             self.list.setCurrentItem(select)
         elif self.list.count() and self._current is None:
@@ -527,6 +560,8 @@ class TriggersPage(QWidget):
     def _on_select(self, item: QListWidgetItem | None, _prev: Any = None) -> None:
         trig = self.runner.store.find(str(item.data(Qt.ItemDataRole.UserRole))) if (item and self.runner) else None
         self._current = trig
+        self.export_selected.setEnabled(trig is not None)
+        self.export_chat.setEnabled(trig is not None)
         self._load_editor(trig)
 
     def _on_new(self) -> None:
@@ -569,30 +604,179 @@ class TriggersPage(QWidget):
     def _on_import(self) -> None:
         if self.runner is None:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Import triggers", str(project_path(".")), "Triggers (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Import timers", str(project_path(".")), "Timers and triggers (*.json)")
         if not path:
             return
         try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            incoming = read_trigger_file(path)
         except (OSError, ValueError) as exc:
             log.warning("import failed: %s", exc)
+            self._sharing_feedback(f"Import failed: {exc}", error=True)
             return
-        existing = {t.id for t in self.runner.store.triggers}
-        for raw in data.get("triggers", []) if isinstance(data, dict) else []:
-            trig = Trigger.from_dict(raw)
-            if trig.id in existing:
-                trig.id = Trigger().id
-            self.runner.store.triggers.append(trig)
-        self._refill_list()
-        self._schedule_save()
+        self._merge_incoming(incoming)
 
-    def _on_export(self) -> None:
+    def _merge_incoming(self, incoming: list[Trigger]) -> bool:
+        """Validate and atomically persist either a file import or an accepted chat share."""
+        if self.runner is None:
+            self._sharing_feedback("Import failed: timers are unavailable.", error=True)
+            return False
+        try:
+            result = merge_triggers(self.runner.store.triggers, incoming)
+        except (OSError, ValueError) as exc:
+            log.warning("import failed: %s", exc)
+            self._sharing_feedback(f"Import failed: {exc}", error=True)
+            return False
+        if result.added:
+            previous = self.runner.store.triggers
+            pending_save = self._save_timer.isActive()
+            self._save_timer.stop()
+            self.runner.store.triggers = result.triggers
+            try:
+                self.runner.save()
+            except (OSError, ValueError) as exc:
+                self.runner.store.triggers = previous
+                if pending_save:
+                    self._schedule_save()
+                log.warning("could not save imported timers: %s", exc)
+                self._sharing_feedback(f"Import failed: could not save timers. {exc}", error=True)
+                return False
+            previous_ids = {trig.id for trig in previous}
+            self._current = next((trig for trig in result.triggers if trig.id not in previous_ids), self._current)
+            self.search.clear()
+            self._refill_list()
+        message = f"Imported {result.added}; skipped {result.skipped} duplicates."
+        if result.conflicts:
+            message += f" Conflicting versions kept as separate copies: {result.conflicts}."
+        if external_sound_files(incoming):
+            message += " Uses external sound files; check their locations in the editor."
+        self._sharing_feedback(message)
+        return True
+
+    def _on_export(self, *, selected: bool = False) -> None:
         if self.runner is None:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export triggers", str(project_path("my_triggers.json")), "Triggers (*.json)")
-        if path:
-            Path(path).write_text(json.dumps({"triggers": [t.to_dict() for t in self.runner.store.triggers]}, indent=2),
-                                  encoding="utf-8")
+        triggers = [self._current] if selected and self._current is not None else self._store_triggers()
+        if (selected and self._current is None) or not triggers:
+            self._sharing_feedback("Select a timer to export." if selected else "There are no timers to export.", error=True)
+            return
+        filename = "PNUT-timer.json" if selected else "PNUT-timers.json"
+        path, _ = QFileDialog.getSaveFileName(self, "Export timer" if selected else "Export all timers",
+                                             str(project_path(filename)), "Timers and triggers (*.json)")
+        if not path:
+            return
+        destination = Path(path)
+        if not destination.suffix:
+            destination = destination.with_suffix(".json")
+        try:
+            if self.runner.store.path is not None and destination.resolve() == self.runner.store.path.resolve():
+                raise ValueError("Choose another filename; this is PNUT's active timer settings file.")
+            export_trigger_file(destination, triggers)
+        except (OSError, ValueError) as exc:
+            log.warning("export failed: %s", exc)
+            self._sharing_feedback(f"Export failed: {exc}", error=True)
+            return
+        message = f"Exported {len(triggers)} to {destination.name}."
+        if external_sound_files(triggers):
+            message += " Sound files are not included; share them separately and choose their locations after importing."
+        self._sharing_feedback(message)
+
+    def _on_export_chat(self) -> None:
+        if self._current is None:
+            self._sharing_feedback("Select a timer to share in game chat.", error=True)
+            return
+        from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog
+        from mnmparse.trigger_chat import encode_trigger
+
+        try:
+            code = encode_trigger(self._current)
+        except ValueError as exc:
+            self._sharing_feedback(f"Could not share this timer: {exc}", error=True)
+            return
+        if self._chat_export_dialog is not None:
+            self._chat_export_dialog.close()
+        dialog = TriggerChatExportDialog(self._current, code, self.window())
+        self._chat_export_dialog = dialog
+        dialog.finished.connect(lambda _result: self._finish_chat_export(dialog))
+        dialog.show()
+
+    def _finish_chat_export(self, dialog: TriggerChatExportDialog) -> None:
+        if self._chat_export_dialog is dialog:
+            self._chat_export_dialog = None
+        dialog.deleteLater()
+
+    def offer_chat_share(self, share: ReceivedShare) -> bool:
+        """Queue a share without focusing a window; False means retry after the queue clears."""
+        key = (share.sender.casefold(), share.share_id)
+        if key in self._seen_shares or any((item.sender.casefold(), item.share_id) == key for item in self._pending_shares):
+            return True
+        try:
+            result = merge_triggers(self._store_triggers(), [share.trigger])
+        except ValueError:
+            log.warning("ignoring invalid timer chat share", exc_info=True)
+            return True
+        if not result.added:
+            self._seen_shares.append(key)
+            return True
+        if len(self._pending_shares) >= MAX_PENDING_SHARES:
+            self._sharing_feedback("Shared timer queue is full. Review pending timers before receiving more.", error=True)
+            return False
+        self._seen_shares.append(key)
+        self._pending_shares.append(share)
+        self._update_chat_notice()
+        return True
+
+    def _update_chat_notice(self) -> None:
+        count = len(self._pending_shares)
+        self.chat_notice.setVisible(bool(count))
+        if not count:
+            self.chat_share_pending.emit("")
+            return
+        name = " ".join(self._pending_shares[0].trigger.name.split()) or "Unnamed timer"
+        short_name = name[:77] + "…" if len(name) > 80 else name
+        message = f'Shared timer “{short_name}” is ready to review.'
+        if count > 1:
+            message += f" {count} waiting."
+        self.chat_notice.setText("Review shared timer…" if count == 1 else f"Review shared timers ({count})…")
+        self.chat_notice.setToolTip(message)
+        self.chat_share_pending.emit(message)
+
+    def review_chat_shares(self) -> None:
+        """Open a nonmodal review only in response to the user's Review action."""
+        if self._chat_dialog is not None:
+            self._chat_dialog.show()
+            self._chat_dialog.raise_()
+            self._chat_dialog.activateWindow()
+            return
+        if not self._pending_shares:
+            return
+        from mnmparse.app.trigger_share_dialog import TriggerSharePrompt
+
+        share = self._pending_shares[0]
+        dialog = TriggerSharePrompt(share.trigger, share.sender, self.window())
+        self._chat_dialog = dialog
+        dialog.import_requested.connect(lambda: self._import_chat_share(dialog, share))
+        dialog.finished.connect(lambda _result: self._finish_chat_review(dialog, share))
+        dialog.show()
+
+    def _import_chat_share(self, dialog: TriggerSharePrompt, share: ReceivedShare) -> None:
+        if self._merge_incoming([share.trigger]):
+            dialog.accept()
+        else:
+            dialog.set_error(self.sharing_status.text())
+
+    def _finish_chat_review(self, dialog: TriggerSharePrompt, share: ReceivedShare) -> None:
+        if self._chat_dialog is dialog:
+            self._chat_dialog = None
+        if share in self._pending_shares:
+            self._pending_shares.remove(share)
+        self._update_chat_notice()
+        dialog.deleteLater()
+
+    def _sharing_feedback(self, message: str, *, error: bool = False) -> None:
+        self.sharing_status.setText(message)
+        self.sharing_status.setToolTip(message)
+        self.sharing_status.setStyleSheet(f"color: {token('DANGER' if error else 'SUCCESS')};")
+        self.sharing_status.show()
 
     # ================================================================ editor
     def _set_editor_enabled(self, on: bool) -> None:
@@ -613,16 +797,20 @@ class TriggersPage(QWidget):
             self.file.setText(trig.file)
             self.speech.setText(trig.speech)
             self.trigger_volume.set_value(trig.volume)
+            self.cooldown.setMaximum(max(600.0, trig.cooldown_s))
             self.cooldown.setValue(trig.cooldown_s)
             self.timer.setChecked(trig.timer)
             m, s = divmod(int(round(trig.timer_seconds)), 60)
+            self.minutes.setMaximum(max(600, m))
             self.minutes.setValue(m)
             self.seconds.setValue(s)
             self.timer_label.setText(trig.timer_label)
             _select(self.timer_mode, {"restart": "replace", "ignore": "retain"}.get(trig.timer_mode, trig.timer_mode))
             for field in self.timer_colors:
                 self._set_timer_color(field, getattr(trig, field))
+            self.low_s.setMaximum(max(3600.0, trig.timer_low_s))
             self.low_s.setValue(trig.timer_low_s)
+            self.warn_s.setMaximum(max(3600, int(trig.timer_warn_s)))
             self.warn_s.setValue(int(trig.timer_warn_s))
             _select(self.warn_action, trig.timer_warn_action)
             self.warn_sound.setCurrentText(trig.timer_warn_sound)

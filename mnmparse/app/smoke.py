@@ -21,7 +21,7 @@ from typing import Any
 QT_MODULES = ("QtCore", "QtGui", "QtWidgets", "QtMultimedia", "QtTextToSpeech")
 APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
-    "triggers_runtime", "triggers_page", "map_overlay", "map_downloads", "app_updates", "main",
+    "triggers_runtime", "triggers_page", "trigger_share_dialog", "map_overlay", "map_downloads", "app_updates", "main",
 )
 NATIVE_MODULES = ("numpy", "cv2")
 WINDOWS_MODULES = (
@@ -110,6 +110,19 @@ def _exercise(report: dict[str, Any]) -> None:
             if not {"Gatekick", "Healkick", "Invis Break"}.issubset(names):
                 raise RuntimeError(f"Bundled trigger presets missing: {sorted(names)}")
             report["presets"] = sorted(names)
+
+            report["stage"] = "exercise timer sharing"
+            from mnmparse.trigger_chat import ChatShareAssembler, encode_trigger
+            from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt
+
+            trigger = store.triggers[0]
+            code = encode_trigger(trigger)
+            received = ChatShareAssembler().feed(code, sender="Smoke test")
+            if len(received) != 1 or received[0].trigger.to_dict() != trigger.to_dict():
+                raise RuntimeError("Packaged timer sharing did not preserve the definition")
+            windows.append(TriggerChatExportDialog(trigger, code, window))
+            windows.append(TriggerSharePrompt(received[0].trigger, received[0].sender, window))
+            report["chat_share_chars"] = len(code)
         finally:
             # Any geometry writes go to the temporary INI file, never the real registry.
             for window in reversed(windows):
