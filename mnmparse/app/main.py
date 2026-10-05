@@ -1127,6 +1127,8 @@ class App(QApplication):
         self.window: MainWindow | None = None
         self.overlay: Any | None = None
         self.map_overlay: Any | None = None
+        self.map_downloads: Any | None = None
+        self.app_updates: Any | None = None
         self.triggers: Any | None = None
         self.tray: TrayIcon | None = None
         self._last_status: dict[str, Any] = {}
@@ -1149,7 +1151,11 @@ class App(QApplication):
         self.engine = self._make_engine(cfg)
         self.overlay = self._make_overlay(cfg)
         from mnmparse.app.map_overlay import MapOverlay
+        from mnmparse.app.map_downloads import MapDownloadController
+        from mnmparse.app.app_updates import AppUpdateController
         self.map_overlay = MapOverlay(self.settings)
+        self.map_downloads = MapDownloadController(self.map_overlay.repo, self)
+        self.app_updates = AppUpdateController(self)
         self.triggers = self._make_trigger_runner()
         self.window = MainWindow(self.engine, self.overlay, cfg, self.settings)
         self.tray = TrayIcon(self.icon, self)
@@ -1173,6 +1179,10 @@ class App(QApplication):
         self.set_overlay_visible(bool(show_overlay))
         self._sync_overlay_settings()  # Settings > Overlay shows what the overlay really uses
         self.set_map_visible(self.settings.value("map/visible", False, type=bool))
+        if selftest_seconds is None and self.settings.value("map/download_on_startup", False, type=bool):
+            QTimer.singleShot(0, self.map_downloads.start)
+        if selftest_seconds is None and self.settings.value("app/update_on_startup", False, type=bool):
+            QTimer.singleShot(0, self.app_updates.start)
 
         if selftest_seconds is not None:
             log.info("Self-test: capturing for %.0f s", selftest_seconds)
@@ -1267,6 +1277,23 @@ class App(QApplication):
             self._connect_optional(settings_page, "sound_preview_requested", self.play_sound)
             self._connect_optional(settings_page, "overlay_reset_requested", self.reset_overlay_position)
             self._connect_optional(settings_page, "overlay_setting_changed", self._on_overlay_setting)
+            if self.app_updates is not None:
+                self._connect_optional(settings_page, "app_update_requested", self.app_updates.start)
+                self._connect_optional(settings_page, "app_restart_requested", self.restart_for_update)
+                self.app_updates.started.connect(
+                    lambda: settings_page.set_app_update_status("Checking GitHub for updates…", True))
+                self.app_updates.progress.connect(
+                    lambda message: settings_page.set_app_update_status(message, True))
+                self.app_updates.finished.connect(self._on_app_update_status)
+                self.app_updates.ready.connect(
+                    lambda version: self._on_app_update_status(f"Version {version} is ready. Restart to install."))
+            if self.map_downloads is not None:
+                self._connect_optional(settings_page, "map_download_requested", self.map_downloads.start)
+                self.map_downloads.started.connect(
+                    lambda: settings_page.set_map_download_status("Downloading latest maps…", True))
+                self.map_downloads.progress.connect(
+                    lambda message: settings_page.set_map_download_status(message, True))
+                self.map_downloads.finished.connect(self._on_map_download_finished)
             if overlay is not None:
                 for name in ("locked_changed", "click_through_changed", "tab_changed", "visibility_changed",
                              "appearance_changed", "attack_bar_changed"):
@@ -1293,6 +1320,25 @@ class App(QApplication):
             tray.set_overlay_click_through(bool(self.overlay.click_through))
         tray.reset_requested.connect(self.reset_encounter)
         tray.quit_requested.connect(self.request_quit)
+
+    def _on_app_update_status(self, message: str) -> None:
+        if self.window is not None:
+            page = self.window.page("settings")
+            if page is not None:
+                ready = self.app_updates is not None and self.app_updates.ready_package is not None
+                page.set_app_update_status(message, False, ready)
+
+    def restart_for_update(self) -> None:
+        if self.app_updates is not None and self.app_updates.prepare_restart():
+            self.request_quit()
+
+    def _on_map_download_finished(self, message: str) -> None:
+        if self.window is not None:
+            page = self.window.page("settings")
+            if page is not None:
+                page.set_map_download_status(message, False)
+        if self.map_overlay is not None:
+            self.map_overlay.reload_cached_map()
 
     @staticmethod
     def _connect_optional(obj: Any, signal_name: str, slot: Callable[..., Any]) -> bool:
@@ -1655,6 +1701,10 @@ class App(QApplication):
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)
         self.stop_capture()
+        if self.app_updates is not None:
+            self.app_updates.shutdown()
+        if self.map_downloads is not None:
+            self.map_downloads.shutdown()
         if self.map_overlay is not None:
             self.map_overlay.shutdown()
         if self.overlay is not None:

@@ -44,6 +44,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -1965,6 +1966,12 @@ class SettingsPage(QWidget):
     overlay_setting_changed = Signal(str, object)
     #: The ▶ next to Export > Sound: play this built-in sound (the app owns the audio).
     sound_preview_requested = Signal(str)
+    #: Download the latest wiki maps into the local cache without blocking Settings.
+    map_download_requested = Signal()
+    #: Check GitHub for an app update and download it in the background.
+    app_update_requested = Signal()
+    #: Restart to install an app update that is ready.
+    app_restart_requested = Signal()
 
     def __init__(
         self, engine: Engine, cfg: Config, settings: QSettings, parent: QWidget | None = None
@@ -1992,6 +1999,8 @@ class SettingsPage(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
 
+        self._build_app_updates()
+        self._build_map_downloads()
         self._build_status()
         self._build_general()
         self._build_capture()
@@ -2052,6 +2061,95 @@ class SettingsPage(QWidget):
         # (they also push the live config into the picker).
 
     # -- section builders ------------------------------------------------------------
+    def _build_app_updates(self) -> None:
+        self._app_update_ready = False
+        panel = _panel()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(8)
+        layout.addWidget(_label("App updates", "Heading"))
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.app_update_button = QPushButton("Update")
+        self.app_update_button.setObjectName("Chip")
+        self.app_update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.app_update_button.clicked.connect(self._request_app_update)
+        row.addWidget(self.app_update_button)
+        self.app_update_on_startup = QCheckBox("On startup")
+        self.app_update_on_startup.setToolTip(
+            "Download app updates from GitHub on startup and offer to restart when ready."
+        )
+        self.app_update_on_startup.setChecked(
+            self._settings.value("app/update_on_startup", False, type=bool)
+        )
+        self.app_update_on_startup.toggled.connect(
+            lambda enabled: self._settings.setValue("app/update_on_startup", enabled)
+        )
+        row.addWidget(self.app_update_on_startup)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.app_update_status = _label("", "Muted")
+        self.app_update_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.app_update_status.setWordWrap(True)
+        self.app_update_status.hide()
+        layout.addWidget(self.app_update_status)
+        self._content.addWidget(panel)
+
+    def _request_app_update(self) -> None:
+        if self._app_update_ready:
+            self.app_restart_requested.emit()
+        else:
+            self.app_update_requested.emit()
+
+    def set_app_update_status(self, message: str, running: bool, ready: bool = False) -> None:
+        """Offer a restart only after an app update is ready to install."""
+        self._app_update_ready = ready
+        self.app_update_button.setText("Restart to update" if ready else "Update")
+        self.app_update_button.setEnabled(not running)
+        self.app_update_status.setText(message)
+        self.app_update_status.setVisible(bool(message))
+
+    def _build_map_downloads(self) -> None:
+        panel = _panel()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(8)
+        layout.addWidget(_label("Map updates", "Heading"))
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.map_download_button = QPushButton("Download latest maps")
+        self.map_download_button.setObjectName("Chip")
+        self.map_download_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.map_download_button.clicked.connect(self.map_download_requested.emit)
+        row.addWidget(self.map_download_button)
+        self.map_download_source = QLabel(
+            'from <a href="https://monstersandmemories.miraheze.org/wiki/Category:Zones">wiki</a>'
+        )
+        self.map_download_source.setOpenExternalLinks(True)
+        row.addWidget(self.map_download_source)
+        self.map_download_on_startup = QCheckBox("On startup")
+        self.map_download_on_startup.setChecked(
+            self._settings.value("map/download_on_startup", False, type=bool)
+        )
+        self.map_download_on_startup.toggled.connect(
+            lambda enabled: self._settings.setValue("map/download_on_startup", enabled)
+        )
+        row.addWidget(self.map_download_on_startup)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.map_download_status = _label("", "Muted")
+        self.map_download_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.map_download_status.setWordWrap(True)
+        self.map_download_status.hide()
+        layout.addWidget(self.map_download_status)
+        self._content.addWidget(panel)
+
+    def set_map_download_status(self, message: str, running: bool) -> None:
+        """Show map download progress and prevent duplicate requests."""
+        self.map_download_button.setEnabled(not running)
+        self.map_download_status.setText(message)
+        self.map_download_status.setVisible(bool(message))
+
     def _section(self, title: str, blurb: str = "") -> QFormLayout:
         panel = _panel()
         panel_layout = QVBoxLayout(panel)

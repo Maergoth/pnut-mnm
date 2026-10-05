@@ -143,7 +143,7 @@ class MapRepository:
     def _path(self, key: str, suffix: str) -> Path:
         return self.cache_dir / (hashlib.sha256(key.encode()).hexdigest() + suffix)
 
-    def _save(self, path: Path, data: bytes) -> None:
+    def _save(self, path: Path, data: bytes, *, strict: bool = False) -> None:
         temporary = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,11 +153,40 @@ class MapRepository:
             os.replace(temporary, path)
         except OSError:
             log.warning("Could not cache map at %s", path, exc_info=True)
+            if strict:
+                raise
         finally:
             if temporary is not None:
-                temporary.unlink(missing_ok=True)
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    log.warning("Could not remove temporary map download at %s", temporary)
 
-    def maps(self, zone: str, *, refresh: bool = False) -> list[MapImage]:
+    def save_maps(self, zone: str, entries: list[MapImage], *, strict: bool = False) -> None:
+        """Commit a map list after its images are available in the cache."""
+        title = zone_title(zone)
+        if not title:
+            return
+        path = self._path(title, ".json")
+        # Do not persist a no-map result forever: maps are still being added.
+        if entries:
+            self._save(path, json.dumps([asdict(m) for m in entries]).encode(), strict=strict)
+        else:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Could not remove obsolete map manifest at %s", path)
+                if strict:
+                    raise
+
+    def maps(self, zone: str, *, refresh: bool = False, strict: bool = False,
+             persist: bool = True) -> list[MapImage]:
+        """Load a zone's map list; strict refreshes surface network/cache failures.
+
+        Normal viewing can fall back to an older cache while offline. An explicit
+        download needs to distinguish a fresh copy from that fallback. Bulk
+        downloads stage lists with persist=False until all their images succeed.
+        """
         title = zone_title(zone)
         if not title:
             return []
@@ -178,21 +207,15 @@ class MapRepository:
                 raise ValueError(data["error"].get("info", "Zone page not found"))
             text = data["parse"]["text"]
             maps = parse_maps(text["*"] if isinstance(text, dict) else text, title)
-            # Do not persist a no-map result forever: maps are still being added.
-            if maps:
-                self._save(path, json.dumps([asdict(m) for m in maps]).encode())
-            else:
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError:
-                    log.warning("Could not remove obsolete map manifest at %s", path)
+            if persist:
+                self.save_maps(title, maps, strict=strict)
             return maps
         except Exception:
-            if cached is not None:
+            if cached is not None and not strict:
                 return cached
             raise
 
-    def image(self, entry: MapImage, *, refresh: bool = False) -> bytes:
+    def image(self, entry: MapImage, *, refresh: bool = False, strict: bool = False) -> bytes:
         path = self._path(entry.url, ".image")
         cached = None
         try:
@@ -205,8 +228,8 @@ class MapRepository:
         try:
             data = _download(entry.url)
         except Exception:
-            if cached is not None:
+            if cached is not None and not strict:
                 return cached
             raise
-        self._save(path, data)
+        self._save(path, data, strict=strict)
         return data

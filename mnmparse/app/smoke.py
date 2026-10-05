@@ -21,7 +21,7 @@ from typing import Any
 QT_MODULES = ("QtCore", "QtGui", "QtWidgets", "QtMultimedia", "QtTextToSpeech")
 APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
-    "triggers_runtime", "triggers_page", "map_overlay", "main",
+    "triggers_runtime", "triggers_page", "map_overlay", "map_downloads", "app_updates", "main",
 )
 NATIVE_MODULES = ("numpy", "cv2")
 WINDOWS_MODULES = (
@@ -65,7 +65,7 @@ def _exercise(report: dict[str, Any]) -> None:
                 importlib.import_module(full_name)
                 report["imports"].append(full_name)
 
-            from mnmparse.app import main, theme
+            from mnmparse.app import APP_VERSION, main, theme
             from mnmparse.app.engine import Engine
             from mnmparse.app.map_overlay import MapOverlay
             from mnmparse.app.overlay import OverlayWindow
@@ -86,11 +86,15 @@ def _exercise(report: dict[str, Any]) -> None:
             overlay = OverlayWindow(settings, cfg)
             windows.append(overlay)
             window = main.MainWindow(engine, overlay, cfg, settings)
+            report["app_version"] = APP_VERSION
             windows.append(window)
             window.prepare_quit()
             missing = [key for key, page in window._pages.items() if isinstance(page, main._MissingPage)]
             if missing:
                 raise RuntimeError(f"Application pages fell back to placeholders: {missing}")
+            settings_page = window.page("settings")
+            if settings_page.app_update_on_startup.isChecked() or settings_page.map_download_on_startup.isChecked():
+                raise RuntimeError("Startup updates must be opt-in on a fresh installation")
             map_window = MapOverlay(settings, MapRepository(Path(temporary) / "map_cache"))
             windows.append(map_window)
             app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)

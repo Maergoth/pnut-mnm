@@ -50,6 +50,8 @@ mnmparse/            library + CLI
     models.py        ActorRow / EncounterSnapshot / build_snapshot (CC crediting lives here)
     docked_panel.py  DockedPanel: base for windows that dock under the overlay (drag off, snap back)
     map_overlay.py  resizable/fullscreen map viewer, asynchronous requests and zone switching
+    map_downloads.py  background map updates for Settings and the optional startup download
+    app_updates.py  verified GitHub downloads and deferred Windows application replacement
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)
     timer_panel.py   TimerPanel: trigger countdowns with radial rings, docked under the overlay
     triggers_page.py TriggersPage: trigger list and editor, audio settings

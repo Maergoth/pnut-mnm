@@ -117,7 +117,99 @@ class MapWindowTests(unittest.TestCase):
         self.window._ready(self.window._token, ([], b"", True), "")
         self.assertIn("No map", self.window.status.text())
         self.window._ready(self.window._token, None, "network unavailable")
-        self.assertIn("Refresh", self.window.status.text())
+        self.assertIn("Settings", self.window.status.text())
+
+    def test_frameless_header_has_equal_selectors_and_does_not_resize_map(self):
+        from PySide6.QtCore import QPoint, Qt
+        self.window.resize(720, 480)
+        self.window.show()
+        self.app.processEvents()
+        self.assertTrue(self.window.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        viewport = self.window.view.viewport().size()
+        self.window._show_header()
+        self.app.processEvents()
+        self.assertLessEqual(abs(self.window.zone.width() - self.window.variants.width()), 1)
+        self.assertEqual(self.window.zone.y(), self.window.variants.y())
+        self.assertEqual(self.window.fullscreen.text(), "")
+        self.assertFalse(self.window.fullscreen.icon().isNull())
+        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+            self.window._hide_header()
+        self.assertFalse(self.window.header.isVisible())
+        self.assertEqual(self.window.view.viewport().size(), viewport)
+
+    def test_hover_reveals_header_and_popup_keeps_it_open(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtTest import QTest
+        self.window.show()
+        QTest.mouseMove(self.window.view.viewport(), QPoint(150, 15))
+        self.app.processEvents()
+        self.assertTrue(self.window.header.isVisible())
+        self.window.zone.showPopup()
+        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+            self.window._hide_header()
+            self.assertTrue(self.window.header.isVisible())
+            self.window.zone.hidePopup()
+            self.window._hide_header()
+        self.assertFalse(self.window.header.isVisible())
+
+    def test_frameless_window_retains_native_resize_and_move(self):
+        from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from unittest.mock import Mock
+        self.window.show()
+        handle = Mock()
+        with patch.object(self.window, "windowHandle", return_value=handle):
+            for point, watched in ((QPoint(1, 100), self.window.view.viewport()),
+                                   (QPoint(100, 6), self.window.header)):
+                event = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(point),
+                                   QPointF(self.window.mapToGlobal(point)),
+                                   Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                                   Qt.KeyboardModifier.NoModifier)
+                self.window.eventFilter(watched, event)
+        handle.startSystemResize.assert_called_once_with(Qt.Edge.LeftEdge)
+        handle.startSystemMove.assert_called_once_with()
+
+    def test_zone_edit_stays_visible_until_enter(self):
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        self.window.show()
+        self.window._show_header()
+        self.window.zone.lineEdit().setFocus()
+        QTest.keyClicks(self.window.zone.lineEdit(), "Sungreet")
+        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+            self.window._hide_header()
+            self.assertTrue(self.window.header.isVisible())
+            with patch.object(self.window, "load"):
+                QTest.keyClick(self.window.zone.lineEdit(), Qt.Key.Key_Return)
+            self.window._hide_header()
+        self.assertFalse(self.window.header.isVisible())
+
+    def test_background_update_preserves_selected_floor_and_zoom(self):
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        from PySide6.QtGui import QImage
+        entries = parse_maps(HTML, "Sungreet Strand")
+        image = QImage(1500, 1500, QImage.Format.Format_RGB32)
+        image.fill(0)
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        self.window.set_zone("Sungreet Strand")
+        self.window._ready(self.window._token, (entries, bytes(data), True, entries[1].url), "")
+        self.window.show()
+        self.app.processEvents()
+        self.window.view.zoom(2)
+        self.window.view.centerOn(600, 650)
+        transform = self.window.view.transform()
+        centre = self.window.view.mapToScene(self.window.view.viewport().rect().center())
+        with patch.object(self.window.repo, "maps", return_value=entries), \
+             patch.object(self.window.repo, "image", return_value=bytes(data)) as download, \
+             patch("mnmparse.app.map_overlay._Load.start", autospec=True, side_effect=lambda worker: worker.run()):
+            self.window.reload_cached_map()
+        download.assert_called_once_with(entries[1], refresh=False)
+        self.assertEqual(self.window.variants.currentIndex(), 1)
+        self.assertEqual(self.window.view.transform(), transform)
+        self.assertLess((self.window.view.mapToScene(self.window.view.viewport().rect().center()) - centre).manhattanLength(), 4)
 
     def test_window_resize_fullscreen_return_and_geometry_saved(self):
         self.window.resize(720, 480)

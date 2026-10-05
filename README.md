@@ -66,7 +66,15 @@ code-signed, so the first time Windows SmartScreen may say "Windows protected yo
 **More info**, then **Run anyway**. Capture starts by itself when the app opens (Settings >
 "Start capture on launch" turns that off). Your settings (`config.json`), triggers
 (`triggers.json`), logs and learned spellings (`logs\`) are created next to the exe and are never
-part of a download, so to update, unzip a newer release over the same folder.
+part of a download.
+
+**App updates.** At the top of **Settings**, click **Update** to download the latest stable
+Windows release from GitHub. When it is ready, click **Restart to update**. PNUT verifies the
+download, replaces its application files, and keeps your configuration, triggers, logs and
+map cache. The previous application files are retained in a backup folder for recovery.
+**On startup** downloads updates automatically and offers a restart; it is unchecked by
+default. Source checkouts are updated through Git instead. You can also download a newer ZIP
+from Releases, close PNUT, and replace the executable and entire `_internal` folder manually.
 
 **Updating from 0.1.0:** replace the entire `_internal` folder, or extract 0.1.1 or later
 into a fresh folder. Merging files alone leaves an incompatible DLL from 0.1.0 behind and
@@ -139,7 +147,7 @@ the `mss` backend nothing is grabbed while the game window is gone.
 
 The top bar has **Start/Stop capture** and switches for **Overlay** and **Lock overlay**.
 Capture details (game window found, capture rate, OCR time, messages, covered frames,
-unreadable lines, re-read lines skipped) are in the Status section at the top of Settings. A
+unreadable lines, re-read lines skipped) are in the Status section in Settings. A
 warning bar appears under the top bar, and a small one on the overlay, only when something
 needs you: a game panel covering the Combat chat (lines scrolling by meanwhile are lost) or
 chat text that mostly does not read. **Dismiss** (or a click on the overlay's warning) hides it
@@ -330,16 +338,19 @@ overlay's bottom edge, double-click it, or right-click > Snap to overlay); the a
 then docks under the overlay directly.
 
 **Map overlay.** Click **Map** in the top bar to open a separate always-on-top map window.
-Drag its border to resize; **Fullscreen** or F11 fills the screen, and Escape restores its
-window. Scroll to zoom, drag to pan, and use **Fit** to see the whole map. A recognized
+Hover over its top edge to reveal the single header with zone/map selectors and a fullscreen
+icon. The header hides when you move away. Drag the header's empty space to move the window
+(or Alt-drag anywhere), and drag its edges to resize. F11 fills the screen, and Escape
+restores the window. Scroll to zoom and drag to pan. A recognized
 "You have entered ..." or "Entering ..." line switches the map automatically. Keep zone
 messages in the cropped Combat chat. You can also choose a zone manually and select another
 map or floor when the wiki has several. Directional Night Harbor names use the same city map.
 
 Maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
-The map window links to each image's source and credits. Maps download when opened and are
-cached in `map_cache/` for offline use; **Refresh** checks for updates. Zones without a map show
-a clear message and wiki link. An unavailable map never leaves the previous zone's image on
+Maps download when opened and are cached in `map_cache/` for offline use. At the top of
+**Settings**, **Download latest maps** updates every known zone's maps in the background;
+check **On startup** to do this automatically at launch (unchecked by default). The adjacent **wiki** link opens
+the map source. Zones without a map show a clear message. An unavailable map never leaves the previous zone's image on
 screen. Only public zone pages and images are requested; player names and combat logs are
 never sent to the wiki.
 
