@@ -205,6 +205,7 @@ class ControllerTests(unittest.TestCase):
                 self.assertFalse(controller.prepare_restart())
             process.assert_called_once()
             self.assertIn("-NonInteractive", process.call_args.args[0])
+            self.assertEqual(process.call_args.kwargs["creationflags"], updates.subprocess.CREATE_NO_WINDOW)
             self.assertEqual((install / "config.json").read_text(), "personal")
             self.assertFalse((install / updates.EXECUTABLE).exists())
             self.assertTrue((package.parent / "install.ps1").is_file())
@@ -220,6 +221,13 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("Remove-Item", script)
         self.assertNotIn("config.json", script)
         self.assertNotIn("triggers.json", script)
+        # Only the updater helper stays hidden; both successful and rollback app
+        # launches must display the interactive window.
+        launches = [line for line in script.splitlines() if "Start-Process" in line]
+        self.assertEqual(len(launches), 2)
+        for launch in launches:
+            self.assertIn("-WindowStyle Normal", launch)
+            self.assertNotIn("-WindowStyle Hidden", launch)
         with self.assertRaises(updates.UpdateError):
             updates.make_restart_script(Path("relative"), root, 123, "a" * 32)
 

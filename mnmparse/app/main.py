@@ -1092,7 +1092,16 @@ class MainWindow(QMainWindow):
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
         QTimer.singleShot(0, self, self._fit_top_bar)
+        QTimer.singleShot(0, self, lambda: _ensure_native_visible(self))
         self.visibility_changed.emit(True)
+
+    def reveal(self) -> None:
+        """Restore our main window from the tray without discarding maximization."""
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        _ensure_native_visible(self)
+        self.raise_()
+        self.activateWindow()
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802 - Qt override
         super().hideEvent(event)
@@ -1133,6 +1142,34 @@ def _overlay_locked(overlay: Any, default: bool) -> bool:
         except Exception:  # noqa: BLE001
             log.debug("overlay.%s failed", name, exc_info=True)
     return default
+
+
+def _ensure_native_visible(window: QWidget) -> None:
+    """Repair SW_HIDE launch state for our main window, including old updaters.
+
+    Windows can consume a launcher's hidden flag on Qt's first ShowWindow call.
+    Qt then considers the window shown, so another QWidget.show() is a no-op.
+    Check after the show event and only repair an unintended native mismatch.
+    """
+    if (QGuiApplication.platformName() != "windows" or not window.isVisible()
+            or window.isMinimized() or window.windowHandle() is None):
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        hwnd = int(window.winId())
+        if not user32.IsWindowVisible(hwnd):
+            # Preserve maximization; a normal window need not steal focus at startup.
+            user32.ShowWindow(hwnd, 3 if window.isMaximized() else 8)
+            log.info("Restored main window hidden by its launcher")
+    except Exception:
+        log.debug("Could not reconcile main window visibility", exc_info=True)
 
 
 class App(QApplication):
@@ -1737,8 +1774,7 @@ class App(QApplication):
         """Bring the main window back from the tray (it is our own window)."""
         if self.window is None:
             return
-        self.window.showNormal()
-        self.window.activateWindow()  # our main window only; never the overlay or the game
+        self.window.reveal()  # our main window only; never the overlay or the game
 
     def hide_window(self) -> None:
         """Hide the main window to the tray."""

@@ -23,6 +23,22 @@ Installed copies are updated through PNUT's **Update** feature. Development and 
 tasks must not replace binaries or change files in a user's installed App folder; publish
 the tested release to GitHub so the app can download it.
 
+`tests/test_native_window_visibility.py` also exercises the real Windows Qt platform on
+an isolated desktop that is never displayed. It reproduces the hidden launch used by
+older updaters and checks startup recovery and tray restoration. Keep the updater helper
+hidden, but launch the interactive application normally; offscreen smoke tests alone
+cannot catch this Windows visibility mismatch.
+
+### README screenshots and animation
+
+`scripts/capture_screenshots.py` renders the actual widgets with fictional encounter and
+session data. Pass `--map-cache PATH` to an existing map cache to include the map screenshot;
+the cache is only read. `scripts/capture_timer_demo.py` records the real timer overlay at
+4× speed into `docs/images/timers-demo.gif`. Both scripts use offscreen windows and temporary
+settings, with no capture or audio. Run them with the development Python environment.
+Keep sample-data and playback-speed captions in the README, and credit map artwork beside
+the screenshot.
+
 
 ### Repository map
 

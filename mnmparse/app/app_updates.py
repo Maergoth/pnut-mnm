@@ -338,7 +338,8 @@ try {
         }
     }
     @{ok=$true; backup=$backup} | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
-    Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') -WorkingDirectory $install -WindowStyle Hidden
+    # The helper is hidden, but the restarted interactive application must be visible.
+    Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') -WorkingDirectory $install -WindowStyle Normal
 } catch {
     $failure = $_.Exception.Message
     try {
@@ -351,7 +352,7 @@ try {
     @{ok=$false; error=$failure; backup=$backup} | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
     $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
     if (-not $owner -and (Test-Path -LiteralPath (Join-Path $install 'PNUT M&M.exe'))) {
-        Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') -WorkingDirectory $install -WindowStyle Hidden
+        Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') -WorkingDirectory $install -WindowStyle Normal
     }
     exit 1
 }

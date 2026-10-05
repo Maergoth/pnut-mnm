@@ -10,6 +10,35 @@ For maintainers: [development guide](docs/DEVELOPMENT.md) and [repository file a
 
 If you have any questions, contact @Maergoth in discord.
 
+## See PNUT in action
+
+Actual app views with sample combat and timer data.
+
+**Combat and session tracking.** Review encounters, damage, healing, crowd control, and loot.
+
+![PNUT combat view with a sample group encounter](docs/images/combat-session.png)
+
+<details>
+<summary>See loot grouped by person</summary>
+
+Expand each person's total to see their item breakdown.
+
+![PNUT session view showing sample loot totals and items for each person](docs/images/session-loot.png)
+
+</details>
+
+**Timers in motion.** Countdown rings and bars change color as expiry approaches. This demo
+runs at **4× speed**; timer colors and warning thresholds are customizable.
+
+![Animated PNUT timer overlay counting down from green through amber to red](docs/images/timers-demo.gif)
+
+**Map overlay.** A compact header provides zone and map selectors, a drag grip when unlocked,
+and fullscreen. The map follows zone changes and remembers its last state.
+
+![PNUT map overlay with its compact header expanded](docs/images/map-overlay.png)
+
+Map artwork: [Shaded Dunes Map, Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/File:Shaded_Dunes_Map.jpg).
+
 ---
 
 ## User guide
@@ -28,8 +57,8 @@ Read this before using it.
 
 - The tool is passive and out-of-process. It reads pixels only. It never opens the game
   process, reads memory, injects anything, hooks anything, sends keystrokes or mouse input, or
-  sends messages to the game window. The only Win32 calls are the read-only ones that find the
-  window (EnumWindows, GetWindowText, GetClassName, GetWindowRect, IsWindowVisible,
+  sends messages to the game window. Game-window lookups use read-only Win32 calls
+  (EnumWindows, GetWindowText, GetClassName, GetWindowRect, IsWindowVisible,
   GetWindowThreadProcessId). There is no network capture. From the game's point of view it is
   indistinguishable from a screenshot or an OBS window capture.
 - The optional overlay is our own frameless, always-on-top window. It is shown without taking
@@ -72,6 +101,7 @@ part of a download.
 Windows release from GitHub. When it is ready, click **Restart to update**. PNUT verifies the
 download, replaces its application files, and keeps your configuration, triggers, logs and
 map cache. The previous application files are retained in a backup folder for recovery.
+The main window reopens after the update, keeping its saved size and maximized state.
 **On startup** downloads updates automatically and offers a restart; it is unchecked by
 default. Source checkouts are updated through Git instead. You can also download a newer ZIP
 from Releases, close PNUT, and replace the executable and entire `_internal` folder manually.
