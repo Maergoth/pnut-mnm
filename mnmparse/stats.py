@@ -14,7 +14,7 @@ the viewer's fight.
 
 When a fight closes, the players who fought on the viewer's side in it are
 reported to the party roster (:meth:`mnmparse.party.PartyRoster.note_fight`),
-which takes a player who shares several fights with the viewer as a member.
+which refreshes already identified members without adding nearby players.
 
 :class:`Stats` keeps the open encounter (``current()``) and the closed
 ones (``history``) and renders the per-actor table shown in SPEC

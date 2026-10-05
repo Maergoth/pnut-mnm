@@ -51,7 +51,8 @@ class RosterTests(unittest.TestCase):
             ("--Corvath loots [Bone Chips] from a rat's corpse.--", "loot", "Corvath"),
         ]:
             roster.observe(SimpleNamespace(text=text, kind=kind, actor=actor, ts=1.0))
-        self.assertEqual(roster.members(), {"Tamsin", "Brannoc", "Wenna", "Corvath"})
+        self.assertEqual(roster.members(), {"Tamsin", "Brannoc", "Wenna"})
+        self.assertNotIn("Corvath", roster.members(), "nearby loot is not party evidence")
         roster.observe(SimpleNamespace(text="Wenna has left the party.", kind="status", actor="Wenna", ts=2.0))
         self.assertNotIn("Wenna", roster.members())
         roster.observe(SimpleNamespace(text="You loot [a rat tail].", kind="loot", actor="You", ts=2.0))
@@ -113,13 +114,13 @@ class SidesTests(unittest.TestCase):
         self.assertEqual(snap.total_damage, 60)
         self.assertNotIn("Obadiah 4", format_snapshot(snap, PRESETS["DPS"]))
 
-    def test_unknown_party_counts_everyone_on_our_side(self) -> None:
+    def test_empty_roster_counts_only_the_viewer(self) -> None:
         _stats, snap = _fight([
             (1, "You crush a rat for 10 points of damage."),
             (2, "Rupedu slashes a rat for 10 points of damage."),
         ])
-        self.assertTrue(_rows(snap)["Rupedu"].in_group, "nothing says who the party is yet")
-        self.assertEqual(snap.total_damage, 20)
+        self.assertFalse(_rows(snap)["Rupedu"].in_group, "fighting the same named mob does not prove membership")
+        self.assertEqual(snap.total_damage, 10)
 
     def test_manual_override_counts_a_pet(self) -> None:
         stats = Stats(8.0)
@@ -166,7 +167,7 @@ class HiddenMissesTests(unittest.TestCase):
             (5, "Lepob tries to slash YOU, but misses!"),
             (6, "Pusubu tries to slash a caiman, but a caiman dodges!"),
         ]
-        stats, snap = _fight(lines)
+        stats, snap = _fight(lines, party=("Pusubu",))
         rows = _rows(snap)
         self.assertFalse(stats.others_misses_seen)
         self.assertFalse(rows["Pusubu"].misses_shown)

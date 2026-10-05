@@ -838,6 +838,7 @@ def self_rows(snap: EncounterSnapshot, tab: str, player_name: str) -> list[Actor
 
 
 _ATTACK_KINDS = frozenset({"melee_hit", "melee_miss", "ability_hit"})
+_PARTICIPATION_KINDS = _ATTACK_KINDS | {"ability_miss", "resist", "kill"}
 DEATH_REPEAT_S = 30.0  #: the same player "slain" again this soon is the same death read twice
 
 
@@ -864,7 +865,7 @@ def _deaths(events: list[Event], canon: dict[str, str]) -> tuple[dict[str, int],
 
 
 def _classify_sides(
-    events: list[Event], canon: dict[str, str], accs: dict[str, _Acc], you_name: str, members: set[str], known: bool,
+    events: list[Event], canon: dict[str, str], accs: dict[str, _Acc], you_name: str, members: set[str],
     pet_owners: dict[str, str] | None = None, excluded: set[str] | None = None,
 ) -> tuple[set[str], set[str]]:
     """``(enemies, group)``: the actor names fighting the group, and the ones counted as the
@@ -874,16 +875,18 @@ def _classify_sides(
     plus anyone who hit the group or was hit by it (a named mob without "a/an/the", a player
     in PvP).  Whoever hits an enemy, or is hit by one, is on the group's side; whoever fights
     them is an enemy too.  Players on the group's side who are not in the party are outsiders
-    (other groups nearby): neither enemy nor group.  Until anything says who the party is
-    (``known`` false), everyone on the group's side counts as group.
+    (other groups nearby): neither enemy nor group. An empty roster means only the
+    viewer and their pets count; fighting nearby never establishes membership.
     """
     names = set(accs)
     pet_owners = pet_owners or {}
     excluded = excluded or set()
-    group = {name for name in names if name == you_name or name in members}
+    # Keep identities even when only a kill/death line mentions them; such lines
+    # prove participation but do not necessarily create a numeric accumulator.
+    group = ({you_name} | members) - excluded
     # A manually assigned pet follows its owner, even if its name once looked like a mob.
     group -= set(pet_owners)
-    group |= {pet for pet, owner in pet_owners.items() if owner == you_name or owner in members}
+    group |= {pet for pet, owner in pet_owners.items() if owner in group}
     group -= excluded
     enemies = {name for name in names if is_npc_name(name)} - group - set(pet_owners)
     edges: set[tuple[str, str]] = set()
@@ -914,10 +917,39 @@ def _classify_sides(
         friends -= enemies
         if (len(enemies), len(friends)) == before:
             break
-    if not known:
-        group = names - enemies - excluded
-        group -= {pet for pet, owner in pet_owners.items() if owner in excluded}
     return enemies, group - enemies
+
+
+def _group_participated(
+    events: list[Event], canon: dict[str, str], accs: dict[str, _Acc],
+    group: set[str], enemies: set[str],
+) -> bool:
+    """Require combat involvement, rather than merely a group name in the log.
+
+    Self-buffs, regeneration and looting during someone else's fight are not
+    participation. Healing a friendly combatant or landing credited utility is.
+    Helping a stranger does not add that stranger to the party.
+    """
+    combatants: set[str] = set()
+    for ev in events:
+        if ev.kind not in _PARTICIPATION_KINDS or not ev.actor or not ev.target:
+            continue
+        actor, target = canon.get(ev.actor, ev.actor), canon.get(ev.target, ev.target)
+        if actor == target:
+            continue
+        combatants.update((actor, target))
+        if (actor in group) != (target in group):
+            return True
+    for ev in events:
+        if ev.kind != "heal" or not ev.actor or not ev.target or not ev.amount or ev.amount <= 0:
+            continue
+        actor, target = canon.get(ev.actor, ev.actor), canon.get(ev.target, ev.target)
+        if actor in group and actor != target and target in combatants and target not in enemies:
+            return True
+    return any(
+        acc.name in group and (acc.cc_landed or acc.debuffs or acc.aggro)
+        for acc in accs.values()
+    )
 
 
 def _group_span(events: list[Event], canon: dict[str, str], group: set[str]) -> tuple[float, float] | None:
@@ -979,7 +1011,6 @@ def build_snapshot(
         party |= {vocab.canonical("player", n) or n for n in party}
     party |= {canon.get(n, n) for n in party}
     roster = getattr(stats, "roster", None)
-    known = roster.known() if roster is not None else bool(party)
     pet_owners = {acc.name: you_name for acc in accs.values() if acc.is_pet}
     if roster is not None:
         for pet, owner in roster.pet_owners().items():
@@ -989,7 +1020,7 @@ def build_snapshot(
         if pet in accs:
             accs[pet].is_pet = True
     excluded = {canon.get(n, n) for n in getattr(roster, "manual_out", ())}
-    enemies, group = _classify_sides(enc.events, canon, accs, you_name, party, known, pet_owners, excluded)
+    enemies, group = _classify_sides(enc.events, canon, accs, you_name, party, pet_owners, excluded)
     for acc in accs.values():
         _drop_enemy_heals(acc, enemies)
 
@@ -1014,9 +1045,7 @@ def build_snapshot(
     rows.sort(key=lambda r: (-r.damage, r.name))
 
     killed = sorted({canon.get(n, n) for n in enc.killed_names})
-    ours = any(
-        r.is_you or r.name in party or (r.name in group and r.is_pet) for r in rows
-    )
+    ours = _group_participated(enc.events, canon, accs, group, enemies)
     deaths, killers = _deaths(enc.events, canon)
     for r in rows:
         r.deaths = deaths.get(r.name, 0)

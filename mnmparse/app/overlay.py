@@ -951,7 +951,36 @@ class OverlayWindow(QWidget):
 
     def set_show_other_groups(self, show: bool) -> None:
         """Whether fights nobody in the party took part in replace the meter."""
-        self._show_others = bool(show)
+        show = bool(show)
+        if show == self._show_others:
+            return
+        self._show_others = show
+        self._refresh_filtered_selection()
+
+    def _listed(self, snap: Any | None) -> bool:
+        return snap is not None and (self._show_others or bool(getattr(snap, "ours", True)))
+
+    def _refresh_filtered_selection(self) -> None:
+        """Reconcile live, pinned and summary views immediately after filtering changes."""
+        self._throttle.stop()
+        self._pending, self._pending_set = None, False
+        if self._pinned is not None and str(self._pinned.key).startswith("zone:"):
+            self._pinned = self.zone_summary(self._pinned)
+        elif self._pinned is not None:
+            self._pinned = self._history.get(self._pinned.key, self._pinned)
+            if self._live is not None and self._live.key == self._pinned.key:
+                self._pinned = self._live
+            if not self._listed(self._pinned):
+                self._pinned = None
+        if self._pinned is not None:
+            self._snap = self._pinned
+            self._ended = True
+        else:
+            self._pin_live_key = None
+            self._snap = self._live if self._listed(self._live) else next(iter(self.history()), None)
+            self._ended = self._snap is None or bool(getattr(self._snap, "closed", False))
+        self._refresh_header()
+        self._refresh_rows()
 
     def set_snapshot(self, snap: Any | None) -> None:
         """Queue a snapshot; applied at most every 100 ms (the newest wins).
@@ -960,12 +989,17 @@ class OverlayWindow(QWidget):
         the dimmed *ended* state until the next encounter opens.  Another group's
         fight (``snap.ours`` false) is ignored unless that is switched on.
         """
-        if snap is not None and not getattr(snap, "ours", True) and not getattr(self, "_show_others", False):
-            return
         if snap is not None:
             self._live = snap
             if getattr(snap, "closed", False):
                 self._remember(snap)
+            if not self._listed(snap):
+                # A correction can make the displayed or queued fight unrelated.
+                same_summary = (self._snap is not None and str(self._snap.key).startswith("zone:")
+                                and self._visit_key(self._snap) == self._visit_key(snap))
+                if same_summary or any(s is not None and s.key == snap.key for s in (self._snap, self._pending)):
+                    self._refresh_filtered_selection()
+                return
         if self._pinned is not None:
             new_fight = (
                 snap is not None
@@ -992,8 +1026,7 @@ class OverlayWindow(QWidget):
     def set_history(self, snaps: Sequence[Any] | None) -> None:
         """Prime the encounter list (oldest first, as ``Engine.history`` returns)."""
         for snap in snaps or ():
-            if getattr(snap, "ours", True) or self._show_others:
-                self._remember(snap)
+            self._remember(snap)
 
     def update_encounter(self, snap: Any | None) -> None:
         """A closed fight counted again (``Engine.encounter_updated``, same key): replace it in
@@ -1002,13 +1035,9 @@ class OverlayWindow(QWidget):
         if snap is None:
             return
         key = snap.key
-        listed = getattr(snap, "ours", True) or self._show_others
         if key in self._history:
-            if listed:
-                self._history[key] = snap  # same place in the list
-            else:
-                self._history.pop(key)  # counted out of the group by hand: another group's now
-        elif listed:
+            self._history[key] = snap  # same place in the list
+        else:
             self._remember(snap)
             # keep the list in time order (a fight of another group that turned out to be ours)
             self._history = dict(sorted(self._history.items(), key=lambda kv: float(getattr(kv[1], "start", 0.0))))
@@ -1019,20 +1048,18 @@ class OverlayWindow(QWidget):
         if self._pinned is not None and self._pinned.key == key:
             self._pinned = snap
         if self._snap is not None and self._snap.key == key:
-            self._snap = snap
-            self._refresh_header()
-            self._refresh_rows()
-        elif self._snap is not None and str(self._snap.key).startswith("zone:") and self._visit_key(self._snap) == self._visit_key(snap):
-            summary = self.zone_summary(self._snap)
-            if summary is not None:
-                self._snap = summary
-                self._pinned = summary
+            if not self._listed(snap):
+                self._refresh_filtered_selection()
+            else:
+                self._snap = snap
                 self._refresh_header()
                 self._refresh_rows()
+        elif self._snap is not None and str(self._snap.key).startswith("zone:") and self._visit_key(self._snap) == self._visit_key(snap):
+            self._refresh_filtered_selection()
 
     def history(self) -> list[Any]:
         """Closed encounters, newest first."""
-        return list(reversed(self._history.values()))
+        return [s for s in reversed(self._history.values()) if self._listed(s)]
 
     def show_encounter(self, snap: Any | None) -> None:
         """Show an earlier encounter as if it had just ended; ``None`` follows the live fight.
@@ -1041,11 +1068,17 @@ class OverlayWindow(QWidget):
         # A snapshot queued while the menu was open must not replace the choice.
         self._throttle.stop()
         self._pending, self._pending_set = None, False
-        if snap is None:
+        if snap is not None and str(snap.key).startswith("zone:"):
+            snap = self.zone_summary(snap)
+        elif snap is not None:
+            snap = self._history.get(snap.key, snap)
+            if self._live is not None and self._live.key == snap.key:
+                snap = self._live
+        if snap is None or not self._listed(snap):
             self._pinned = None
             self._pin_live_key = None
-            self._snap = self._live
-            self._ended = bool(self._live is None or getattr(self._live, "closed", False))
+            self._snap = self._live if self._listed(self._live) else next(iter(self.history()), None)
+            self._ended = bool(self._snap is None or getattr(self._snap, "closed", False))
         else:
             live = self._live
             self._pin_live_key = live.key if live is not None and not getattr(live, "closed", False) else None
@@ -1078,10 +1111,14 @@ class OverlayWindow(QWidget):
 
     def _visit_snaps(self, ref: Any) -> list[Any]:
         visit = self._visit_key(ref)
-        snaps = [s for s in self._history.values() if self._visit_key(s) == visit]
-        if ref.key not in self._history and not str(ref.key).startswith("zone:"):
-            snaps.append(ref)
-        return snaps
+        snaps = {s.key: s for s in self._history.values() if self._visit_key(s) == visit and self._listed(s)}
+        if self._listed(self._live) and self._visit_key(self._live) == visit:
+            snaps[self._live.key] = self._live
+        # Prefer stored/current snapshots over a menu reference captured before a correction.
+        if (ref.key not in self._history and (self._live is None or ref.key != self._live.key)
+                and self._listed(ref) and not str(ref.key).startswith("zone:")):
+            snaps[ref.key] = ref
+        return list(snaps.values())
 
     def _name_tooltip(self, row: Any) -> str | None:
         if self._view_mode == "self":
@@ -1160,7 +1197,7 @@ class OverlayWindow(QWidget):
             action.setCheckable(True)
             action.setChecked(self._pinned is not None and self._pinned.key == snap.key)
             action.setData(("enc", snap))
-        if not self._history:
+        if not self.history():
             empty = menu.addAction("No earlier fights yet")
             empty.setEnabled(False)
         chosen = menu.exec(global_pos)
@@ -1419,6 +1456,9 @@ class OverlayWindow(QWidget):
         if not self._pending_set:
             return
         snap, self._pending, self._pending_set = self._pending, None, False
+        if snap is not None and not self._listed(snap):
+            self._refresh_filtered_selection()
+            return
         if snap is None:
             if self._snap is not None:
                 self._ended = True

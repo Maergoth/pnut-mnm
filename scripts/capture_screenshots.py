@@ -74,6 +74,7 @@ def sample_encounter() -> EncounterSnapshot:
 def sample_session(start: float):
     session = SessionStats("Aster", started=start)
     lines = [(0, "You have entered Shaded Dunes."), (600, "You have entered Infested Crypt.")]
+    lines.extend((1, f"{name} has joined the party.") for name in ("Rowan", "Mira"))
     loot = {
         "Aster": ["Bone Chips"] * 4 + ["Cloth Scraps"] * 3 + ["Cracked Gem"] * 2,
         "Rowan": ["Bone Chips"] * 5 + ["Worn Bow"] * 2,

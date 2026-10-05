@@ -459,6 +459,54 @@ class RecentFightTests(_EngineCase):
         self.assertTrue(updated and updated[0].ours, "it was ours after all")
         self.assertEqual(engine.session_snapshot().encounters, 1)
 
+    def test_excluding_a_member_removes_their_closed_fight_from_session_time(self) -> None:
+        engine = self.engine_
+        self.feed(engine, (95.0, "Wululiso has joined the party."))
+        snap = self.fight(((100.0, "Wululiso slashes a rat for 6 points of damage."),
+                           (103.0, "Wululiso slashes a rat for 5 points of damage.")))
+        self.assertTrue(snap.ours)
+        self.assertEqual(engine.session_snapshot().encounters, 1)
+        self.assertEqual(engine.session_snapshot().combat_seconds, 3.0)
+        engine.set_group_override("Wululiso", False)
+        updated = engine._maybe_rebuild_recent(now=210.0)
+        self.assertFalse(updated[0].ours)
+        self.assertEqual(engine.session_snapshot().encounters, 0)
+        self.assertEqual(engine.session_snapshot().combat_seconds, 0.0)
+        engine.set_group_override("Wululiso", True)
+        engine._maybe_rebuild_recent(now=211.0)
+        self.assertEqual(engine.session_snapshot().encounters, 1)
+        self.assertEqual(engine.session_snapshot().combat_seconds, 3.0)
+
+    def test_group_correction_revises_time_without_adding_another_fight(self) -> None:
+        engine = self.engine_
+        self.fight(((100.0, "You crush a rat for 10 points of damage."),
+                    (101.0, "You crush a rat for 10 points of damage."),
+                    (107.0, "Wululiso slashes a rat for 6 points of damage.")))
+        self.assertEqual(engine.session_snapshot().combat_seconds, 1.0)
+        engine.set_group_override("Wululiso", True)
+        engine._maybe_rebuild_recent(now=210.0)
+        self.assertEqual(engine.session_snapshot().encounters, 1)
+        self.assertEqual(engine.session_snapshot().combat_seconds, 7.0)
+
+    def test_correcting_pre_reset_history_does_not_change_new_session(self) -> None:
+        engine = self.engine_
+        self.feed(engine, (95.0, "Wululiso has joined the party."))
+        self.fight(((100.0, "Wululiso slashes a rat for 6 points of damage."),
+                    (103.0, "Wululiso slashes a rat for 5 points of damage.")))
+        engine.reset_session()
+        self.fight(((300.0, "You crush a beetle for 10 points of damage."),
+                    (305.0, "You crush a beetle for 10 points of damage.")), end=320.0)
+        engine.set_group_override("Wululiso", False)
+        engine._maybe_rebuild_recent(now=330.0)
+        self.assertFalse(engine.history()[0].ours)
+        self.assertEqual(engine.session_snapshot().encounters, 1)
+        self.assertEqual(engine.session_snapshot().combat_seconds, 5.0)
+        engine.set_group_override("Wululiso", True)
+        engine._maybe_rebuild_recent(now=331.0)
+        self.assertTrue(engine.history()[0].ours)
+        self.assertEqual(engine.session_snapshot().encounters, 1)
+        self.assertEqual(engine.session_snapshot().combat_seconds, 5.0)
+
 
 # ======================================================================================
 # #35: the chat scrolled up, and a short crop

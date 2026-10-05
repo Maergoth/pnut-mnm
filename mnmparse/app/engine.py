@@ -308,6 +308,7 @@ class Engine(QObject):
         self._stopped_stats: Stats | None = None  #: last capture's source events for ownership corrections
         self._writer: LogWriter | None = None
         self._history: list[EncounterSnapshot] = []
+        self._session_encounter_keys: set[str] = set()  #: closes counted since the last session reset
         #: Carried over Stop/Start (``_finish`` drops ``_stats``): the party roster, the last
         #: zone, and the tracker with its key (_capture_key) and the time capture stopped.
         self._roster: Any | None = None
@@ -480,6 +481,7 @@ class Engine(QObject):
         """Start the session counters over (keeps the encounter history)."""
         with self._lock:
             cfg = self._cfg
+            self._session_encounter_keys.clear()
             self._session_stats = SessionStats(
                 cfg.player_name, include_personal=bool(getattr(cfg, "include_personal", False)), vocab=VOCAB,
                 roster=self._roster,
@@ -682,9 +684,7 @@ class Engine(QObject):
                     snap = build_snapshot(stats, enc, self._cfg.player_name)
                     if snap != old:
                         self._history[index] = snap
-                        if snap.ours and not old.ours:
-                            self._session_stats.note_encounter(snap.duration)
-                            self._session_dirty = True
+                        self._revise_session_encounter(old, snap)
                         updated.append(snap)
             current = self._stats.current() if self._stats is not None else None
             live = build_snapshot(self._stats, current, self._cfg.player_name, now=time.time()) if current is not None else None
@@ -1152,6 +1152,7 @@ class Engine(QObject):
             return None
         snap = build_snapshot(stats, enc, self._cfg.player_name)
         self._history.append(snap)
+        self._session_encounter_keys.add(snap.key)
         if snap.ours:
             self._session_stats.note_encounter(snap.duration)
             self._session_dirty = True
@@ -1161,11 +1162,20 @@ class Engine(QObject):
         self._snapshot_dirty = False
         return snap
 
+    def _revise_session_encounter(self, old: EncounterSnapshot, new: EncounterSnapshot) -> None:
+        if old.key not in self._session_encounter_keys:
+            return  # retained history from before Reset Session cannot change new counters
+        previous = old.duration if old.ours else None
+        replacement = new.duration if new.ours else None
+        if previous != replacement:
+            self._session_stats.revise_encounter(previous, replacement)
+            self._session_dirty = True
+
     def _maybe_rebuild_recent(self, now: float | None = None) -> list[EncounterSnapshot]:
         """Count the recent closed fights again when the party roster learned someone.
 
-        A member is often recognised only after a few fights (a healer seldom loots, and the
-        roster infers members from shared fights); the fights already shown had them as an
+        A member may be recognised only after explicit party evidence arrives;
+        the fights already shown had them as an
         outsider.  The closed fights of the current zone visit that ended within
         REBUILD_WINDOW_S of ``now`` are rebuilt, and a fight's snapshot is replaced only when
         its group grew (somebody moved from outsider to group, nobody left it), so a member
@@ -1218,9 +1228,7 @@ class Engine(QObject):
             if not changed:
                 continue
             self._history[index] = new
-            if new.ours and not old.ours:
-                self._session_stats.note_encounter(new.duration)
-                self._session_dirty = True
+            self._revise_session_encounter(old, new)
             updated.append(new)
         updated.reverse()
         return updated

@@ -1255,6 +1255,7 @@ class LivePage(QWidget):
         if source is not None and key not in self._snaps and self._duplicate_of(snap) is not None:
             return False
         is_new = key not in self._snaps
+        flipped = not is_new and self._snaps[key].ours != snap.ours
         self._store(key, snap)
         if source is not None:
             self._sources[key] = source
@@ -1264,7 +1265,7 @@ class LivePage(QWidget):
         if not self._on_screen():
             self._stale = True
             return True
-        self._apply(key, is_new or was_live)
+        self._apply(key, is_new or was_live or flipped)
         return True
 
     def update_encounter(self, snap: EncounterSnapshot | None) -> None:
@@ -2321,7 +2322,9 @@ class SettingsPage(QWidget):
         self.include_personal = ToggleSwitch()
         self._row(form, "Count personal lines in Session", self.include_personal, "Skill-ups, faction, XP and consider lines, which only you see")
         self.show_other_groups = ToggleSwitch()
-        self._row(form, "Show other groups' fights", self.show_other_groups, "Fights nearby that nobody in your group took part in; the Combat chat shows them too")
+        self._row(form, "Show other groups' fights", self.show_other_groups,
+                  "When off, only fights involving you, your pets, or known group members are listed. "
+                  "Nearby players may still appear in those fights. Combat chat always shows nearby activity.")
         self._row(form, "Log directory", log_row)
         self.log_break = self._dspin(1.0, 1440.0, 5.0, 0, " min")
         self.log_max = self._dspin(1.0, 500.0, 1.0, 0, " MB")

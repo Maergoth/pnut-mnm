@@ -255,7 +255,9 @@ class TriggerStore:
 
     def install_presets(self) -> bool:
         """Add bundled starters once, preserving customizations and deliberate deletions."""
-        from .trigger_presets import PRESETS
+        from .trigger_presets import (
+            INVIS_BREAK_ID, INVIS_BREAK_PATTERN, INVIS_BREAK_PATTERN_REVISION, PRESETS,
+        )
 
         changed = False
         for data in PRESETS:
@@ -269,6 +271,16 @@ class TriggerStore:
             if not exists:
                 self.triggers.append(Trigger.from_dict(data))
             self.installed_presets.add(key)
+            changed = True
+        if INVIS_BREAK_PATTERN_REVISION not in self.installed_presets:
+            # Correct only the original preset's unchanged match. Imported same-name
+            # triggers, custom patterns/modes and every other user setting stay intact.
+            trigger = self.find(INVIS_BREAK_ID)
+            if trigger is not None and trigger.pattern == "to appear" and trigger.mode == "contains":
+                trigger.pattern = INVIS_BREAK_PATTERN
+            # Record skipped/deleted presets too: a later deliberate edit must not be
+            # silently undone on every startup (or a future app update).
+            self.installed_presets.add(INVIS_BREAK_PATTERN_REVISION)
             changed = True
         return changed
 

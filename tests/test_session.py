@@ -19,7 +19,7 @@ LINES = [
     (6.0, "Your party member Abepulifif has slain a skeletal marksman!"),
     (7.0, "You have slain a skeletal warrior!"),
     (8.0, "Cigezisi has been slain by a skeletal cleric!"),  # another group nearby: not counted
-    (8.5, "Abepulifif has been slain by a skeletal cleric!"),  # a looter, so in the party
+    (8.5, "Abepulifif has been slain by a skeletal cleric!"),  # explicit party-member kill identified them
     (9.0, "a skeletal defender is mesmerized."),
     (10.0, "a skeletal cleric's casting is interrupted."),
     (11.0, "Fozo is stunned."),
@@ -132,9 +132,37 @@ class DeathAndKillTests(unittest.TestCase):
     def test_party_member_recognised_after_their_death(self) -> None:
         snap = self.snap([
             (0.0, "Povebizu has been slain by a skeletal defender!"),
-            (300.0, "--Povebizu loots [Bone Chips] from a skeletal marksman's corpse.--"),
+            (300.0, "Povebizu has joined the party."),
         ])
         self.assertEqual(dict(snap.deaths_by_player), {"Povebizu": 1})
+
+    def test_nearby_loot_does_not_promote_an_outsider_death(self) -> None:
+        snap = self.snap([
+            (0.0, "Povebizu has been slain by a skeletal defender!"),
+            (300.0, "--Povebizu loots [Bone Chips] from a skeletal marksman's corpse.--"),
+        ])
+        self.assertEqual(snap.deaths_by_player, [])
+        self.assertEqual(snap.outsider_deaths, [("Povebizu", 1)])
+        self.assertEqual(snap.party, [])
+
+    def test_empty_shared_roster_does_not_restore_former_members_from_session(self) -> None:
+        from mnmparse.party import PartyRoster
+
+        roster = PartyRoster(PLAYER)
+        session = SessionStats(PLAYER, started=0.0, roster=roster)
+        for ts, text in (
+            (1.0, "Povebizu has joined the party."),
+            (2.0, "--Povebizu loots [Bone Chips] from a skeletal marksman's corpse.--"),
+            (3.0, "Your party has been disbanded."),
+            (4.0, "Povebizu has been slain by a skeletal defender!"),
+        ):
+            event = parse_line(text, ts, PLAYER)
+            roster.observe(event)
+            session.add(event)
+        snap = session.snapshot(now=10.0)
+        self.assertEqual(snap.party, [])
+        self.assertEqual(snap.deaths_by_player, [])
+        self.assertEqual(snap.outsider_deaths, [("Povebizu", 1)])
 
     def test_feign_death_is_not_a_death(self) -> None:
         snap = self.snap([

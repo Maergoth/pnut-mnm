@@ -263,20 +263,29 @@ one of two kinds:
   to you; the Combat chat shows their fights too). They stay in the meter, faded and in
   italics, with "Not in your group" when you hover them, but are not counted in your totals.
 
-The app learns your party from the chat: "Your party member X has slain ..." (or "has been
-slain by ..."), loot and coin splits, "X has joined the party.", "X is now the leader of the
-party.", an invite ("X has invited you to their party." followed by "You have joined the
-party."), "You give X permission to drag all your existing corpses." (the game prints it for
-every member when you zone in after a death) and your group heals (one spell of yours healing
-two or more players at once). "X has left the party." and "X has been kicked from the party."
-take X out; joining a party, "Your party has been disbanded." and being kicked start the roster
-over. Healers and enchanters seldom loot or land a killing blow, so a player who fights on your
-side in 3 fights since you joined counts as a member too, until the chat says otherwise. You are
-never on your own roster. Each member is remembered for 6 hours after they were last seen
-(`logs/party.json`), so a restart mid-session does not forget the party. When a member is
-recognised late, the fights of the last 15 minutes in that zone visit are counted again with
-them in the group (no second clipboard copy). Until it knows anything about
-your party, everyone on your side counts. The chat seldom says whose pet a pet is. Right-click any combatant in the Live meter or
+The app learns your party from explicit chat evidence: "Your party member X has slain ..."
+(or "has been slain by ..."), "X has joined the party.", "X is now the leader of the party.",
+an invitation followed by "You have joined the party.", or a named coin loot with a split
+paid to you. Ordinary loot, heals, corpse-drag permissions, and repeated nearby fights do not
+add members. With no identified party, only you and your pets count toward group totals.
+If capture starts midway through a group, right-click a member and choose **Count as my
+group** until explicit party evidence arrives.
+
+"X has left the party." and kicks remove automatic members. Joining a new party, leaving,
+or disbanding clears the automatic roster; manual choices remain. Explicit members can be
+restored across restarts when last seen within 6 hours (`logs/party.json`). Version 0.1.6
+clears automatic membership learned by older versions because it may contain guesses;
+manual choices and pet assignments are preserved. Newly identified members can update the
+last 15 minutes of fights in the current zone visit without another clipboard copy.
+
+**Show other groups' fights** filters whole encounters. Your self-buffs and self-heals during
+nearby combat do not make those fights yours. Attacking, taking hits, healing an active
+friendly combatant, landed crowd control, and pet combat count as participation. Nearby
+players can still appear as faded outsiders within a fight that includes you; their damage
+does not count toward your group's totals. Changing this setting updates the displayed
+fight and encounter history immediately.
+
+The chat seldom says whose pet a pet is. Right-click any combatant in the Live meter or
 in the overlay and use **Assign pet to group member** to select yourself or a group member. Pets keep their own
 rows, labeled with their owner; their output counts toward that owner's group and personal
 view without being counted twice. **Clear pet assignment** removes the manual link. Assignments
@@ -369,6 +378,8 @@ merge encoded characters; if a code is not detected, change the font or use JSON
 Corrupted codes are rejected rather than imported with changed settings.
 "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
+Invis Break matches **You begin to feel yourself appearing**. Version 0.1.6 corrects the old
+default match once while preserving customized patterns, other settings, and deleted presets.
 Healkick starts disabled, matching the original preset; enable it when wanted. Existing custom
 triggers are preserved, and **Restore starter triggers** restores missing starters.
 
@@ -487,8 +498,8 @@ open.
 
 **Kills and deaths count your group only.** The Combat chat also shows other groups fighting
 nearby. Your party is you plus the roster described under "Your group, outsiders and enemies"
-above; until that roster knows anyone, it is every "Your party member X" and every looter (only
-party loot is announced). "X has been slain by an a/an/the mob" is a death of X; a named mob such as
+above. An empty roster counts you alone, and ordinary loot does not add members.
+"X has been slain by an a/an/the mob" is a death of X; a named mob such as
 "Grandmaster Obadiah" killed by the party is a kill, not a death; "X has died." is what Feign
 Death prints and is not a death. Deaths of players outside the group are listed separately and
 not counted, and the same player dying twice within a minute is the same death read twice.

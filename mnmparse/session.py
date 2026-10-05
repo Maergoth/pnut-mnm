@@ -21,6 +21,7 @@ from typing import Any
 
 from .grammar import Event, is_npc_name, is_you
 from .interrupts import CC_CATEGORIES
+from .party import PartyRoster
 from .stats import canonical_names
 from .vocab import Vocabulary
 
@@ -205,8 +206,8 @@ class SessionStats:
     other groups nearby, so those lines are attributed when the snapshot is built, with the
     party known by then: the viewer plus the members of ``roster`` (the meter's
     :class:`~mnmparse.party.PartyRoster`, with its join lines and the user's own choices)
-    once it knows the party; until then the session's own evidence, every "Your party
-    member X" and every looter (only party loot is announced).  "X has died." is not a
+    or a local roster using the same explicit evidence. An empty roster is solo.
+    "X has died." is not a
     death: it is what a Feign Death prints.
     """
 
@@ -222,8 +223,9 @@ class SessionStats:
         self.player_name = player_name
         self.include_personal = include_personal
         self.vocab = vocab
-        #: who is in the party (``members() -> set[str]``, ``known() -> bool``), or None
+        #: The meter's roster, or a local roster for standalone session imports.
         self.roster = roster
+        self._local_roster = PartyRoster(player_name)
         self.started = started if started is not None else time.time()
         self.last_ts = self.started
         self.encounters = 0
@@ -242,7 +244,6 @@ class SessionStats:
         self._rewards: list[LootEntry] = []
         #: every slain line: (ts, killer, victim, said "Your party member" / "You have slain")
         self._slain: list[tuple[float, str | None, str, bool]] = []
-        self._party_evidence: Counter[str] = Counter()
         self._cc_by_type: Counter[str] = Counter()
         self._cc_on_npcs = 0
         self._cc_on_players = 0
@@ -270,13 +271,24 @@ class SessionStats:
         self.roster = roster
         self._version += 1
 
+    def revise_encounter(self, previous_s: float | None, replacement_s: float | None) -> None:
+        """Reconcile an already closed fight after a group or pet correction.
+
+        ``None`` means that version of the fight does not count for this session.
+        """
+        self.encounters = max(0, self.encounters + int(replacement_s is not None) - int(previous_s is not None))
+        self.combat_seconds = max(0.0, self.combat_seconds
+                                  + max(0.0, replacement_s or 0.0) - max(0.0, previous_s or 0.0))
+        self._version += 1
+
     def add(self, ev: Event) -> None:
         """Feed one parsed event; most kinds are ignored here."""
         self.last_ts = max(self.last_ts, float(ev.ts))
+        if self.roster is None:
+            self._local_roster.observe(ev)
         kind = ev.kind
         if kind == "loot" and ev.item:
             looter = self._name(ev.actor) or "?"
-            self._party_evidence[looter] += 1
             self._loot.append(LootEntry(ev.ts, looter, ev.item, ev.target))
             self._items_by_name[ev.item] += 1
             self._items_by_looter[looter] += 1
@@ -285,7 +297,6 @@ class SessionStats:
             self._push(ev.ts, "loot", looter, f"{looter} looted {ev.item}{where}")
         elif kind == "coin":
             looter = self._name(ev.actor) or "?"
-            self._party_evidence[looter] += 1
             amount = int(ev.copper or 0)
             self._coin_by_looter[looter] += amount
             where = f" ({ev.target})" if ev.target else ""
@@ -316,8 +327,6 @@ class SessionStats:
             if not victim:
                 return
             ours = bool(_PARTY_LINE_RX.match(ev.text or "")) or (killer is not None and killer == self._you())
-            if ours and killer and killer != self._you():
-                self._party_evidence[killer] += 1
             self._slain.append((float(ev.ts), killer, victim, ours))
             by = f" by {killer}" if killer else ""
             self._push(ev.ts, "kill", killer, f"{victim} slain{by}")
@@ -382,18 +391,14 @@ class SessionStats:
         return False
 
     def _party(self, who: Any) -> tuple[set[str], bool]:
-        """``(party, known)``: the viewer and their party members as displayed by ``who``,
-        and whether anything says who the party is.
+        """The viewer and explicitly identified members, including a solo empty roster.
 
-        The roster decides once it knows the party; until then the session's own evidence
-        does (looters and "Your party member X" killers).
+        An empty shared roster must not fall back to stale loot or former members.
+        Standalone sessions use the same evidence rules as the combat meter.
         """
         you = self._you()
-        roster = self.roster
-        if roster is not None and roster.known():
-            return {who(n) for n in roster.members()} | {you}, True
-        party = {who(n) for n in self._party_evidence} | {you}
-        return party, bool(party - {you, "?"})
+        roster = self.roster if self.roster is not None else self._local_roster
+        return {who(n) for n in roster.members()} | {you}, True
 
     def _classify_slain(self, who: Any) -> tuple[list[tuple[float, str | None, str]], list[tuple[float, str]], list[tuple[float, str]], int]:
         """Split the slain lines into party kills, party deaths, outsider deaths and outsider kills.
@@ -487,8 +492,7 @@ class SessionStats:
             shown = (vocab.canonical("zone", zone) if vocab is not None else zone) or zone
             if not zones or zones[-1] != shown:
                 zones.append(shown)
-        # Crafts count for the party only (players nearby craft too), or for everyone until
-        # anything says who the party is.
+        # Crafts count only for the viewer and identified party members.
         you = self._you()
         party, known = self._party(who)
         crafts: list[tuple[float, str, str, int]] = []

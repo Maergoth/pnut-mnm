@@ -71,6 +71,7 @@ def row(snap: EncounterSnapshot, name: str) -> ActorRow:
 class BuildSnapshotTests(unittest.TestCase):
     def setUp(self) -> None:
         self.stats = Stats(encounter_timeout_s=12.0)
+        self.stats.add(parse_line("Tovozen has joined the party.", -60.0, PLAYER))
         feed(self.stats, FIGHT)
         enc = self.stats.current()
         assert enc is not None

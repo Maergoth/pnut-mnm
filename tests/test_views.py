@@ -162,7 +162,7 @@ class OtherGroupsTests(unittest.TestCase):
     def test_the_viewer_or_a_party_member_makes_it_ours(self) -> None:
         self.assertTrue(self._snap([(0.0, "You crush a skeletal warrior for 5 points of damage.")]).ours)
         snap = self._snap([
-            (0.0, "--Povebizu loots [Bone Chips] from a skeletal marksman's corpse.--"),  # Povebizu is in the party
+            (0.0, "Povebizu has joined the party."),
             (60.0, "Povebizu slashes a skeletal warrior for 9 points of damage."),
         ])
         self.assertTrue(snap.ours)

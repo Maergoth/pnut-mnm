@@ -142,6 +142,7 @@ class ImportDummyFixTests(unittest.TestCase):
     def test_import_with_and_without_dummy_fix(self) -> None:
         t0 = time.mktime((2026, 10, 2, 9, 0, 0, 0, 0, -1))
         lines = [
+            "Gozif has joined the party.",
             "Gozif pierces a skeletal marksman for 6 points of damage.",
             "Gozif pierces a skeletal marksman for 10 points of damage.",
             "Gozif pierces a skeletal marksman for $ points of damage.",

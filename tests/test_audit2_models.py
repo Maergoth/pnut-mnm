@@ -136,7 +136,9 @@ class GroupTimeTests(unittest.TestCase):
         return enc
 
     def test_leading_and_trailing_spans_without_the_group_are_trimmed(self) -> None:
-        snap = build_snapshot(Stats(), self._encounter(), PLAYER)
+        stats = Stats()
+        stats.roster.set_manual("Tovozen", True)
+        snap = build_snapshot(stats, self._encounter(), PLAYER)
         self.assertEqual((snap.start, snap.end), (0.0, 20.0), "the encounter's start stays for display")
         self.assertAlmostEqual(snap.duration, 5.0)
         self.assertAlmostEqual(snap.active_duration, 5.0)
@@ -146,7 +148,9 @@ class GroupTimeTests(unittest.TestCase):
         self.assertAlmostEqual(_rows(snap)[PLAYER].dtps, round(12 / 5.0, 2))
 
     def test_an_open_fight_still_ticks_from_the_groups_first_swing(self) -> None:
-        snap = build_snapshot(Stats(), self._encounter(closed=False), PLAYER, now=25.0)
+        stats = Stats()
+        stats.roster.set_manual("Tovozen", True)
+        snap = build_snapshot(stats, self._encounter(closed=False), PLAYER, now=25.0)
         self.assertAlmostEqual(snap.duration, 15.0)
         self.assertAlmostEqual(snap.active_duration, 5.0, msg="never ticks to now")
         self.assertEqual(snap.end, 25.0)
@@ -187,6 +191,7 @@ class ClipboardTimeTests(unittest.TestCase):
 
     def test_copy_mid_fight_equals_copy_at_close(self) -> None:
         stats = Stats(8.0)
+        stats.add(parse_line("Tovozen has joined the party.", 90.0, PLAYER))
         _feed(stats, self.LINES)
         live = build_snapshot(stats, stats.current(), PLAYER, now=107.0)
         self.assertAlmostEqual(live.duration, 7.0, msg="the meter still ticks")
@@ -393,15 +398,15 @@ class SessionPartyTests(unittest.TestCase):
         self.assertGreater(s.version, version)
         self.assertEqual(s.snapshot(now=60.0).kills, 1)
 
-    def test_without_a_known_party_the_evidence_decides(self) -> None:
+    def test_empty_roster_is_solo_for_crafting_too(self) -> None:
         snap = self._session(PartyRoster()).snapshot(now=60.0)  # a roster that knows nobody yet
         self.assertEqual((snap.kills, snap.outsider_kills), (0, 1))
-        self.assertEqual(snap.crafts, 4, "no party known: every craft counts")
-        self.assertEqual(snap.outsider_crafts, [])
+        self.assertEqual(snap.crafts, 1)
+        self.assertEqual(dict(snap.outsider_crafts), {"Gozif": 1, "Imbor": 2})
 
     def test_evidence_party_keeps_strangers_crafts_out(self) -> None:
         s = self._session()
-        s.add(parse_line("--Gozif loots [Bone Chips] from a skeletal marksman's corpse.--", 5.0, PLAYER))
+        s.add(parse_line("Gozif has joined the party.", 5.0, PLAYER))
         snap = s.snapshot(now=60.0)
         self.assertEqual(snap.crafts, 2)
         self.assertEqual(snap.outsider_crafts, [("Imbor", 2)])

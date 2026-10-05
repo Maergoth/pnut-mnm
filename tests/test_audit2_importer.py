@@ -129,12 +129,14 @@ class ReplayFilterTests(unittest.TestCase):
         self.assertEqual(_you(result, "heals"), 2 * 6 * 10, "both casts healed six players for 10")
 
     def test_a_squeezed_reread_is_still_dropped(self) -> None:
-        lines = [(T_OLD + i, text) for i, text in enumerate(SCREEN)]
+        lines = [(T_OLD - 2, "Pidef has joined the party."),
+                 (T_OLD - 1, "Tovozen has joined the party.")]
+        lines += [(T_OLD + i, text) for i, text in enumerate(SCREEN)]
         lines += [(T_OLD + 27, text) for text in SCREEN]  # the same screen again, read at once
         with tempfile.TemporaryDirectory() as tmp:
             result = import_file(_write_log(Path(tmp) / "combat_old.log", lines), player_name=VIEWER)
         self.assertEqual(result.replays_dropped, len(SCREEN))
-        self.assertEqual(result.messages, len(SCREEN))
+        self.assertEqual(result.messages, len(SCREEN) + 2)
         self.assertEqual(len(result.encounters), 1, "no second fight from the copy")
         self.assertEqual(result.encounters[0].total_damage, 9 + 14 + 12 + 5 + 3)
 
@@ -165,21 +167,23 @@ class ReplayFilterTests(unittest.TestCase):
         self.assertEqual(find_replays(near), set(range(18, 18 + len(SCREEN))))
 
     def test_dropped_lines_still_teach_the_roster(self) -> None:
-        # The heals arrive seconds apart (not one group heal); the copy has them together,
-        # so the dropped copy is what tells the roster who is in the group.
+        # The party disbands after the original screen. A genuine rejoin can match an
+        # older screen, so explicit membership lines in dropped copies still teach it.
         original = [
             "You slash a skeletal fighter for 9 points of damage.",
-            "Your Restorative Smite heals Pidef for 10 Health.",
+            "Pidef has joined the party.",
             "a skeletal fighter slashes YOU for 6 points of damage.",
-            "Your Restorative Smite heals Tovozen for 10 Health.",
+            "Tovozen has joined the party.",
             "Pidef crushes a skeletal fighter for 14 points of damage.",
             "Tovozen pierces a skeletal fighter for 5 points of damage.",
         ]
         lines = [(T_OLD + 2 * i, text) for i, text in enumerate(original)]
+        lines += [(T_OLD + 12, "Your party has been disbanded.")]
         lines += [(T_OLD + 30, text) for text in original]
         with tempfile.TemporaryDirectory() as tmp:
             result = import_file(_write_log(Path(tmp) / "combat_old.log", lines), player_name=VIEWER)
         self.assertEqual(result.replays_dropped, len(original))
+        self.assertEqual(result.messages, len(original) + 1)
         self.assertEqual(result.stats.roster.members(), {"Pidef", "Tovozen"})
 
 
@@ -273,7 +277,9 @@ GAP = [
 class ImportFilesTests(unittest.TestCase):
     def _session(self, tmp: str, restart_after: float) -> tuple[Path, Path]:
         """Run A, then run B ``restart_after`` seconds later, opening with A's last six lines."""
-        first = [(T_NEW + i, text) for i, text in enumerate(TAIL)]
+        first = [(T_NEW - 2, "Pidef has joined the party."),
+                 (T_NEW - 1, "Tovozen has joined the party.")]
+        first += [(T_NEW + i, text) for i, text in enumerate(TAIL)]
         start = T_NEW + len(TAIL) - 1 + restart_after
         second = [(start, text) for text in TAIL[-6:] + GAP]  # the first frame, all at once
         second += [(start + 20, "You have entered Night Harbor (East).")]
@@ -337,14 +343,14 @@ class ImportFilesTests(unittest.TestCase):
             alone = import_file(b, player_name=VIEWER)
         self.assertIs(results[0].stats.roster, results[1].stats.roster)
         self.assertEqual(self._sides(results[1]), {VIEWER: True, "Pidef": True, "Gozif": False})
-        self.assertEqual(self._sides(alone), {VIEWER: True, "Pidef": True, "Gozif": True},
-                         "no party known: everyone on the viewer's side counts")
+        self.assertEqual(self._sides(alone), {VIEWER: True, "Pidef": False, "Gozif": False},
+                         "no party evidence in this file: only the viewer counts")
 
     def test_the_roster_starts_over_after_hours(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             a, b = self._party_session(tmp, gap=7 * 3600.0)
             results = import_files([a, b], player_name=VIEWER)
-        self.assertEqual(self._sides(results[1]), {VIEWER: True, "Pidef": True, "Gozif": True})
+        self.assertEqual(self._sides(results[1]), {VIEWER: True, "Pidef": False, "Gozif": False})
 
     def test_a_missing_file_fails_before_anything_is_imported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -377,7 +383,8 @@ class SessionTests(unittest.TestCase):
             (T_NEW + 3, "Pidef loots 5 copper coins from a crocodile's corpse."),
         ])
         self.assertEqual(result.stats.player_name, VIEWER)
-        self.assertEqual(result.stats.roster.members(), {"Pidef", "Tovozen"})
+        self.assertEqual(result.stats.roster.members(), {"Tovozen"})
+        self.assertNotIn("Pidef", result.session.party, "plain loot does not establish membership")
         self.assertNotIn(VIEWER, result.session.party)
         self.assertIn("Tovozen", result.session.party, "the session takes the party from the same roster")
 

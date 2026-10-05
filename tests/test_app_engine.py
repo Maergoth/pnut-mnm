@@ -79,6 +79,7 @@ class EngineFinishTests(unittest.TestCase):
         engine = Engine(cfg)
         engine._tracker = Tracker()
         engine._stats = Stats(cfg.encounter_timeout_s)
+        engine._stats.add(parse_line("Tovozen has joined the party.", 90.0, PLAYER))
         engine._writer = LogWriter(tmp)
         for ts, line in FIGHT:
             engine._stats.add(parse_line(line, ts, PLAYER))

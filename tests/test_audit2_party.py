@@ -1,9 +1,8 @@
 """Second audit: the party roster (who counts as the viewer's group) and fight grouping.
 
-The roster no longer adds the viewer, starts over when the viewer joins a party, learns the
-members from the invite, corpse-drag and group-heal lines and from fights shared with the
-viewer, and forgets each member on its own clock.  Fights are not opened or kept going by
-mobs fighting each other, and name merging keeps different mobs apart.
+The roster requires explicit membership evidence, starts over when the viewer joins a party,
+and forgets each saved member on its own clock. Fights are not opened or kept going by mobs
+fighting each other, and name merging keeps different mobs apart.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from mnmparse.parser import parse_line
-from mnmparse.party import SHARED_FIGHTS, PartyRoster
+from mnmparse.party import PartyRoster
 from mnmparse.stats import Stats, canonical_names, name_similar
 from mnmparse.vocab import Vocabulary
 
@@ -48,7 +47,7 @@ class ViewerIsNeverAMemberTests(unittest.TestCase):
             (4.0, f"{VIEWER} is now the leader of the party."),
         ])
         self.assertEqual(stats.roster.members(), set())
-        self.assertFalse(stats.roster.known(), "a solo viewer: everyone on their side counts")
+        self.assertFalse(stats.roster.known(), "a solo viewer has no other party members")
 
     def test_without_a_player_name_the_pronoun_is_enough(self) -> None:
         roster = PartyRoster()
@@ -59,7 +58,7 @@ class ViewerIsNeverAMemberTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "party.json"
             now = time.time()
-            path.write_text(json.dumps({"version": 1, "saved": now, "seen": {VIEWER: now, "Pidef": now}}),
+            path.write_text(json.dumps({"version": 4, "saved": now, "seen": {VIEWER: now, "Pidef": now}}),
                             encoding="utf-8")
             roster = PartyRoster(VIEWER)
             self.assertTrue(roster.load(path))
@@ -101,14 +100,14 @@ class NewPartyTests(unittest.TestCase):
 
 
 class PartyLineTests(unittest.TestCase):
-    def test_corpse_drag_lines_name_every_member(self) -> None:
+    def test_corpse_drag_permission_does_not_prove_membership(self) -> None:
         roster = PartyRoster(VIEWER)
         _observe(roster, [
             (1.0, "You give Pidef permission to drag all your existing corpses."),
             (1.0, "You give Tovozen permission to drag all your existing corpses."),
             (1.0, "You give Wululiso permission to drag all your"),  # cut off at the window edge
         ])
-        self.assertEqual(roster.members(), {"Pidef", "Tovozen", "Wululiso"})
+        self.assertEqual(roster.members(), set())
 
     def test_party_member_slain_names_the_member_not_the_killer(self) -> None:
         roster = PartyRoster(VIEWER)
@@ -124,21 +123,21 @@ class PartyLineTests(unittest.TestCase):
 
     def test_names_go_through_the_canonicaliser(self) -> None:
         roster = PartyRoster(VIEWER, canonical=lambda n: {"Pldef": "Pidef"}.get(n, n))
-        _observe(roster, [(1.0, "--Pldef loots [Bone Chips] from a rat's corpse.--")])
+        _observe(roster, [(1.0, "Pldef has joined the party.")])
         self.assertEqual(roster.members(), {"Pidef"})
         _observe(roster, [(2.0, "Pldef has left the party.")])
         self.assertEqual(roster.members(), set())
 
 
 class GroupHealTests(unittest.TestCase):
-    def test_one_spell_healing_several_players_is_a_group_heal(self) -> None:
+    def test_one_spell_healing_several_players_does_not_prove_membership(self) -> None:
         stats = _stats()
         _feed(stats, [
             (10.0, "Your Restorative Smite heals you for 11 Health."),
             (10.2, "Your Restorative Smite heals Pidef for 11 Health."),
             (11.3, "Your Restorative Smlte heals Tovozen for 11 Health."),  # a misread spell name
         ])
-        self.assertEqual(stats.roster.members(), {"Pidef", "Tovozen"})
+        self.assertEqual(stats.roster.members(), set())
 
     def test_single_target_heals_on_strangers_add_nobody(self) -> None:
         stats = _stats()
@@ -166,20 +165,18 @@ class SharedFightTests(unittest.TestCase):
         self.stats = _stats()
         _feed(self.stats, [(0.0, "Tovozen has joined the party.")])  # the party is known
 
-    def test_a_player_who_keeps_fighting_alongside_becomes_a_member(self) -> None:
+    def test_a_player_fighting_alongside_never_becomes_a_member(self) -> None:
         roster = self.stats.roster
-        for i in range(SHARED_FIGHTS - 1):
+        version = roster.version
+        for i in range(10):
             _shared_fight(self.stats, 100.0 * (i + 1), "Zabomir")
             self.assertNotIn("Zabomir", roster.members())
-        version = roster.version
-        _shared_fight(self.stats, 1000.0, "Zabomir")
-        self.assertEqual(roster.inferred(), {"Zabomir"})
-        self.assertIn("Zabomir", roster.members())
-        self.assertEqual(roster.seen(), {"Tovozen"}, "inferred, not named by the chat")
-        self.assertGreater(roster.version, version, "the engine rebuilds recent fights on a change")
+        self.assertEqual(roster.inferred(), set())
+        self.assertEqual(roster.seen(), {"Tovozen"})
+        self.assertEqual(roster.version, version)
 
     def test_fighting_another_mob_or_healing_strangers_does_not_count(self) -> None:
-        for i in range(SHARED_FIGHTS + 1):
+        for i in range(4):
             t = 100.0 * (i + 1)
             _feed(self.stats, [
                 (t, "You crush a caiman for 10 points of damage."),
@@ -190,8 +187,8 @@ class SharedFightTests(unittest.TestCase):
             self.stats.expire(t + 30.0)
         self.assertEqual(self.stats.roster.members(), {"Tovozen"})
 
-    def test_healing_the_viewer_and_hitting_what_hits_the_viewer_count(self) -> None:
-        for i in range(SHARED_FIGHTS):
+    def test_healing_the_viewer_and_helping_with_combat_do_not_prove_membership(self) -> None:
+        for i in range(4):
             t = 100.0 * (i + 1)
             _feed(self.stats, [
                 (t, "a caiman bites YOU for 10 points of damage."),
@@ -199,25 +196,26 @@ class SharedFightTests(unittest.TestCase):
                 (t + 2, "Gozif's Holy Strike hits a caiman for 9 points of Holy Damage."),
             ])
             self.stats.expire(t + 30.0)
-        self.assertEqual(self.stats.roster.inferred(), {"Palidu", "Gozif"})
+        self.assertEqual(self.stats.roster.inferred(), set())
+        self.assertEqual(self.stats.roster.members(), {"Tovozen"})
 
-    def test_inferred_members_are_weaker_than_the_chat(self) -> None:
+    def test_removing_a_manual_exclusion_does_not_promote_a_shared_fighter(self) -> None:
         roster = self.stats.roster
         roster.set_manual("Zabomir", False)
-        for i in range(SHARED_FIGHTS):
+        for i in range(4):
             _shared_fight(self.stats, 100.0 * (i + 1), "Zabomir")
         self.assertNotIn("Zabomir", roster.members(), "the user's choice wins")
         roster.set_manual("Zabomir", None)
-        self.assertIn("Zabomir", roster.members())
+        self.assertNotIn("Zabomir", roster.members())
         _feed(self.stats, [(900.0, "Your party has been disbanded.")])
         self.assertEqual(roster.members(), set())
-        for i in range(SHARED_FIGHTS - 1):
+        for i in range(4):
             _shared_fight(self.stats, 1000.0 + 100.0 * i, "Zabomir")
-        self.assertNotIn("Zabomir", roster.members(), "the count starts over at a disband")
+        self.assertNotIn("Zabomir", roster.members())
 
-    def test_inferred_members_survive_a_restart(self) -> None:
+    def test_a_restart_does_not_promote_shared_fighters(self) -> None:
         now = time.time()
-        for i in range(SHARED_FIGHTS):
+        for i in range(4):
             _shared_fight(self.stats, now - 600.0 + 100.0 * i, "Zabomir")
         _shared_fight(self.stats, now - 50.0, "Fetuvo")
         with tempfile.TemporaryDirectory() as tmp:
@@ -225,10 +223,10 @@ class SharedFightTests(unittest.TestCase):
             self.stats.roster.save(path)
             again = PartyRoster(VIEWER)
             again.load(path)
-        self.assertEqual(again.inferred(), {"Zabomir"})
+        self.assertEqual(again.inferred(), set())
         again.note_fight(["Fetuvo"], now)
         again.note_fight(["Fetuvo"], now + 1)
-        self.assertIn("Fetuvo", again.inferred(), "the shared-fight count was saved too")
+        self.assertNotIn("Fetuvo", again.members())
 
 
 class ReloadTests(unittest.TestCase):
@@ -237,7 +235,7 @@ class ReloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "party.json"
             path.write_text(json.dumps({
-                "version": 1, "saved": now - 24 * 3600,  # an old stamp no longer drops everyone
+                "version": 4, "saved": now - 24 * 3600,  # an old stamp no longer drops everyone
                 "seen": {"Pidef": now - 3600, "Tovozen": now - 7 * 3600},
                 "manual_in": ["Kulepu"], "manual_out": ["Rupedu"],
             }), encoding="utf-8")

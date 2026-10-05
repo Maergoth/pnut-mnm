@@ -62,7 +62,7 @@ mnmparse/            library + CLI
   trigger_exchange.py validated JSON sharing, legacy timer conversion and duplicate-safe merging
   trigger_chat.py    compact single-trigger chat encoding, checksums and bounded fragment assembly
   export.py          one-line clipboard summaries of a fight: presets, templates, format_snapshot
-  party.py           PartyRoster: the viewer's party from the chat and shared fights, manual in/out choices, party.json
+  party.py           PartyRoster: explicit party chat evidence, manual in/out choices, party.json
   logwriter.py       logs/combat_*.log (EQ style) and logs/events_*.jsonl, each starting with a format header
   config.py          Config dataclass, config.json load/save, PROJECT_ROOT (exe-aware)
   cli.py             calibrate / snapshot / run / parse / replay
@@ -314,9 +314,9 @@ to the log verbatim, so they can be mined later with a one-off script over `logs
   and `Config` for every key; `Config.problems()` validates.
 - `cc.json`: crowd-control table by category; ranks (`Shield Bash II`) and tiers (`Lesser
   Gust of Wind`) match their base name. Compiled from the wiki for all 18 classes.
-- `logs/party.json`: the party roster (each member kept for 6 hours after they were last seen,
-  inferred members and shared-fight counts included; format version 2, older files still load)
-  and your "Count X as my group" choices (kept).
+- `logs/party.json`: explicit party members restored when seen within 6 hours, manual
+  inclusion/exclusion and pet owners (format version 4). Earlier automatic membership is
+  discarded because its evidence was ambiguous; manual choices and pets still load.
 - `logs/tracker_state.json`: the tracker's recent rows, sequence counter, last frame and
   geometry (plus the crop and OCR settings they belong to), saved on stop and every 50
   messages; used by a restart within 10 minutes. `logs/session_state.json`: the current zone,
