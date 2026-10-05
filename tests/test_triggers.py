@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if sys.platform == "win32":
@@ -231,8 +230,7 @@ class RuntimeTests(unittest.TestCase):
         from mnmparse.app.timer_panel import format_remaining
 
         self.assertEqual((format_remaining(75.2), format_remaining(0), format_remaining(3725)), ("1:16", "0:00", "1:02:05"))
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch("mnmparse.app.timer_panel.time.monotonic", return_value=100.0) as popup_clock:
+        with tempfile.TemporaryDirectory() as tmp:
             settings = QSettings(str(Path(tmp) / "o.ini"), QSettings.Format.IniFormat)
             overlay = OverlayWindow(settings, __import__("mnmparse.config", fromlist=["Config"]).Config())
             for w in (overlay, overlay.attack_bar, overlay.timer_panel):
@@ -253,11 +251,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertGreater(bar.y(), panel.frameGeometry().bottom(), "the attack bar sits under the timers")
                 runner.clear_timers()
                 self.app.processEvents()
-                self.assertTrue(panel.isVisible(), "the fired notification stays until its own expiry")
-                popup_clock.return_value = 105.0
-                panel._frame()
-                self.app.processEvents()
-                self.assertFalse(panel.isVisible())
+                self.assertFalse(panel.isVisible(), "timer triggers do not leave a fading notification")
                 self.assertEqual(bar.y(), bar_y_alone, "and moves back up when they are gone")
             finally:
                 overlay.close()

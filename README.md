@@ -355,9 +355,9 @@ Close it or press Escape to return to the editor. Each trigger has:
   text (Windows voices). Speech and display labels can use `{line}`, `{match}` and the named
   groups of a regular expression: `(?P<mob>an? [a-z ]+) is mesmerized` with "{mob} mezzed" says
   "a skeletal knight mezzed". "Quiet for" ignores repeats for a few seconds.
-- **Label**: the text shown briefly below active timers whenever the trigger fires, also used
-  by its countdown if enabled. Leave it blank to use the trigger name. A countdown is optional;
-  sound-only and notification-only triggers also display their labels. Paste a sample chat line
+- **Label**: the text shown on the countdown for a timed trigger, or briefly below active
+  timers for a trigger without a timer. Timed triggers do not also create a fading popup.
+  Leave it blank to use the trigger name. Paste a sample chat line
   into **Test** to preview the filled-in label, or use **Fire this trigger now** to show it.
 - **Timer** (optional): a countdown of any length on the overlay's timer panel, with what to do
   if it is already running: **Replace** starts the newly triggered timer and cancels obsolete
@@ -413,10 +413,11 @@ minutes:seconds counter (hours:minutes:seconds past an hour). The ring is green,
 warning period and red in the last five seconds by default; a finished timer flashes 0:00 for
 a moment. Each trigger's timer editor lets you choose normal, warning, and low/ended colors,
 as well as when the low-duration color begins.
-Every accepted trigger also adds a notification below the timer rows. Notifications last four
+Accepted triggers without a timer add a notification below the timer rows. Timed triggers
+show only their countdown row. Notifications last four
 seconds and fade during the final second; up to four recent notifications appear at once,
-without displacing timer rows. "Quiet for" and **Retain** suppress ignored repeats, including
-their notifications. The panel appears while timers or notifications are active (right-click >
+without displacing timer rows. "Quiet for" suppresses repeated non-timer notifications.
+The panel appears while timers or notifications are active (right-click >
 "Always show this panel" keeps it). Hiding the overlay also hides its notifications.
 Right-click a timer to cancel it or all of them. Like the auto-attack bar it follows the
 overlay, and with the overlay unlocked it can be dragged off and snapped back (drop it near the

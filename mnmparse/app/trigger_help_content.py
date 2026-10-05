@@ -120,9 +120,11 @@ an example. Close this guide or press Esc to return to your triggers.</p>
 triggers. A matching trigger can show a label, play a sound or speak, and optionally start
 a timer. It only knows text that reaches that captured chat area; it does not read hidden
 game information, select targets, or perform an action in game.</p>
-<p>The label appears <b>below the active countdowns</b> in the overlay's timer panel. It stays
+<p>For triggers with <b>Start a timer off</b>, the label appears <b>below the active countdowns</b>
+in the overlay's timer panel. It stays
 for four seconds and fades over the last second. Up to four recent notifications can appear,
-with the newest at the bottom. You do not need to enable a countdown to get a notification.
+with the newest at the bottom. A trigger with Start a timer on shows only its countdown row,
+without a separate fading notification.
 The overlay must be visible to see its panel. The panel can be dragged when unlocked and
 snapped back through its right-click menu.</p>
 <p>Triggers match captured text independently of the combat meter's group filter. A broad
@@ -184,8 +186,9 @@ named groups count too. Named variables are usually easier to maintain.</td></tr
 <p><b>There is no automatic damage variable.</b> First capture the digits in Text using a
 regular expression, then put that capture's name in braces in Label. Keep the spelling and
 capitalization identical. Matching only "Your Righteous Smite II" does not capture damage.</p>
-<p>Leave Label blank to display the trigger name. The same filled-in label is used for its
-notification and countdown. A countdown keeps the values from the line that started it;
+<p>Leave Label blank to display the trigger name. The filled-in label appears on its
+countdown when Start a timer is on, or in a fading notification when it is off.
+A countdown keeps the values from the line that started it;
 later Replace triggers can supply new values.</p>
 <p><b>Warning and end speech have only <code>{label}</code> and <code>{name}</code>.</b>
 For example, capture a target into the starting Label <code>Mez: {target}</code>, then set
@@ -235,9 +238,9 @@ The timer begins when the message is processed, so missed lines or capture delay
 <table cellspacing="6" cellpadding="5" border="1">
 <tr><th>If already running</th><th>What happens on a new match</th><th>Typical use</th></tr>
 <tr><td>Replace</td><td>Replace that trigger's old countdown with a fresh one and its new label.
-Obsolete queued timer speech is cancelled. The new match can alert and show a popup.</td><td>A refreshed buff or debuff</td></tr>
+Obsolete queued timer speech is cancelled. The new match can play its immediate audio alert.</td><td>A refreshed buff or debuff</td></tr>
 <tr><td>Retain</td><td>Keep the unexpired countdown and ignore the new match entirely,
-including sound, speech and popup.</td><td>A reminder that must finish before another starts</td></tr>
+including sound and speech.</td><td>A reminder that must finish before another starts</td></tr>
 <tr><td>Add another timer</td><td>Keep existing countdowns and create another.</td><td>Several simultaneous effects</td></tr>
 </table>
 <p>Overlap rules identify the <b>trigger</b>, not its label or captured target. One generic Mez
@@ -255,13 +258,13 @@ Reset restores the default colors and five-second low threshold.</p>
 <p>The panel displays up to eight countdown rows, soonest to expire first, followed by
 notifications. Up to 24 countdowns can be tracked; beyond that, the furthest from expiry are
 dropped. Right-click a countdown to cancel it or all countdowns. Cancelling a timer
-does not erase a recently fired popup; that fades on its own. Always show this panel keeps
+does not erase a separate non-timer trigger's popup; that fades on its own. Always show this panel keeps
 the empty panel visible. Running countdowns and popups are temporary; definitions are saved,
 but active countdowns are not resumed after restarting PNUT.</p>
 
 <a name="audio"></a><h2>8. Sounds, speech and repeat suppression</h2>
 <p><b>Do</b> controls the immediate action: Nothing, Built-in sound, Sound file or Speak text.
-Nothing still allows the label popup and optional countdown. Built-in sounds need no extra
+Nothing still allows a countdown, or a label popup if Start a timer is off. Built-in sounds need no extra
 files. Sound file uses a file on your computer. Speak text fills variables from this match.</p>
 <p>The page's top bar controls master Volume, Voice and Speed. Output selects the device for
 built-in sounds and sound files; speech uses the system voice output.
@@ -278,7 +281,7 @@ have independent cooldowns. Nothing is aggregated across hits.</p>
 and immediate speech without firing the trigger. Hover over the result for the full text.</li>
 <li>Try another damage value or target. Confirm the label changes. Try an unrelated or
 similar-spell line and confirm it does not match.</li>
-<li>Use Fire this trigger now to exercise the real popup, audio and optional countdown.
+<li>Use Fire this trigger now to exercise the audio and countdown (or popup for a non-timer trigger).
 A matching sample supplies capture variables. This explicit preview also works when the
 trigger is disabled; it does not enable the trigger for live chat.</li>
 <li>Without a matching sample, Fire this trigger now still fires, using your sample or the
@@ -334,7 +337,8 @@ Use exactly <code>{damage}</code> in Label. A Contains or Starts with pattern do
 captures. Test with the complete hit line. Keep captures in the starting Label and use
 <code>{label}</code> in warning/end speech.</p>
 <h3>The popup is missing, too long, or replaced quickly</h3>
-<p>Turn the combat overlay on; its timer panel follows its visibility. A notification lasts
+<p>Turn the combat overlay on; its timer panel follows its visibility. Check Start a timer:
+timed triggers show their countdown instead of a popup. A non-timer notification lasts
 four seconds, and only the four newest are kept. A long label is shortened to fit. Use a shorter
 template or make the overlay wider. Under rapid fire, older popups can be replaced before they
 fade. Keep Quiet for at 0 if you want each accepted hit, or increase it to reduce noise.</p>

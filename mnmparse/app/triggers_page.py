@@ -345,7 +345,7 @@ class TriggersPage(QWidget):
         # -- action -------------------------------------------------------------------
         form = self._section(
             lay, "Then",
-            "Every trigger shows a fading label below active timers. A countdown uses the same label. "
+            "Triggers without a timer show a fading label below active timers. Timed triggers show it on the countdown. "
             "Labels and speech can use {name}, {line}, {match}, or captured groups such as {damage}.",
         )
         self._then_form = form

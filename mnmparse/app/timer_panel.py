@@ -6,8 +6,8 @@ five seconds; an ended timer flashes "0:00" for a moment.  Right-click a timer t
 it (or all of them). The panel shows while timers run or recent triggers are displayed
 (unless "always show" is on)
 and docks / undocks like the auto-attack bar (:mod:`mnmparse.app.docked_panel`).
-Accepted triggers also append a brief notification below the running timers, including
-triggers that do not start a countdown. Notifications fade away after four seconds.
+Accepted triggers without a countdown append a brief notification below the running
+timers. Notifications fade away after four seconds; timed triggers show only their timer.
 """
 
 from __future__ import annotations
@@ -108,6 +108,8 @@ class TimerPanel(DockedPanel):
 
     def _trigger_fired(self, match: Match) -> None:
         trigger = match.trigger
+        if trigger.timer:
+            return
         label = fill_placeholders(trigger.timer_label or trigger.name, match.values())
         self._popups.append(TriggerPopup(label, time.monotonic(), trigger.timer_color or token("ACCENT")))
         self._popups = self._popups[-MAX_POPUPS:]

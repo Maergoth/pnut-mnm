@@ -1,4 +1,4 @@
-"""Accepted triggers render temporary labels below the independent timer rows."""
+"""Non-timer triggers render temporary labels below the independent timer rows."""
 
 from __future__ import annotations
 
@@ -102,6 +102,29 @@ class TriggerPopupTests(unittest.TestCase):
         self.fire("Gatekick")
         self.assertEqual([text for text, _, _ in self.painted_text()], ["Gatekick"])
 
+    def test_timer_match_replacement_and_manual_fire_only_show_countdown(self) -> None:
+        trigger = self.fire("Root", timer=True, timer_seconds=30, timer_mode="replace")
+        original = self.runner.board.timers[0]
+        self.assertEqual(self.panel._popups, [])
+        self.assertEqual([text for text, _, _ in self.painted_text()].count("Root"), 1)
+
+        self.runner.observe("Root", now=original.start + 5)
+        replacement = self.runner.board.timers[0]
+        self.assertIsNot(replacement, original)
+        self.assertEqual(replacement.remaining(original.start + 5), 30)
+        self.assertEqual(self.panel._popups, [])
+        self.assertEqual([text for text, _, _ in self.painted_text()].count("Root"), 1)
+
+        trigger.enabled = False
+        self.runner.test(trigger, "Root")
+        self.runner._clock.stop()
+        self.assertIsNot(self.runner.board.timers[0], replacement)
+        self.assertEqual(len(self.runner.board.timers), 1)
+        self.assertEqual(self.panel._popups, [])
+        self.assertEqual([text for text, _, _ in self.painted_text()].count("Root"), 1)
+        self.runner.clear_timers()
+        self.assertFalse(self.panel.isVisible())
+
     def test_popup_fades_during_last_second_then_panel_expires(self) -> None:
         self.fire()
         for when, opacity in ((102.9, 1.0), (103.5, 0.5), (103.9, 0.1)):
@@ -129,6 +152,22 @@ class TriggerPopupTests(unittest.TestCase):
         self.assertEqual([text for text, _, _ in self.painted_text()],
                          [f"Trigger {index}" for index in range(2, 6)])
 
+    def test_timer_fires_do_not_displace_or_extend_existing_popups_at_capacity(self) -> None:
+        from mnmparse.app.timer_panel import MAX_POPUPS
+
+        for index in range(MAX_POPUPS):
+            self.fire(f"Notice {index}")
+        popups = list(self.panel._popups)
+        self.clock.return_value = 102.0
+        for index in range(MAX_POPUPS + 1):
+            self.fire(f"Timer {index}", timer=True, timer_seconds=120)
+        self.assertEqual(self.panel._popups, popups)
+        self.clock.return_value = 104.0
+        self.panel._frame()
+        self.assertEqual(self.panel._popups, [])
+        self.assertEqual(len(self.panel.timers()), MAX_POPUPS + 1)
+        self.assertTrue(self.panel.isVisible())
+
     def test_popups_are_below_all_eight_timer_rows_and_not_cancellable(self) -> None:
         from mnmparse.app.timer_panel import MAX_ROWS
 
@@ -139,7 +178,7 @@ class TriggerPopupTests(unittest.TestCase):
         self.assertEqual(len(self.panel._rows), MAX_ROWS)
         last_timer_bottom = self.panel._rows[-1][0].bottom()
         popup_texts = [(text, top) for text, top, _ in drawn if top > last_timer_bottom]
-        self.assertEqual([text for text, _ in popup_texts], ["Timer 6", "Timer 7", "Timer 8", "84 damage"])
+        self.assertEqual([text for text, _ in popup_texts], ["84 damage"])
         self.assertEqual(len(self.runner.board.timers), MAX_ROWS + 1)
         popup_point = QPoint(20, round(popup_texts[-1][1] + self.panel._row_h() / 2))
         self.assertIsNone(self.panel._timer_at(QPointF(popup_point)))
@@ -154,7 +193,8 @@ class TriggerPopupTests(unittest.TestCase):
         self.assertTrue(self.panel._anim.isActive())
 
     def test_cancel_timers_leaves_recent_notifications_visible(self) -> None:
-        self.fire(timer=True)
+        self.fire("Root", timer=True)
+        self.fire("Righteous Smite")
         self.runner.clear_timers()
         self.assertEqual(self.panel.timers(), [])
         self.assertTrue(self.panel.isVisible())
@@ -173,7 +213,8 @@ class TriggerPopupTests(unittest.TestCase):
         self.assertEqual(self.panel._popups, [])
 
     def test_reshown_panel_resumes_fade_and_timer_animation(self) -> None:
-        self.fire(timer=True)
+        self.fire("Root", timer=True)
+        self.fire("Righteous Smite")
         self.owner.hide()
         self.panel.hide()
         self.assertFalse(self.panel._anim.isActive())
@@ -236,7 +277,9 @@ class TriggerPopupTests(unittest.TestCase):
             self.runner.observe(name, now=100)
             self.runner.observe(name, now=101)
         self.runner._clock.stop()
-        self.assertEqual([popup.label for popup in self.panel._popups], ["Cooldown", "Retain"])
+        self.assertEqual([popup.label for popup in self.panel._popups], ["Cooldown"])
+        self.assertEqual(len(self.runner.board.timers), 1)
+        self.assertEqual(self.runner.board.timers[0].start, 100)
 
     def test_font_scaling_and_popup_height_update_docking(self) -> None:
         self.fire()
