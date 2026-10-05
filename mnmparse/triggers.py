@@ -71,7 +71,7 @@ class Trigger:
     cooldown_s: float = 0.0  #: ignore repeats within this many seconds (0: every match)
     timer: bool = False
     timer_seconds: float = 30.0
-    timer_label: str = ""  #: shown on the timer ("" = the trigger's name); placeholders allowed
+    timer_label: str = ""  #: popup/timer label ("" = the trigger's name); placeholders allowed
     timer_mode: str = "replace"  #: replace / retain this trigger's running timer, or stack
     timer_color: str = ""  #: #rrggbb, or empty to use the theme's green
     timer_warn_color: str = ""  #: empty: theme amber

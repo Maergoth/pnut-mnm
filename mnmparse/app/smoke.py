@@ -21,7 +21,7 @@ from typing import Any
 QT_MODULES = ("QtCore", "QtGui", "QtWidgets", "QtMultimedia", "QtTextToSpeech")
 APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
-    "triggers_runtime", "triggers_page", "trigger_share_dialog", "map_overlay", "map_downloads", "app_updates", "main",
+    "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "map_overlay", "map_downloads", "app_updates", "main",
 )
 NATIVE_MODULES = ("numpy", "cv2")
 WINDOWS_MODULES = (
@@ -123,6 +123,16 @@ def _exercise(report: dict[str, Any]) -> None:
             windows.append(TriggerChatExportDialog(trigger, code, window))
             windows.append(TriggerSharePrompt(received[0].trigger, received[0].sender, window))
             report["chat_share_chars"] = len(code)
+
+            report["stage"] = "open bundled trigger guide"
+            from mnmparse.app.trigger_help import TriggerHelpDialog
+
+            guide = TriggerHelpDialog(window)
+            windows.append(guide)
+            guide_text = guide.browser.toPlainText()
+            if "Table of contents" not in guide_text or "Righteous Smite II: 154 damage" not in guide_text:
+                raise RuntimeError("The packaged trigger guide is missing its content or examples")
+            report["trigger_help"] = True
         finally:
             # Any geometry writes go to the temporary INI file, never the real registry.
             for window in reversed(windows):

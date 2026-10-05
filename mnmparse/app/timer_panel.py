@@ -1,15 +1,19 @@
-"""Trigger timers: a window docked under the overlay, above the auto-attack bar.
+"""Trigger timers and fading notifications docked above the auto-attack bar.
 
 Each running timer is one row: a radial ring that empties as time runs out, the label and
 a minutes:seconds counter.  The ring turns amber in the warning period and red in the last
 five seconds; an ended timer flashes "0:00" for a moment.  Right-click a timer to cancel
-it (or all of them).  The panel shows only while timers run (unless "always show" is on)
+it (or all of them). The panel shows while timers run or recent triggers are displayed
+(unless "always show" is on)
 and docks / undocks like the auto-attack bar (:mod:`mnmparse.app.docked_panel`).
+Accepted triggers also append a brief notification below the running timers, including
+triggers that do not start a countdown. Notifications fade away after four seconds.
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QTimer
@@ -18,7 +22,7 @@ from PySide6.QtWidgets import QMenu
 
 from mnmparse.app.docked_panel import DockedPanel
 from mnmparse.app.widgets import make_font, qcolor, token
-from mnmparse.triggers import ActiveTimer
+from mnmparse.triggers import ActiveTimer, Match, fill_placeholders
 
 if TYPE_CHECKING:
     from mnmparse.app.overlay import OverlayWindow
@@ -26,6 +30,19 @@ if TYPE_CHECKING:
 
 FRAME_MS = 33
 MAX_ROWS = 8
+MAX_POPUPS = 4
+POPUP_SECONDS = 4.0
+POPUP_FADE_SECONDS = 1.0
+
+
+@dataclass(frozen=True)
+class TriggerPopup:
+    label: str
+    created_at: float
+    color: str
+
+    def opacity(self, now: float) -> float:
+        return max(0.0, min(1.0, (POPUP_SECONDS - (now - self.created_at)) / POPUP_FADE_SECONDS))
 
 
 def format_remaining(seconds: float) -> str:
@@ -63,30 +80,50 @@ class TimerPanel(DockedPanel):
         self._f_label = make_font(self._px * 0.95, weight=QFont.Weight.DemiBold)
         self._f_time = make_font(self._px * 1.05, weight=QFont.Weight.DemiBold, tabular=True)
         self._rows: list[tuple[QRectF, str]] = []  #: (row rect, timer id) from the last paint
+        self._popups: list[TriggerPopup] = []
         self._anim = QTimer(self)
         self._anim.setInterval(FRAME_MS)
         self._anim.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim.timeout.connect(self._frame)
-        self.setToolTip("Trigger timers. Right-click a timer to cancel it.")
+        self.setToolTip("Running timers and recent triggers. Right-click a timer to cancel it.")
         self._resize_for(1)
 
     # -- wiring --------------------------------------------------------------------------
     def set_runner(self, runner: "TriggerRunner | None") -> None:
+        if runner is self.runner:
+            self.refresh()
+            return
         if self.runner is not None:
-            try:
-                self.runner.timers_changed.disconnect(self.refresh)
-            except (RuntimeError, TypeError):
-                pass
+            for signal, slot in ((self.runner.timers_changed, self.refresh), (self.runner.fired, self._trigger_fired)):
+                try:
+                    signal.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
         self.runner = runner
+        self._popups.clear()
         if runner is not None:
             runner.timers_changed.connect(self.refresh)
+            runner.fired.connect(self._trigger_fired)
         self.refresh()
+
+    def _trigger_fired(self, match: Match) -> None:
+        trigger = match.trigger
+        label = fill_placeholders(trigger.timer_label or trigger.name, match.values())
+        self._popups.append(TriggerPopup(label, time.monotonic(), trigger.timer_color or token("ACCENT")))
+        self._popups = self._popups[-MAX_POPUPS:]
+        self.refresh()
+
+    def _prune_popups(self) -> bool:
+        now = time.monotonic()
+        before = len(self._popups)
+        self._popups = [popup for popup in self._popups if now - popup.created_at < POPUP_SECONDS]
+        return len(self._popups) != before
 
     def timers(self) -> list[ActiveTimer]:
         return self.runner.board.ordered() if self.runner is not None else []
 
     def wants_visible(self) -> bool:
-        return self.always_show or bool(self.timers())
+        return self.always_show or bool(self.timers()) or bool(self._popups)
 
     def set_always_show(self, on: bool) -> None:
         self.always_show = bool(on)
@@ -100,12 +137,20 @@ class TimerPanel(DockedPanel):
         self.refresh()
 
     def refresh(self) -> None:
-        """Re-layout after timers started / ended (``TriggerRunner.timers_changed``)."""
-        self._resize_for(min(MAX_ROWS, max(1, len(self.timers()))))
+        """Re-layout after a timer or notification changes."""
         self.sync()
-        if self.isVisible() and self.timers():
-            self._anim.start()
         self.update()
+
+    def sync(self) -> None:
+        # The owner also calls sync when an overlay is re-shown. Expire notifications
+        # before showing anything; their lifetime never pauses while the panel is hidden.
+        self._prune_popups()
+        self._resize_for(max(1, min(MAX_ROWS, len(self.timers())) + len(self._popups)))
+        super().sync()
+        if self.isVisible() and (self.timers() or self._popups):
+            self._anim.start()
+        else:
+            self._anim.stop()
 
     def _resize_for(self, rows: int) -> None:
         row_h = self._row_h()
@@ -115,7 +160,9 @@ class TimerPanel(DockedPanel):
         return int(round(self._px * 2.3))
 
     def _frame(self) -> None:
-        if not self.timers():
+        if self._prune_popups():
+            self.refresh()
+        if not self.isVisible() or not (self.timers() or self._popups):
             self._anim.stop()
         self.update()
 
@@ -134,7 +181,7 @@ class TimerPanel(DockedPanel):
         timers = self.timers()[:MAX_ROWS]
         self._rows = []
         row_h = self._row_h()
-        if not timers:
+        if not timers and not self._popups:
             p.setFont(self._f_label)
             p.setPen(qcolor(token("MUTED")))
             p.drawText(r.adjusted(10, 0, -10, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
@@ -180,6 +227,22 @@ class TimerPanel(DockedPanel):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(qcolor(color.name(), 0.55))
             p.drawRoundedRect(line, 1, 1)
+        popup_now = time.monotonic()
+        for i, popup in enumerate(self._popups, start=len(timers)):
+            row = QRectF(r.left() + 8, r.top() + 5 + i * (row_h + 4), r.width() - 16, row_h)
+            p.save()
+            p.setOpacity(popup.opacity(popup_now))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(qcolor(popup.color, 0.15))
+            p.drawRoundedRect(row, 5, 5)
+            p.setBrush(qcolor(popup.color))
+            p.drawRoundedRect(QRectF(row.left() + 2, row.top() + 6, 3, row.height() - 12), 1.5, 1.5)
+            p.setFont(self._f_label)
+            p.setPen(qcolor(token("TEXT")))
+            label_rect = row.adjusted(12, 0, -8, 0)
+            p.drawText(label_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                       fm_label.elidedText(popup.label, Qt.TextElideMode.ElideRight, label_rect.width()))
+            p.restore()
         p.end()
 
     # -- interaction ---------------------------------------------------------------------
@@ -206,6 +269,11 @@ class TimerPanel(DockedPanel):
     def hideEvent(self, event: Any) -> None:  # noqa: N802
         super().hideEvent(event)
         self._anim.stop()
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802
+        self.set_runner(None)
+        self._anim.stop()
+        super().closeEvent(event)
 
 
 __all__ = ["TimerPanel", "format_remaining"]

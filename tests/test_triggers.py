@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if sys.platform == "win32":
@@ -187,6 +188,34 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(len(runner.observe("You are stunned!", now=2.0)), 0)
             self.assertEqual(len(runner.observe("You are stunned!", now=6.0)), 1)
 
+    def test_fire_now_uses_damage_capture_for_label_and_speech(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trigger = Trigger(name="Smite II", enabled=False, mode="regex",
+                              pattern=r"Your Righteous Smite II hits .+? for (?P<damage>\d+) points of Holy Damage",
+                              timer=True, timer_label="Smite: {damage} damage", action="speak", speech="{damage} damage")
+            runner = self._runner(tmp, trigger)
+            matches = []
+            runner.fired.connect(matches.append)
+            try:
+                runner.test(trigger, "Your Righteous Smite II hits a skeletal knight for 154 points of Holy Damage.")
+                self.assertEqual(runner.board.timers[0].label, "Smite: 154 damage")
+                self.assertEqual(runner.played[0][1]["speech"], "154 damage")
+                self.assertEqual(matches[0].groups["damage"], "154")
+                self.assertIs(matches[0].trigger, trigger)
+                self.assertFalse(trigger.enabled, "preview must not enable a disabled trigger")
+            finally:
+                runner._clock.stop()
+
+    def test_fire_now_without_matching_sample_still_fires(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trigger = Trigger(name="Alert", pattern="rooted", action="none", enabled=False)
+            runner = self._runner(tmp, trigger)
+            matches = []
+            runner.fired.connect(matches.append)
+            runner.test(trigger)
+            runner.test(trigger, "a different sample")
+            self.assertEqual([m.line for m in matches], ["rooted", "a different sample"])
+
     def test_builtin_sounds_are_generated(self) -> None:
         from mnmparse.app.triggers_runtime import builtin_sound_path
         from mnmparse.triggers import BUILTIN_SOUNDS
@@ -202,7 +231,8 @@ class RuntimeTests(unittest.TestCase):
         from mnmparse.app.timer_panel import format_remaining
 
         self.assertEqual((format_remaining(75.2), format_remaining(0), format_remaining(3725)), ("1:16", "0:00", "1:02:05"))
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch("mnmparse.app.timer_panel.time.monotonic", return_value=100.0) as popup_clock:
             settings = QSettings(str(Path(tmp) / "o.ini"), QSettings.Format.IniFormat)
             overlay = OverlayWindow(settings, __import__("mnmparse.config", fromlist=["Config"]).Config())
             for w in (overlay, overlay.attack_bar, overlay.timer_panel):
@@ -222,6 +252,10 @@ class RuntimeTests(unittest.TestCase):
                 self.assertGreater(panel.y(), overlay.frameGeometry().bottom())
                 self.assertGreater(bar.y(), panel.frameGeometry().bottom(), "the attack bar sits under the timers")
                 runner.clear_timers()
+                self.app.processEvents()
+                self.assertTrue(panel.isVisible(), "the fired notification stays until its own expiry")
+                popup_clock.return_value = 105.0
+                panel._frame()
                 self.app.processEvents()
                 self.assertFalse(panel.isVisible())
                 self.assertEqual(bar.y(), bar_y_alone, "and moves back up when they are gone")

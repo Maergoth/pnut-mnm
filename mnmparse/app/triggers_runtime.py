@@ -14,13 +14,14 @@ import math
 import struct
 import time
 import wave
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 
 from mnmparse.config import project_path
-from mnmparse.triggers import BUILTIN_SOUNDS, ActiveTimer, Match, TimerBoard, Trigger, TriggerStore, fill_placeholders
+from mnmparse.triggers import BUILTIN_SOUNDS, ActiveTimer, Match, TimerBoard, Trigger, TriggerStore, fill_placeholders, match_trigger
 
 log = logging.getLogger(__name__)
 
@@ -410,7 +411,12 @@ class TriggerRunner(QObject):
 
     def test(self, trig: Trigger, line: str = "") -> None:
         """Fire ``trig`` as if ``line`` (or its pattern) had been read."""
-        self.fire(Match(trig, line or trig.pattern, line or trig.pattern))
+        # Explicit previews work even for disabled triggers, but still capture
+        # the sample line's regex groups exactly as live matching would.
+        matched = match_trigger(replace(trig, enabled=True), line) if line else None
+        if matched is not None:
+            matched.trigger = trig
+        self.fire(matched or Match(trig, line or trig.pattern, line or trig.pattern))
 
 
 def default_store() -> TriggerStore:

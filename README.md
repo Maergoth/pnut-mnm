@@ -340,7 +340,10 @@ damage), `{max}`, `{hit}` (hit %), `{hps}`, `{heal}`, `{taken}`, `{utility}`. A 
 works too (`{dps:.0f}`). Enemies are never listed, and the result is always one line. The sound
 uses the Triggers page's volume and output device.
 
-**Triggers** (the bell in the left rail) react to chat text. Each trigger has:
+**Triggers** (the bell in the left rail) react to chat text. **Timer/trigger help** above the
+trigger list opens an offline, in-app walkthrough with a clickable table of contents,
+variables, eight worked recipes, timer overlap rules, sharing, and troubleshooting.
+Close it or press Escape to return to the editor. Each trigger has:
 - **When the chat says**: the text to watch for, typed by hand or picked from suggestions
   (recently read chat lines and the names the app has learned). "Contains" (default), "Starts
   with", "Whole line" or a regular expression. Case, punctuation and spacing never matter, and
@@ -349,14 +352,31 @@ uses the Triggers page's volume and output device.
   Mesmerize" still matches. Paste
   a line into Test to check it.
 - **Then**: nothing, one of eight built-in sounds, a sound file (.wav, .mp3, .ogg) or spoken
-  text (Windows voices). Speech and timer labels can use `{line}`, `{match}` and the named
+  text (Windows voices). Speech and display labels can use `{line}`, `{match}` and the named
   groups of a regular expression: `(?P<mob>an? [a-z ]+) is mesmerized` with "{mob} mezzed" says
   "a skeletal knight mezzed". "Quiet for" ignores repeats for a few seconds.
+- **Label**: the text shown briefly below active timers whenever the trigger fires, also used
+  by its countdown if enabled. Leave it blank to use the trigger name. A countdown is optional;
+  sound-only and notification-only triggers also display their labels. Paste a sample chat line
+  into **Test** to preview the filled-in label, or use **Fire this trigger now** to show it.
 - **Timer** (optional): a countdown of any length on the overlay's timer panel, with what to do
   if it is already running: **Replace** starts the newly triggered timer and cancels obsolete
   queued speech; **Retain** ignores the overlapping trigger, including its sound or speech,
   and keeps the existing timer. **Add another** allows separate concurrent timers. Each trigger
   also has a warning N seconds before the end and an end alert (sound or speech).
+
+To display Righteous Smite damage, set the trigger's **Match** to **Regular expression**,
+its **Text** to:
+
+```regex
+Your Righteous Smite II hits .+? for (?P<damage>\d+) points of Holy Damage
+```
+
+Set **Label** to `Righteous Smite II: {damage} damage`. For a line ending in
+`for 154 points of Holy Damage.`, the popup reads **Righteous Smite II: 154 damage**.
+Use `III` in both fields for a separate rank III trigger, or remove ` II` for the base spell.
+The named capture `(?P<damage>\d+)` supplies `{damage}`; matching only the spell name does
+not capture a number. **Start a timer** can stay off when you only want the fading popup.
 
 The bar at the top sets the volume, voice, speech rate and audio output for all triggers.
 Triggers are saved as you edit them, in `triggers.json`. **Import timers…** accepts shared
@@ -389,7 +409,11 @@ minutes:seconds counter (hours:minutes:seconds past an hour). The ring is green,
 warning period and red in the last five seconds by default; a finished timer flashes 0:00 for
 a moment. Each trigger's timer editor lets you choose normal, warning, and low/ended colors,
 as well as when the low-duration color begins.
-The panel appears only while timers run (right-click > "Always show this panel" keeps it).
+Every accepted trigger also adds a notification below the timer rows. Notifications last four
+seconds and fade during the final second; up to four recent notifications appear at once,
+without displacing timer rows. "Quiet for" and **Retain** suppress ignored repeats, including
+their notifications. The panel appears while timers or notifications are active (right-click >
+"Always show this panel" keeps it). Hiding the overlay also hides its notifications.
 Right-click a timer to cancel it or all of them. Like the auto-attack bar it follows the
 overlay, and with the overlay unlocked it can be dragged off and snapped back (drop it near the
 overlay's bottom edge, double-click it, or right-click > Snap to overlay); the auto-attack bar

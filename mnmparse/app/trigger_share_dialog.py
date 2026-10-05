@@ -92,13 +92,13 @@ def _summary(trigger: Trigger, sender: str) -> str:
         f"When matched: {_action(trigger.action, trigger.sound, trigger.speech, trigger.file)}",
         f"Volume: {trigger.volume}%",
         f"Ignore repeats for: {trigger.cooldown_s:g} seconds",
+        f"Label: {trigger.timer_label or trigger.name}",
         "",
         f"Start a timer: {'Yes' if trigger.timer else 'No'}",
     ]
     if trigger.timer:
         lines.extend([
             f"Length: {trigger.timer_seconds:g} seconds",
-            f"Label: {trigger.timer_label or trigger.name}",
             f"If already running: {overlaps.get(trigger.timer_mode, trigger.timer_mode)}",
             f"Normal color: {trigger.timer_color or 'Theme default'}",
             f"Warning color: {trigger.timer_warn_color or 'Theme default'}",

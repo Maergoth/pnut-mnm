@@ -1,4 +1,4 @@
-"""The Triggers page: match chat text, then play a cue, speak, and/or start a timer.
+"""The Triggers page: match chat text, show a label, and optionally play audio or start a timer.
 
 Left: every trigger (tick to enable, search, New / Duplicate / Delete, Import / Export).
 Right: the selected trigger's editor.  Edits are saved to ``triggers.json`` as you type.
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from mnmparse.app.triggers_runtime import TriggerRunner
     from mnmparse.trigger_chat import ReceivedShare
     from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt
+    from mnmparse.app.trigger_help import TriggerHelpDialog
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ class TriggersPage(QWidget):
         self._seen_shares: deque[tuple[str, str]] = deque(maxlen=128)
         self._chat_dialog: TriggerSharePrompt | None = None
         self._chat_export_dialog: TriggerChatExportDialog | None = None
+        self._help_dialog: TriggerHelpDialog | None = None
         self.setStyleSheet(_page_qss())
 
         self._save_timer = QTimer(self)
@@ -174,6 +176,12 @@ class TriggersPage(QWidget):
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(14, 12, 14, 12)
         lay.setSpacing(8)
+        self.timer_help = QPushButton("Timer/trigger help")
+        self.timer_help.setObjectName("Chip")
+        self.timer_help.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.timer_help.setToolTip("Open the timer and trigger guide, including labels, damage numbers and sharing")
+        self.timer_help.clicked.connect(self._open_help)
+        lay.addWidget(self.timer_help)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search triggers…")
         self.search.setClearButtonEnabled(True)
@@ -305,10 +313,10 @@ class TriggersPage(QWidget):
             lay, "When the chat says",
             "Type part of a chat line. Case, punctuation and spacing are ignored, and with "
             "“forgive OCR typos” each word may be a letter or two off. Regular expressions can "
-            "capture text to speak back: (?P<who>\\w+) is spoken as {who}.",
+            "capture text for labels and speech: (?P<damage>\\d+) becomes {damage}.",
         )
         self.name = QLineEdit()
-        self.name.setPlaceholderText("Name shown in the list and on the timer")
+        self.name.setPlaceholderText("Name shown in the list and used as the default label")
         self.name.textEdited.connect(self._on_edit)
         form.addRow("Name", self.name)
         self.pattern = QLineEdit()
@@ -335,8 +343,23 @@ class TriggersPage(QWidget):
         form.addRow("", self.test_result)
 
         # -- action -------------------------------------------------------------------
-        form = self._section(lay, "Then", "Speech can say {line} (the whole line), {match} (the matched text) or a captured group.")
+        form = self._section(
+            lay, "Then",
+            "Every trigger shows a fading label below active timers. A countdown uses the same label. "
+            "Labels and speech can use {name}, {line}, {match}, or captured groups such as {damage}.",
+        )
         self._then_form = form
+        self.timer_label = QLineEdit()
+        self.timer_label.setPlaceholderText("Default: the trigger's name; e.g. Righteous Smite: {damage} damage")
+        self.timer_label.setToolTip(
+            "Leave blank to use the trigger's name.\n"
+            "To display damage, choose Regular expression and capture the number:\n"
+            r"Your Righteous Smite II hits .+? for (?P<damage>\d+) points of Holy Damage"
+            "\nLabel: Righteous Smite II: {damage} damage\n"
+            "A hit for 154 shows: Righteous Smite II: 154 damage"
+        )
+        self.timer_label.textEdited.connect(self._on_edit)
+        form.addRow("Label", self.timer_label)
         self.action = _combo(ACTION_TITLES)
         self.action.currentIndexChanged.connect(self._on_edit)
         form.addRow("Do", self.action)
@@ -388,10 +411,6 @@ class TriggersPage(QWidget):
             spin.valueChanged.connect(self._on_edit)
         self.duration_row = self._hbox(self.minutes, self.seconds)
         form.addRow("Length", self.duration_row)
-        self.timer_label = QLineEdit()
-        self.timer_label.setPlaceholderText("Label (default: the trigger's name; {who} etc. allowed)")
-        self.timer_label.textEdited.connect(self._on_edit)
-        form.addRow("Label", self.timer_label)
         self.timer_mode = _combo(TIMER_MODE_TITLES)
         self.timer_mode.currentIndexChanged.connect(self._on_edit)
         self.timer_mode.setToolTip("Replace starts a fresh timer and cancels old speech. Retain ignores the entire "
@@ -463,6 +482,24 @@ class TriggersPage(QWidget):
         return scroll
 
     # ================================================================ data in
+    def _open_help(self) -> None:
+        if self._help_dialog is not None:
+            self._help_dialog.raise_()
+            self._help_dialog.activateWindow()
+            return
+        from mnmparse.app.trigger_help import TriggerHelpDialog
+
+        dialog = TriggerHelpDialog(self)
+        self._help_dialog = dialog
+        dialog.finished.connect(lambda _result: self._finish_help(dialog))
+        dialog.open()
+
+    def _finish_help(self, dialog: "TriggerHelpDialog") -> None:
+        if self._help_dialog is dialog:
+            self._help_dialog = None
+            self.timer_help.setFocus(Qt.FocusReason.OtherFocusReason)
+        dialog.deleteLater()
+
     def set_runner(self, runner: "TriggerRunner") -> None:
         self.runner = runner
         runner.fired.connect(self._on_fired)
@@ -868,7 +905,7 @@ class TriggersPage(QWidget):
         self._then_form.setRowVisible(self.speech_row, action == "speak")
         self.trigger_volume.setEnabled(action != "none")
         on = self.timer.isChecked()
-        for w in (self.duration_row, self.timer_label, self.timer_mode, self.color_row, self.low_s, self.warn_s, self.warn_action,
+        for w in (self.duration_row, self.timer_mode, self.color_row, self.low_s, self.warn_s, self.warn_action,
                   self.end_action):
             w.setEnabled(on)
         warn = str(self.warn_action.currentData())
@@ -922,9 +959,13 @@ class TriggersPage(QWidget):
         if m is None:
             self.test_result.setText("✗ No match")
         else:
-            said = fill_placeholders(t.speech, m.values()) if t.action == "speak" else ""
+            values = m.values()
+            label = fill_placeholders(t.timer_label or t.name, values)
+            said = fill_placeholders(t.speech, values) if t.action == "speak" else ""
             extra = f"  ·  says “{said}”" if said else ""
-            self.test_result.setText(f"✓ Matches “{m.text}”{extra}")
+            result = f"✓ Matches  ·  label “{label}”{extra}"
+            self.test_result.setText(result)
+            self.test_result.setToolTip(f"{result}\nMatched text: {m.text}")
 
     def _browse_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose a sound", str(project_path(".")),
