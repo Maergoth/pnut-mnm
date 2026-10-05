@@ -6,6 +6,8 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
+<img width="524" height="294" alt="image" src="https://github.com/user-attachments/assets/7b9c3047-102d-4bce-8bf0-192e6c72482d" />
+
 For maintainers: [development guide](docs/DEVELOPMENT.md) and [repository file audit](docs/FILE_AUDIT.md).
 
 If you have any questions, contact @Maergoth in discord.
@@ -73,9 +75,8 @@ Read this before using it.
   programs. The Play Nice Policy bans automation and "extracting game data through unauthorized
   methods". Neither document names screen capture or OCR. This tool does nothing the agreement
   names explicitly, but the data-mining clause is broad enough that the developers could decide
-  a screen-reading parser is unauthorized; a packet-based parser for this game was withdrawn in
-  2026 after they objected. Running it is your decision and your risk. Keep it private, do not
-  discuss parses in game, and stop if the developers say OCR parsers are not permitted.
+  a screen-reading parser is unauthorized; Running it is your decision and your risk. Keep it private, do not
+  discuss parses in game.
 
 ### Requirements
 
