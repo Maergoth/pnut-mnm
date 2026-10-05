@@ -1,0 +1,6 @@
+# Normalise text files in the repository; Windows scripts keep CRLF in the working copy.
+* text=auto
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.ico binary

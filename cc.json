@@ -1,0 +1,24 @@
+{
+  "_comment": "Crowd-control abilities counted in the Overview tab's CC score, by category. Names match the combat-log skill name (ranks like 'Shield Bash II' and tiers like 'Lesser Gust of Wind' match their base name). Compiled from monstersandmemories.miraheze.org on 2026-10-02 for all 18 classes; edit freely, the app reloads it on start.",
+  "interrupt": [
+    "Kick", "Jab", "Shield Bash", "Reflecting Bash", "Shield Slam", "Shield Toss",
+    "Grip of Shadow", "Interrupting Shot", "Net Shot", "Pinning Shot", "Scatter Shot",
+    "Lurching Impairment",
+    "Lesser Gust of Wind", "Gust of Wind", "Greater Gust of Wind", "Windblast",
+    "Lesser Flash of Lightning", "Flash of Lightning", "Greater Flash of Lightning", "Exceptional Flash of Lightning",
+    "Lesser Lightning Surge", "Lightning Surge", "Greater Lightning Surge", "Exceptional Lightning Surge",
+    "Burst of Lightning", "Greater Burst of Lightning", "Exceptional Burst of Lightning", "Lightning Nova"
+  ],
+  "stun": [
+    "Uppercut", "Low Blow", "Clobber", "Charge", "Slam Stun", "Sweeping Kick", "Pinning Throw", "Hundred Fists",
+    "Stun", "Scintillating Shock", "Scintillating Stupor", "Scintillation", "Psychic Choke",
+    "Telekinetic Knockback", "Electric Arc", "Staggering Winds", "Ogre Smash", "Scatter Shot"
+  ],
+  "mez": ["Mesmerize", "Entrance", "Enthrall", "Somniferous Serenade", "Lull"],
+  "root": ["Root", "Entangle", "Ensnare", "Grasping Roots", "Lurching Impairment", "Net Shot", "Pinning Shot", "Pinning Throw"],
+  "silence": ["Silence", "Mandate of Silence"],
+  "snare": ["Snare", "Lesser Snare", "Hamstring", "Snaring Shot"],
+  "fear": ["Fear", "Terrify", "Intimidate", "Intimidation"],
+  "charm": ["Charm", "Lesser Charm"],
+  "blind": ["Blind"]
+}

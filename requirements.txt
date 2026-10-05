@@ -1,0 +1,21 @@
+# PNUT M&M runtime dependencies (Windows 10/11, Python 3.14), the versions it is tested with.
+#   python -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements.txt
+PySide6==6.11.2
+numpy==2.5.3
+opencv-python==5.0.0.93
+pillow==12.3.0
+mss==10.2.0
+windows-capture==2.0.1
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Globalization==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
+
+# Building the exe (build_exe.ps1) also needs:
+#   pyinstaller==6.22.3
+# Optional OCR fallback ("ocr_engine": "rapid" in config.json), large:
+#   rapidocr-onnxruntime==1.2.3

@@ -1,0 +1,1378 @@
+"""The capture/OCR/parse pipeline as a background worker with Qt signals (APP_SPEC section 6).
+
+:class:`Engine` is a :class:`QObject` that must be created in the GUI thread.
+:meth:`Engine.start` spawns a daemon :class:`threading.Thread` that re-implements
+the per-frame sequence of :class:`mnmparse.cli._RunSession`::
+
+    source.latest() -> capture.crop_frame -> ocr.preprocess -> engine.read
+    -> tracker.update -> (write_raw, parse_line, write_event, stats.add) per message
+
+and reports through signals only; Qt queues them to the receivers in the GUI
+thread (the default ``AutoConnection``), so the worker never touches widgets.
+
+A restart must not log the chat lines still on screen a second time: the tracker goes on
+over Stop/Start, its remembered rows are saved next to the logs (``tracker_state.json``) and
+taken back by the next app if recent, lines a tracker without history found on screen
+(``Message.backlog``) are neither logged nor counted, and as a backstop the first frame's
+lines that repeat the end of the newest log are left out.  The party roster and the last zone
+carry over too.
+
+Safety posture (APP_SPEC section 1): this module only drives the read-only
+capture and OCR modules and writes files under the project folder.  The game
+window is located with :func:`mnmparse.capture.find_game_window` (read-only
+Win32 lookup) and never activated, messaged or sent input.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import logging
+import os
+import re
+import threading
+import time
+from collections import deque
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from PySide6.QtCore import QObject, Signal
+
+from mnmparse.app.models import EncounterSnapshot, build_snapshot
+from mnmparse.config import Config, project_path
+from mnmparse.replay import BACKLOG_S
+from mnmparse.session import SessionSnapshot, SessionStats
+from mnmparse.vocab import GLOBAL as VOCAB
+
+#: Chat lines never written to the log files: the viewer's own button-mashing noise
+#: ("This ability is not available right now." was 4,600 of 44,000 lines on 2026-10-02).
+NOT_LOGGED_RX = re.compile(r"^\W*this\s+abilit\w*\s+is\s+not\b", re.IGNORECASE)
+
+#: The learned spellings (see :mod:`mnmparse.vocab`) live next to the logs.
+VOCAB_FILE = "vocabulary.json"
+VOCAB_SAVE_S = 600.0  #: save the learned spellings this often while capturing
+ROSTER_SAVE_S = 5.0  #: save the party roster (party.json) at most this often after it changed
+#: The warning banner: frames skipped because a panel covered the chat within this long...
+OCCLUDED_RECENT_S = 10.0
+#: ...or at least this share of the last messages unreadable (with at least GARBLE_MIN_MESSAGES).
+GARBLE_SHARE = 0.35
+GARBLE_WINDOW = 40
+GARBLE_MIN_MESSAGES = 20
+#: Event kinds that count as unreadable for the banner (with fragments and Dummy Fix guesses,
+#: which are unknown lines given a number).  Every other kind is a line that was read, however
+#: rare: a vendor stop or a corpse run is not an OCR failure.
+UNREADABLE_KINDS = frozenset({"unknown"})
+
+#: What the tracker remembered when capture stopped (seq and text of the emitted rows), so a
+#: restart recognises the chat lines still on screen instead of logging them again.
+TRACKER_STATE_FILE = "tracker_state.json"
+#: The last zone seen (written with the tracker state), carried into the next run.
+SESSION_STATE_FILE = "session_state.json"
+#: Both are taken back on start only when saved this recently (the tracker refuses older state).
+STATE_MAX_AGE_S = 600.0
+STATE_SAVE_MESSAGES = 50  #: also save them after this many messages (a killed app never stops)
+#: Without a usable tracker state, the first frame's lines that repeat the newest log's last
+#: lines in order are not logged again (replay.find_backlog), when that log ended this recently.
+RESTART_TAIL_MAX_AGE_S = 600.0
+RESTART_TAIL_BYTES = 64_000  #: how much of the end of that log is read
+#: The lines first seen this soon after the first frame are its lines (replay.BACKLOG_S); they
+#: wait for that check until a later line arrives (the chat scrolled), RESTART_HOLD_S at most.
+RESTART_BLOCK_S = BACKLOG_S
+RESTART_HOLD_S = 3.0
+#: The chat window out of step with its newest line (scrolled up, covered, jumped) for this
+#: long shows as "Chat scrolled up"; meanwhile the open fight does not time out (its lines are
+#: still coming), for at most SCROLLED_BACK_HOLD_MAX_S.
+SCROLLED_BACK_SHOW_S = 1.0
+SCROLLED_BACK_HOLD_MAX_S = 120.0
+#: A crop shorter than this many chat rows is warned about once: one group-heal block between
+#: two frames can scroll a short window past unseen.
+MIN_CROP_ROWS = 12
+CROP_ROWS_FRAMES = 10  #: frames with at least 4 rows measured before the crop is judged
+#: When the party roster learns a member, the closed fights of the current zone visit that
+#: ended within this long are counted again (at most REBUILD_MAX_FIGHTS of them).
+REBUILD_WINDOW_S = 900.0
+REBUILD_MAX_FIGHTS = 30
+_vocab_loaded_from: set[str] = set()
+
+
+def _load_vocab_once(cfg: Config) -> None:
+    """Load the saved spellings for ``cfg.log_dir`` once per process."""
+    try:
+        path = project_path(cfg.log_dir) / VOCAB_FILE
+    except Exception:  # noqa: BLE001 - a bad log_dir must not stop the engine
+        return
+    key = str(path)
+    if key in _vocab_loaded_from:
+        return
+    _vocab_loaded_from.add(key)
+    if VOCAB.load(path):
+        log.info("learned spellings loaded from %s", path)
+        return
+    # First run with this log folder: learn the spellings from the logs already recorded,
+    # in the background so capture does not wait.
+    threading.Thread(target=_seed_vocab, args=(path,), name="mnmparse-vocab-seed", daemon=True).start()
+
+
+#: Lines read at most when seeding the spellings from old logs.
+SEED_MAX_LINES = 250_000
+
+
+def _seed_vocab(path: Path) -> None:
+    """Feed every recorded ``combat_*.log`` line in ``path.parent`` to :data:`VOCAB`, then save."""
+    from mnmparse.importer import LOG_LINE_RE
+    from mnmparse.logwriter import is_header
+    from mnmparse.parser import parse_line
+    from mnmparse.vocab import observe_event
+
+    started = time.monotonic()
+    n = 0
+    try:
+        for log_file in sorted(path.parent.glob("combat_*.log")):
+            with log_file.open(encoding="utf-8-sig", errors="replace") as fh:
+                for raw in fh:
+                    if is_header(raw):
+                        continue
+                    m = LOG_LINE_RE.match(raw.rstrip("\r\n"))
+                    text = m.group("text") if m else raw.strip()
+                    if text:
+                        observe_event(VOCAB, parse_line(text, 0.0, ""))
+                        n += 1
+                    if n >= SEED_MAX_LINES:
+                        break
+            if n >= SEED_MAX_LINES:
+                break
+        if n:
+            VOCAB.save(path)
+            log.info("learned spellings from %d recorded lines in %.1f s", n, time.monotonic() - started)
+    except Exception:  # noqa: BLE001 - seeding is a nicety; never disturb the app
+        log.exception("seeding the learned spellings failed")
+
+
+def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    """Write ``data`` to ``path`` through a temporary file, so a crash never leaves half a file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    """The JSON object in ``path``, or ``None`` (missing, unreadable, not an object)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _capture_key(cfg: Config) -> list[Any]:
+    """What the tracker's measured geometry (row pitch, text margin) depends on."""
+    return [[int(v) for v in cfg.crop], float(cfg.ocr_scale), str(cfg.ocr_engine)]
+
+
+def _previous_log_tail(log_dir: Path, now: float) -> list[str] | None:
+    """The texts of the last lines of the newest ``combat_*.log`` in ``log_dir``, oldest first;
+    ``None`` when there is none or its last line is older than RESTART_TAIL_MAX_AGE_S at ``now``."""
+    from mnmparse.importer import LOG_LINE_RE, LOG_STAMP_FMT
+    from mnmparse.logwriter import is_header
+    from mnmparse.replay import TAIL_LINES
+
+    try:
+        logs = [(p.stat().st_mtime, p) for p in log_dir.glob("combat_*.log")]
+        if not logs:
+            return None
+        newest = max(logs)[1]
+        with newest.open("rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, size - RESTART_TAIL_BYTES))
+            data = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = data.splitlines()
+    if size > RESTART_TAIL_BYTES:
+        lines = lines[1:]  # cut in the middle
+    texts: list[str] = []
+    last_ts: float | None = None
+    for raw in lines:
+        if is_header(raw):
+            continue
+        m = LOG_LINE_RE.match(raw.lstrip("﻿").rstrip())
+        if m is None:
+            continue
+        try:
+            last_ts = time.mktime(time.strptime(m.group("stamp"), LOG_STAMP_FMT))
+        except (ValueError, OverflowError):
+            continue
+        texts.append(m.group("text"))
+    if last_ts is None or now - last_ts > RESTART_TAIL_MAX_AGE_S:
+        return None
+    return texts[-TAIL_LINES:]
+
+
+@dataclasses.dataclass
+class _RestartTail:
+    """The newest log's last lines, and the first frame's lines held back to compare with them."""
+
+    tail: list[str]
+    first_frame: float | None = None  #: ``now`` of the run's first frame
+    held: list[Any] = dataclasses.field(default_factory=list)  #: Messages of the opening block
+
+
+SESSION_MIN_INTERVAL_S = 0.5  #: session snapshots: at most this often while new entries arrive
+SESSION_TICK_S = 5.0  #: ... and at least this often (elapsed time / rates keep moving)
+
+if TYPE_CHECKING:
+    import numpy as np
+
+    from mnmparse.capture import FrameSource
+    from mnmparse.grammar import Event
+    from mnmparse.logwriter import LogWriter
+    from mnmparse.ocr import OcrEngine, OcrLine
+    from mnmparse.stats import Encounter, Stats
+    from mnmparse.tracker import Message, Tracker
+
+__all__ = ["Engine", "STATES"]
+
+log = logging.getLogger(__name__)
+
+STATES: tuple[str, ...] = ("stopped", "starting", "no_window", "running", "paused")
+"""Values carried by :attr:`Engine.state_changed`."""
+
+SNAPSHOT_MIN_INTERVAL_S = 0.25
+"""Snapshots are emitted at most this often (4 Hz) when messages arrive: plenty for a meter, and
+each one costs ~13 ms of Python in the engine thread plus the redraws in the GUI thread."""
+SNAPSHOT_TICK_S = 1.0
+"""While an encounter is open a snapshot is emitted at least this often (duration ticks)."""
+STATUS_INTERVAL_S = 1.0
+"""Interval of the :attr:`Engine.status` dict."""
+EXPIRE_INTERVAL_S = 1.0
+"""How often ``stats.expire(now)`` runs (encounter timeout check)."""
+WINDOW_RETRY_S = 2.0
+"""Interval of the read-only window lookup while in the ``no_window`` state."""
+FRAME_LOSS_S = 5.0
+"""No frame for this long while running triggers a window lookup (lost window?)."""
+FIRST_FRAME_TIMEOUT_S = 5.0
+"""How long :meth:`Engine.grab_frame` waits for a frame from a temporary source."""
+STOP_JOIN_TIMEOUT_S = 6.0
+"""How long :meth:`Engine.stop` waits for the worker thread.
+
+Covers one loop iteration (``1/fps`` plus an OCR pass), the tracker flush and
+writer close, and ``WgcWindowSource.stop`` which itself joins the native
+capture thread for up to 2 s.
+"""
+
+
+class Engine(QObject):
+    """Pipeline worker thread plus the signals the UI subscribes to.
+
+    Signals:
+        message(Message, Event): every logged line (raw message and parsed event).
+        snapshot(EncounterSnapshot): the open (or just-closed) encounter, at most
+            every 100 ms and at least once per second while a fight is open.
+        encounter_closed(EncounterSnapshot): an encounter closed (kill, timeout or reset).
+        encounter_updated(EncounterSnapshot): a closed encounter counted again (same
+            ``key``): the party roster learned a member who fought in it.  Not a new fight:
+            nothing is copied and no sound plays.
+        status(dict): every ~1 s: ``state fps ocr_ms frames messages occluded
+            window_found lines scrolled_back``.
+        state_changed(str): one of :data:`STATES`.
+        error(str): a human-readable failure (the worker also logs it).
+        notice(str): advice for the status bar (a crop too short, say); not a failure.
+
+    The object must live in the GUI thread; only the worker thread emits.
+    """
+
+    message = Signal(object, object)
+    snapshot = Signal(object)
+    encounter_closed = Signal(object)
+    encounter_updated = Signal(object)
+    session = Signal(object)  #: SessionSnapshot (loot, coin, kills, deaths, CC) for the whole run
+    status = Signal(dict)
+    state_changed = Signal(str)
+    error = Signal(str)
+    notice = Signal(str)
+
+    def __init__(self, cfg: Config, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._cfg: Config = dataclasses.replace(cfg)
+        self._lock = threading.RLock()  # guards the pipeline objects, counters and history
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._state: str = "stopped"
+        self._paused = False
+        self._window_found = False
+
+        self._source: FrameSource | None = None
+        self._ocr: OcrEngine | None = None
+        self._tracker: Tracker | None = None
+        self._stats: Stats | None = None
+        self._stopped_stats: Stats | None = None  #: last capture's source events for ownership corrections
+        self._writer: LogWriter | None = None
+        self._history: list[EncounterSnapshot] = []
+        #: Carried over Stop/Start (``_finish`` drops ``_stats``): the party roster, the last
+        #: zone, and the tracker with its key (_capture_key) and the time capture stopped.
+        self._roster: Any | None = None
+        self._last_zone: str = ""
+        self._kept_tracker: tuple[list[Any], Tracker, float] | None = None
+        self._restart: _RestartTail | None = None  #: the restart check of the first frame (see _filter_restart)
+        self._backlog_dropped = 0  #: lines already on screen at start, not logged again (this run)
+        self._since_state_save = 0  #: messages since the tracker state was saved
+        self._scrolled_since: float | None = None  #: when the chat window got out of step (wall clock)
+        self._scrolled_shown = False
+        self._row_frames = 0  #: frames with 4+ rows seen (the crop is judged after CROP_ROWS_FRAMES)
+        self._rows_warned = False
+        self._rebuilt_version = -1  #: roster version the recent fights were last counted with
+        self._rebuilt_members: set[str] = set()
+        self._rebuild_all = False  #: the user changed the group by hand: re-count whatever changed
+        _load_vocab_once(cfg)
+        self._session_stats = SessionStats(
+            cfg.player_name, include_personal=bool(getattr(cfg, "include_personal", False)), vocab=VOCAB
+        )
+        self._session_dirty = False
+        self._recent_kinds: deque[str] = deque(maxlen=GARBLE_WINDOW)
+        self._occluded_seen = 0
+        self._occluded_at = 0.0  #: monotonic time occlusion was last seen
+        self._last_vocab_save = time.monotonic()
+        self._last_session_at = 0.0
+        from mnmparse.parser import NameCompleter
+
+        self._names = NameCompleter()
+
+        self._frames = 0
+        self._messages = 0
+        self._last_ocr_ms = 0.0
+        self._last_lines = 0
+        self._frame_times: deque[float] = deque(maxlen=64)
+        self._snapshot_dirty = False
+        self._last_snapshot_at = 0.0
+        self._crop_warned = False
+
+        self._test_ocr: OcrEngine | None = None
+        self._test_ocr_key: tuple[str, float] | None = None
+
+    # ------------------------------------------------------------------
+    # Public API (GUI thread)
+    # ------------------------------------------------------------------
+
+    @property
+    def state(self) -> str:
+        """The current state string (see :data:`STATES`)."""
+        return self._state
+
+    @property
+    def is_running(self) -> bool:
+        """True while the worker thread is alive."""
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    @property
+    def config(self) -> Config:
+        """The configuration the engine currently holds (a copy)."""
+        with self._lock:
+            return dataclasses.replace(self._cfg)
+
+    def start(self) -> None:
+        """Spawn the worker thread; returns immediately (never blocks the GUI)."""
+        if self.is_running:
+            log.debug("Engine.start: already running")
+            return
+        self._stop_event.clear()
+        with self._lock:
+            self._frames = 0
+            self._messages = 0
+            self._last_ocr_ms = 0.0
+            self._last_lines = 0
+            self._frame_times.clear()
+            self._snapshot_dirty = False
+            self._last_snapshot_at = 0.0
+            self._crop_warned = False
+            self._backlog_dropped = 0
+            self._since_state_save = 0
+            self._scrolled_since = None
+            self._scrolled_shown = False
+            self._row_frames = 0
+            self._rows_warned = False
+        self._thread = threading.Thread(target=self._run, name="mnmparse-engine", daemon=True)
+        self._thread.start()
+        log.info("Engine worker started")
+
+    def stop(self) -> None:
+        """Ask the worker to finish (flush tracker, close writer, stop source) and join it."""
+        thread = self._thread
+        if thread is None or not thread.is_alive():
+            self._set_state("stopped")
+            return
+        log.info("Engine stop requested")
+        self._stop_event.set()
+        thread.join(timeout=STOP_JOIN_TIMEOUT_S)
+        if thread.is_alive():
+            log.warning(
+                "Engine worker did not stop within %.0f s; it is a daemon and ends with the process",
+                STOP_JOIN_TIMEOUT_S,
+            )
+            self._set_state("stopped")
+        self._thread = None
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause (skip frames, keep the encounter timeout ticking) or resume."""
+        self._paused = bool(paused)
+        if self._state in ("running", "paused"):
+            self._set_state("paused" if self._paused else "running")
+
+    def reset_encounter(self) -> None:
+        """Close the open encounter now; emits :attr:`encounter_closed` if there was one."""
+        with self._lock:
+            self._close_open_encounter("reset by the user")
+
+    def _close_open_encounter(self, reason: str) -> EncounterSnapshot | None:
+        """Close the open encounter now (lock held); returns its snapshot or ``None``.
+
+        Uses the public ``Stats.expire`` with a time far enough in the future, so
+        the encounter closes exactly as a timeout would, and announces it through
+        :meth:`_emit_closed` (``encounter_closed`` plus a closed ``snapshot``).
+        """
+        stats = self._stats
+        if stats is None:
+            return None
+        enc = stats.current()
+        if enc is None:
+            return None
+        closed = stats.expire(enc.last_activity + stats.encounter_timeout_s + 1.0)
+        if closed is None:
+            return None
+        log.info("encounter closed: %s", reason)
+        return self._emit_closed(closed)
+
+    def update_config(self, cfg: Config) -> None:
+        """Replace the configuration.
+
+        ``crop``, ``fps``, ``preprocess``, ``player_name`` and
+        ``encounter_timeout_s`` apply live; the capture backend, window title,
+        OCR engine/scale and log directory take effect on the next :meth:`start`.
+        """
+        with self._lock:
+            self._cfg = dataclasses.replace(cfg)
+            self._crop_warned = False
+            self._row_frames = 0
+            self._rows_warned = False
+            if self._stats is not None:
+                self._stats.encounter_timeout_s = float(cfg.encounter_timeout_s)
+                self._stats.player_name = cfg.player_name
+                self._stats.roster.player_name = cfg.player_name
+            elif self._roster is not None:
+                self._roster.player_name = cfg.player_name
+            self._session_stats.player_name = cfg.player_name
+            self._session_stats.include_personal = bool(getattr(cfg, "include_personal", False))
+            if self._roster is not None:
+                self._session_stats.set_roster(self._roster)
+        log.info("Engine config updated")
+
+    def history(self) -> list[EncounterSnapshot]:
+        """Closed encounters so far, oldest first (newest last)."""
+        with self._lock:
+            return list(self._history)
+
+    def session_snapshot(self) -> SessionSnapshot:
+        """The current session (loot / coin / kills / deaths / CC) snapshot."""
+        with self._lock:
+            return self._session_stats.snapshot()
+
+    def reset_session(self) -> None:
+        """Start the session counters over (keeps the encounter history)."""
+        with self._lock:
+            cfg = self._cfg
+            self._session_stats = SessionStats(
+                cfg.player_name, include_personal=bool(getattr(cfg, "include_personal", False)), vocab=VOCAB,
+                roster=self._roster,
+            )
+            snap = self._session_stats.snapshot()
+        self.session.emit(snap)
+        log.info("session counters reset")
+
+    def _maybe_emit_session(self, now_mono: float) -> None:
+        """Emit the session snapshot: <= 2 Hz when new entries arrived, and every 5 s regardless."""
+        with self._lock:
+            elapsed = now_mono - self._last_session_at
+            if not ((self._session_dirty and elapsed >= SESSION_MIN_INTERVAL_S) or elapsed >= SESSION_TICK_S):
+                return
+            snap = self._session_stats.snapshot()
+            self._session_dirty = False
+            self._last_session_at = now_mono
+        self.session.emit(snap)
+        with self._lock:
+            self._maybe_save_roster(now_mono)
+        if now_mono - self._last_vocab_save >= VOCAB_SAVE_S:
+            self._last_vocab_save = now_mono
+            self._save_vocab()
+
+    @staticmethod
+    def _party_path(cfg: Config) -> Path:
+        from mnmparse.party import PARTY_FILE
+
+        return project_path(cfg.log_dir) / PARTY_FILE
+
+    def _maybe_save_roster(self, now_mono: float, *, force: bool = False) -> None:
+        """Save the party roster when it changed (at most every ROSTER_SAVE_S)."""
+        stats = self._stats
+        if stats is None:
+            return
+        roster = stats.roster
+        if roster.version == getattr(self, "_roster_saved", -1):
+            return
+        if not force and now_mono - getattr(self, "_roster_saved_at", 0.0) < ROSTER_SAVE_S:
+            return
+        self._roster_saved = roster.version
+        self._roster_saved_at = now_mono
+        roster.save(self._party_path(self.config))
+
+    # -- restart: tracker state and last zone ------------------------------------------------
+    def _start_tracker(self, cfg: Config) -> tuple[Tracker, bool]:
+        """The tracker for a new run, and whether it is the last run's (kept in this process).
+
+        The last run's tracker goes on when capture stopped less than STATE_MAX_AGE_S ago and
+        the crop and OCR settings are the same: it recognises the lines still on screen.
+        Otherwise a new tracker takes the remembered rows (that tracker's, or the saved
+        tracker_state.json) through :meth:`Tracker.import_state`, which refuses stale state;
+        the measured geometry only when the crop and OCR settings are the same.  Without any
+        state the first frame's lines are flagged as backlog and not logged.
+        """
+        from mnmparse.tracker import Tracker
+
+        key = _capture_key(cfg)
+        now = time.time()
+        kept = self._kept_tracker
+        self._kept_tracker = None
+        state: dict[str, Any] | None = None
+        if kept is not None:
+            kept_key, tracker, stopped = kept
+            if kept_key == key and 0.0 <= now - stopped <= STATE_MAX_AGE_S:
+                log.info("tracker of the last run goes on (%d remembered rows)", len(tracker.history))
+                return tracker, True
+            state = dict(tracker.export_state(stopped), capture=kept_key)
+        if state is None:
+            state = _read_json(project_path(cfg.log_dir) / TRACKER_STATE_FILE)
+        tracker = Tracker()
+        if state is not None:
+            if state.get("capture") != key:
+                state = dict(state, geometry={})  # measured with another crop or OCR scale
+            tracker.import_state(state, now=now, max_age_s=STATE_MAX_AGE_S)
+        return tracker, False
+
+    def _install_stats(self, cfg: Config, saved_zone: str = "") -> Stats:
+        """A new Stats for a run, with the zone and the party roster carried over (lock held).
+
+        Stop/Start keeps the last known zone (a restart soon after: the saved one) until the
+        next zone line, and the party roster (a restart: party.json, each member if recent).
+        The session takes its party from the same roster."""
+        from mnmparse.stats import Stats
+
+        stats = Stats(cfg.encounter_timeout_s, vocab=VOCAB, player_name=cfg.player_name)
+        zone = self._last_zone or saved_zone
+        if zone:
+            stats.zone_changes.append((0.0, zone))
+        if self._roster is not None:
+            stats.roster = self._roster
+            stats.roster.player_name = cfg.player_name
+        else:
+            stats.roster.load(self._party_path(cfg))
+        self._stats = stats
+        self._roster = stats.roster
+        self._session_stats.set_roster(stats.roster)
+        self._roster_saved = stats.roster.version
+        self._rebuilt_version = stats.roster.version
+        self._rebuilt_members = stats.roster.members()
+        self._rebuild_all = False
+        return stats
+
+    def _load_session_state(self, cfg: Config) -> str:
+        """The zone saved by the last run, when it was saved within STATE_MAX_AGE_S (else ``""``)."""
+        data = _read_json(project_path(cfg.log_dir) / SESSION_STATE_FILE)
+        if data is None:
+            return ""
+        try:
+            age = time.time() - float(data.get("saved", 0.0))
+        except (TypeError, ValueError):
+            return ""
+        zone = data.get("zone")
+        if not isinstance(zone, str) or not zone or not -5.0 <= age <= STATE_MAX_AGE_S:
+            return ""
+        log.info("last zone %r taken over from the last run (saved %.0f s ago)", zone, age)
+        return zone
+
+    def _current_zone(self) -> str:
+        """The zone in effect (the last zone line, or the one carried over); lock held."""
+        stats = self._stats
+        if stats is not None and stats.zone_changes:
+            return str(stats.zone_changes[-1][1])
+        return self._last_zone
+
+    def _save_state(self, cfg: Config, tracker: Tracker, zone: str) -> None:
+        """Save the tracker state and the last zone next to the logs (worker thread)."""
+        now = time.time()
+        folder = project_path(cfg.log_dir)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            _write_json_atomic(folder / TRACKER_STATE_FILE, dict(tracker.export_state(now), capture=_capture_key(cfg)))
+            _write_json_atomic(folder / SESSION_STATE_FILE, {"version": 1, "saved": now, "zone": zone})
+        except OSError as exc:
+            log.warning("could not save the tracker state: %s", exc)
+        self._since_state_save = 0
+
+    def set_group_override(self, name: str, in_group: bool | None) -> None:
+        """Count ``name`` in or out of the group by hand (``None``: follow the chat again).
+
+        Applies to the live fight at once (its next snapshot), to the recent closed fights of
+        the zone visit (counted again, see :meth:`_maybe_rebuild_recent`) and to later fights,
+        and is remembered across runs (party.json next to the logs)."""
+        from mnmparse.party import PartyRoster
+
+        with self._lock:
+            stats = self._stats
+            if stats is not None:
+                stats.roster.set_manual(name, in_group)
+                self._maybe_save_roster(time.monotonic(), force=True)
+                self._snapshot_dirty = True
+                self._rebuild_all = True
+                return
+            cfg = self._cfg
+            roster = self._roster
+            if roster is not None:
+                # Not capturing, but the roster of the last run is kept for the next one.
+                roster.set_manual(name, in_group)
+                roster.save(self._party_path(cfg))
+                return
+        roster = PartyRoster(cfg.player_name)  # not capturing yet: change the saved roster directly
+        path = self._party_path(cfg)
+        roster.load(path)
+        roster.set_manual(name, in_group)
+        roster.save(path)
+
+    def _save_vocab(self) -> None:
+        try:
+            VOCAB.save(project_path(self.config.log_dir) / VOCAB_FILE)
+        except OSError as exc:
+            log.warning("could not save the learned spellings: %s", exc)
+
+    def set_pet_owner(self, pet: str, owner: str | None) -> None:
+        """Persist ownership and immediately rebuild captured fights that contain this pet."""
+        from mnmparse.party import PartyRoster
+
+        with self._lock:
+            roster = self._stats.roster if self._stats is not None else self._roster
+            if roster is None:
+                roster = PartyRoster(self._cfg.player_name)
+                roster.load(self._party_path(self._cfg))
+                self._roster = roster
+            roster.set_pet_owner(pet, owner)
+            path = self._party_path(self._cfg)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            roster.save(path)
+            self._snapshot_dirty = True
+            self._rebuild_all = True
+            updated: list[EncounterSnapshot] = []
+            for stats in (self._stopped_stats, self._stats):
+                if stats is None:
+                    continue
+                stats.roster.set_pet_owner(pet, owner)
+                positions = {snap.key: index for index, snap in enumerate(self._history)}
+                for enc in stats.history:
+                    index = positions.get(f"{enc.start:.3f}")
+                    if index is None or pet not in stats.canonical_map(enc).values():
+                        continue
+                    old = self._history[index]
+                    snap = build_snapshot(stats, enc, self._cfg.player_name)
+                    if snap != old:
+                        self._history[index] = snap
+                        if snap.ours and not old.ours:
+                            self._session_stats.note_encounter(snap.duration)
+                            self._session_dirty = True
+                        updated.append(snap)
+            current = self._stats.current() if self._stats is not None else None
+            live = build_snapshot(self._stats, current, self._cfg.player_name, now=time.time()) if current is not None else None
+        for snap in updated:
+            self.encounter_updated.emit(snap)
+        if live is not None:
+            self.snapshot.emit(live)
+
+    def pet_owners(self) -> dict[str, str]:
+        """Saved ownership choices for imported logs as well as live capture."""
+        from mnmparse.party import PartyRoster
+
+        with self._lock:
+            roster = self._stats.roster if self._stats is not None else self._roster
+            if roster is None:
+                roster = PartyRoster(self._cfg.player_name)
+                roster.load(self._party_path(self._cfg))
+            return roster.pet_owners()
+
+    def grab_frame(self) -> np.ndarray | None:
+        """Return one BGR frame of the game window, or ``None``.
+
+        Uses the live source while running; otherwise starts a temporary source,
+        waits for the first frame and stops it again.  Failures are logged and
+        reported through :attr:`error`; nothing is raised.
+        """
+        from mnmparse.capture import CaptureError, make_source
+
+        with self._lock:
+            source = self._source if self.is_running else None
+        if source is not None:
+            frame = source.latest()
+            if frame is None:
+                frame = self._wait_for_frame(source, 2.0)
+            return frame
+
+        cfg = self.config
+        try:
+            temp = make_source(cfg)
+            temp.start()
+        except CaptureError as exc:
+            log.warning("grab_frame: %s", exc)
+            self.error.emit(str(exc))
+            return None
+        except Exception as exc:  # noqa: BLE001 - surface anything from native code
+            log.exception("grab_frame: could not start a temporary source")
+            self.error.emit(f"Could not start capture: {exc}")
+            return None
+        try:
+            frame = self._wait_for_frame(temp, FIRST_FRAME_TIMEOUT_S)
+        finally:
+            temp.stop()
+        if frame is None:
+            self.error.emit(
+                f"The game window was found but no frame arrived within {FIRST_FRAME_TIMEOUT_S:.0f} s."
+            )
+        return frame
+
+    def test_ocr(self, frame: np.ndarray, crop: tuple[int, int, int, int], cfg: Config) -> list[OcrLine]:
+        """Crop, preprocess and OCR ``frame`` once with the settings in ``cfg``.
+
+        A private OCR engine (cached by engine name and scale) is used so the
+        GUI never competes with the worker's engine.  Returns an empty list on
+        failure (logged and reported through :attr:`error`).
+        """
+        from mnmparse.capture import crop_frame
+        from mnmparse.ocr import make_engine, preprocess
+
+        try:
+            key = (cfg.ocr_engine, float(cfg.ocr_scale))
+            if self._test_ocr is None or self._test_ocr_key != key:
+                self._test_ocr = make_engine(cfg)
+                self._test_ocr_key = key
+            img = preprocess(crop_frame(frame, tuple(crop)), cfg.preprocess, cfg.ocr_scale)
+            return self._test_ocr.read(img)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("test_ocr failed")
+            self.error.emit(f"OCR test failed: {exc}")
+            return []
+
+    # ------------------------------------------------------------------
+    # Worker thread
+    # ------------------------------------------------------------------
+
+    def _run(self) -> None:
+        """Thread body: build the pipeline, then capture until stopped."""
+        from mnmparse.capture import CaptureError
+        from mnmparse.ocr import make_engine
+
+        try:
+            self._set_state("starting")
+            cfg = self.config
+            try:
+                ocr = make_engine(cfg)
+            except Exception as exc:  # noqa: BLE001 - "engine unavailable"
+                log.exception("OCR engine %r unavailable", cfg.ocr_engine)
+                self.error.emit(f"OCR engine '{cfg.ocr_engine}' unavailable: {exc}")
+                return
+            self._prepare_run(cfg, ocr)
+            while not self._stop_event.is_set():
+                source = self._open_source()
+                if source is None:
+                    break
+                self._capture_loop(source)
+                if not self._stop_event.is_set():
+                    # The game window went away: release the source and look for it again.
+                    # On a stop request the source is closed by _finish() AFTER the tracker
+                    # flush and writer close, so the held lines reach the log files first
+                    # (WgcWindowSource.stop may take up to 2 s).
+                    self._close_source()
+        except CaptureError as exc:
+            log.error("Capture failed: %s", exc)
+            self.error.emit(str(exc))
+        except Exception as exc:  # noqa: BLE001 - never let an exception escape the thread
+            log.exception("Engine worker crashed")
+            self.error.emit(f"Capture stopped: {exc}")
+        finally:
+            self._finish()
+
+    def _prepare_run(self, cfg: Config, ocr: OcrEngine) -> None:
+        """Build the pipeline of a run: tracker, restart check, Stats, log writer."""
+        from mnmparse.logwriter import LogWriter
+
+        tracker, kept = self._start_tracker(cfg)
+        # Unless the tracker of the last run in this process goes on (its history is
+        # complete), the first frame's lines are also checked against the end of the newest
+        # log: a saved state can be up to STATE_SAVE_MESSAGES lines behind after an unclean exit.
+        tail = None if kept else _previous_log_tail(project_path(cfg.log_dir), time.time())
+        saved_zone = self._load_session_state(cfg)
+        with self._lock:
+            self._ocr = ocr
+            self._tracker = tracker
+            self._restart = _RestartTail(tail) if tail else None
+            self._install_stats(cfg, saved_zone)
+            self._writer = LogWriter(
+                cfg.log_dir,
+                max_bytes=int(float(getattr(cfg, "log_max_mb", 5.0)) * 1_000_000),
+                break_s=float(getattr(cfg, "log_break_minutes", 60.0)) * 60.0,
+            )
+
+    def _open_source(self) -> FrameSource | None:
+        """Start a frame source; wait in ``no_window`` until the game appears or we stop."""
+        from mnmparse.capture import WindowNotFoundError, find_game_window, make_source
+
+        while not self._stop_event.is_set():
+            cfg = self.config
+            try:
+                source = make_source(cfg)
+                source.start()
+            except WindowNotFoundError as exc:
+                log.info("%s; retrying every %.0f s", exc, WINDOW_RETRY_S)
+            else:
+                with self._lock:
+                    self._source = source
+                    self._window_found = True
+                return source
+            self._window_found = False
+            self._set_state("no_window")
+            # Poll the (read-only) window lookup every WINDOW_RETRY_S, keeping the
+            # status signal ticking once per second meanwhile.
+            next_lookup = time.monotonic() + WINDOW_RETRY_S
+            while not self._stop_event.wait(STATUS_INTERVAL_S):
+                self._emit_status()
+                if time.monotonic() >= next_lookup:
+                    if find_game_window(cfg.window_title) is not None:
+                        break
+                    next_lookup = time.monotonic() + WINDOW_RETRY_S
+        return None
+
+    def _close_source(self) -> None:
+        with self._lock:
+            source, self._source = self._source, None
+        if source is not None:
+            try:
+                source.stop()
+            except Exception:  # noqa: BLE001
+                log.debug("source.stop() raised", exc_info=True)
+
+    def _capture_loop(self, source: FrameSource) -> None:
+        """Frame loop; returns when stopped or when the game window disappears."""
+        self._set_state("paused" if self._paused else "running")
+        now = time.monotonic()
+        last_frame_at = now
+        last_lookup = now
+        next_expire = now + EXPIRE_INTERVAL_S
+        next_status = now + STATUS_INTERVAL_S
+        self._emit_status()
+
+        while not self._stop_event.is_set():
+            t0 = time.monotonic()
+            cfg = self.config
+            if not self._paused:
+                # A source that can cut the crop out of each frame copies a few MB, not the
+                # whole 4K window (capture.WgcWindowSource.latest_region).
+                region = getattr(source, "latest_region", None)
+                try:
+                    frame = region(tuple(cfg.crop)) if callable(region) else source.latest()
+                except ValueError as exc:  # the crop does not fit the frame
+                    frame = None
+                    last_frame_at = t0
+                    self._warn_crop(cfg, exc)
+                if frame is not None:
+                    last_frame_at = t0
+                    self._process_frame(frame, cfg, cropped=callable(region))
+                elif self._window_lost(source, t0 - last_frame_at, t0 - last_lookup, cfg):
+                    return
+                elif t0 - last_frame_at > FRAME_LOSS_S:
+                    last_lookup = t0
+
+            now = time.monotonic()
+            if now >= next_expire:
+                next_expire = now + EXPIRE_INTERVAL_S
+                self._expire(time.time())
+            self._maybe_emit_snapshot(now)
+            self._maybe_rebuild_recent()
+            self._maybe_emit_session(now)
+            if now >= next_status:
+                next_status = now + STATUS_INTERVAL_S
+                self._emit_status()
+
+            delay = (1.0 / max(cfg.fps, 0.1)) - (time.monotonic() - t0)
+            if delay > 0:
+                self._stop_event.wait(delay)
+
+    def _window_lost(self, source: FrameSource, since_frame: float, since_lookup: float, cfg: Config) -> bool:
+        """True when the source died or no frame arrived for a while and the window is gone."""
+        from mnmparse.capture import find_game_window
+
+        if getattr(source, "is_running", True) is False:
+            log.warning("Capture session ended (game window closed or replaced); looking for the window")
+            self._window_found = False
+            return True
+        if since_frame > FRAME_LOSS_S and since_lookup >= WINDOW_RETRY_S:
+            if find_game_window(cfg.window_title) is None:
+                log.warning("No frame for %.0f s and the game window is gone; waiting for it", since_frame)
+                self._window_found = False
+                return True
+        return False
+
+    def _warn_crop(self, cfg: Config, exc: Exception) -> None:
+        if not self._crop_warned:
+            self._crop_warned = True
+            log.warning("Bad crop %s: %s", tuple(cfg.crop), exc)
+            self.error.emit(f"Crop {tuple(cfg.crop)} does not fit the frame: {exc}")
+
+    def _process_frame(self, frame: np.ndarray, cfg: Config, *, cropped: bool = False) -> None:
+        """One frame: crop -> preprocess -> OCR -> tracker -> messages (cli._RunSession).
+
+        ``cropped``: ``frame`` already is the crop (``latest_region``)."""
+        from mnmparse.capture import crop_frame
+        from mnmparse.ocr import preprocess
+
+        ocr = self._ocr
+        tracker = self._tracker
+        if ocr is None or tracker is None:
+            return
+        try:
+            img = preprocess(frame if cropped else crop_frame(frame, tuple(cfg.crop)), cfg.preprocess, cfg.ocr_scale)
+        except ValueError as exc:
+            self._warn_crop(cfg, exc)
+            return
+        t1 = time.perf_counter()
+        lines = ocr.read(img)
+        ocr_ms = (time.perf_counter() - t1) * 1000.0
+        now = time.time()
+        with self._lock:
+            new_messages = tracker.update(lines, now)
+            self._frames += 1
+            self._frame_times.append(time.monotonic())
+            self._last_ocr_ms = ocr_ms
+            self._last_lines = len(lines)
+            log.debug(
+                "frame %d: ocr %.1f ms (%d lines), %d new message(s)",
+                self._frames, ocr_ms, len(lines), len(new_messages),
+            )
+            if self._restart is not None:
+                new_messages = self._filter_restart(new_messages, now)
+            backlog = sum(1 for msg in new_messages if getattr(msg, "backlog", False))
+            for msg in new_messages:
+                self._handle_message(msg, cfg)
+            if backlog:
+                log.info("%d lines already on screen at start were not logged again (backlog)", backlog)
+            self._note_window_state(tracker, now)
+            self._check_crop_rows(cfg, tracker)
+            self._since_state_save += len(new_messages)
+            save = self._since_state_save >= STATE_SAVE_MESSAGES
+            zone = self._current_zone()
+        if save:
+            self._save_state(cfg, tracker, zone)
+
+    def _filter_restart(self, messages: list[Message], now: float) -> list[Message]:
+        """The restart check (lock held): hold the first frame's lines until the chat scrolls
+        (or RESTART_HOLD_S), then drop those that repeat the end of the newest log in order.
+
+        Lines flagged as backlog pass (they are not logged anyway), and so does every line
+        once the check is done.
+        """
+        restart = self._restart
+        assert restart is not None
+        if restart.first_frame is None:
+            restart.first_frame = now
+        out: list[Message] = []
+        for msg in messages:
+            if getattr(msg, "backlog", False):
+                out.append(msg)
+            elif self._restart is not None and msg.first_seen - restart.first_frame <= RESTART_BLOCK_S:
+                restart.held.append(msg)
+            else:
+                out.extend(self._resolve_restart())  # the chat scrolled: the opening block is complete
+                out.append(msg)
+        if self._restart is not None and now - restart.first_frame >= RESTART_HOLD_S:
+            out[:0] = self._resolve_restart()
+        return out
+
+    def _resolve_restart(self) -> list[Message]:
+        """End the restart check: the held lines that the newest log did not end with (lock held)."""
+        from mnmparse.replay import find_backlog
+
+        restart, self._restart = self._restart, None
+        if restart is None or not restart.held:
+            return []
+        held = restart.held
+        # Lines never written to the logs cannot be in its tail: they take no part in lining up.
+        candidates = [i for i, msg in enumerate(held) if not NOT_LOGGED_RX.match(msg.text)]
+        found = find_backlog(restart.tail, [(held[i].first_seen, held[i].text) for i in candidates])
+        drop = {candidates[j] for j in found}
+        if drop:
+            self._backlog_dropped += len(drop)
+            log.info(
+                "%d of the first frame's %d lines repeat the end of the last log; not logged again",
+                len(drop), len(held),
+            )
+        return [msg for i, msg in enumerate(held) if i not in drop]
+
+    def _note_window_state(self, tracker: Tracker, now: float) -> None:
+        """Follow the tracker's scrolled-back state; log when it shows or clears (lock held)."""
+        if getattr(tracker, "scrolled_back", False):
+            if self._scrolled_since is None:
+                self._scrolled_since = now
+        else:
+            self._scrolled_since = None
+        shown = self._scrolled_since is not None and now - self._scrolled_since >= SCROLLED_BACK_SHOW_S
+        if shown != self._scrolled_shown:
+            self._scrolled_shown = shown
+            if shown:
+                log.info("chat scrolled up (or out of step with its newest line): the open fight does not time out")
+            else:
+                log.info("chat shows its newest line again")
+
+    def _timeout_held(self, now: float) -> bool:
+        """True while the open fight must not time out: the chat window is out of step with
+        its newest line, so the fight's next lines may still be coming (lock held)."""
+        since = self._scrolled_since
+        tracker = self._tracker
+        return (
+            since is not None
+            and tracker is not None
+            and getattr(tracker, "scrolled_back", False)
+            and now - since <= SCROLLED_BACK_HOLD_MAX_S
+        )
+
+    def _check_crop_rows(self, cfg: Config, tracker: Tracker) -> None:
+        """Warn once when the crop holds fewer than MIN_CROP_ROWS chat rows (lock held)."""
+        if self._rows_warned or len(tracker.prev) < 4:
+            return
+        self._row_frames += 1
+        if self._row_frames < CROP_ROWS_FRAMES:
+            return
+        self._rows_warned = True  # judged once per start (and per config change)
+        _left, top, _right, bottom = (int(v) for v in cfg.crop)
+        rows = (bottom - top) * float(cfg.ocr_scale) / max(1.0, float(tracker.pitch))
+        if rows >= MIN_CROP_ROWS:
+            return
+        text = (
+            f"The crop shows only about {int(rows)} chat lines; make it (and the Combat chat window) "
+            f"at least {MIN_CROP_ROWS} lines tall, or a burst of lines can scroll past between two frames."
+        )
+        log.warning("%s (crop %s)", text, tuple(cfg.crop))
+        self.notice.emit(text)
+
+    def _handle_message(self, msg: Message, cfg: Config) -> None:
+        """Log, parse, aggregate and announce one completed message (lock held).
+
+        A backlog line (on screen when a tracker with no history saw its first frame) is
+        neither logged nor counted: its time is unknown, and an earlier run may have logged it.
+        """
+        from mnmparse.parser import parse_line
+
+        writer, stats = self._writer, self._stats
+        if writer is None or stats is None:
+            return
+        if getattr(msg, "backlog", False):
+            self._backlog_dropped += 1
+            return
+        if not NOT_LOGGED_RX.match(msg.text):
+            writer.write_raw(msg)
+        from mnmparse.parser import split_fused
+
+        parts = split_fused(msg.text, cfg.player_name)
+        if len(parts) > 1:
+            # Two messages the OCR ran together: handle each on its own.
+            for part in parts:
+                self._handle_part(dataclasses.replace(msg, text=part), cfg)
+            return
+        self._handle_part(msg, cfg)
+
+    def _handle_part(self, msg: Message, cfg: Config) -> None:
+        """Parse, aggregate and announce one message (lock held)."""
+        from mnmparse.parser import parse_garbled_amount, parse_line
+
+        writer, stats = self._writer, self._stats
+        if writer is None or stats is None:
+            return
+        ev: Event = parse_line(msg.text, msg.first_seen, cfg.player_name)
+        if ev.kind == "unknown":
+            # A clipped first glyph ("bepulifif pierces ...") is repaired from names seen so far.
+            fixed = self._names.complete(msg.text)
+            if fixed is not None:
+                repaired = parse_line(fixed, msg.first_seen, cfg.player_name)
+                if repaired.kind != "unknown":
+                    ev = repaired
+        if ev.kind in ("unknown", "ability_partial") and bool(getattr(cfg, "dummy_fix", False)):
+            guess = parse_garbled_amount(msg.text, msg.first_seen, cfg.player_name)
+            if guess is not None and stats.estimate_amount(guess):
+                ev = guess
+        self._names.observe(ev)
+        unreadable = ev.kind in UNREADABLE_KINDS or msg.fragment or ev.estimated
+        self._recent_kinds.append("unreadable" if unreadable else ev.kind)
+        if not NOT_LOGGED_RX.match(msg.text):
+            writer.write_event(ev)
+        before = len(stats.history)
+        stats.add(ev)
+        try:
+            self._session_stats.add(ev)
+            self._session_dirty = True
+        except Exception:  # noqa: BLE001 - session bookkeeping must never stop the pipeline
+            log.exception("session stats failed on %r", ev.text)
+        self._messages += 1
+        self.message.emit(msg, ev)
+        for closed in stats.history[before:]:
+            self._emit_closed(closed)
+        if stats.current() is not None:
+            self._snapshot_dirty = True
+
+    def _expire(self, now: float) -> None:
+        """Close a timed-out encounter (``stats.expire``) and announce it.
+
+        Not while the chat window is out of step with its newest line (scrolled up, covered):
+        the fight's lines that arrive meanwhile show up later, and a line that comes too late
+        still closes the fight itself (``Stats.add``)."""
+        with self._lock:
+            stats = self._stats
+            if stats is None or self._timeout_held(now):
+                return
+            closed = stats.expire(now)
+            if closed is not None:
+                self._emit_closed(closed)
+
+    def _emit_closed(self, enc: Encounter) -> EncounterSnapshot | None:
+        """Snapshot a just-closed encounter, remember it and emit both signals (lock held).
+
+        Only the group's own fights count in the session's encounters and time in combat."""
+        stats = self._stats
+        if stats is None:
+            return None
+        snap = build_snapshot(stats, enc, self._cfg.player_name)
+        self._history.append(snap)
+        if snap.ours:
+            self._session_stats.note_encounter(snap.duration)
+            self._session_dirty = True
+        self.encounter_closed.emit(snap)
+        self.snapshot.emit(snap)
+        self._last_snapshot_at = time.monotonic()
+        self._snapshot_dirty = False
+        return snap
+
+    def _maybe_rebuild_recent(self, now: float | None = None) -> list[EncounterSnapshot]:
+        """Count the recent closed fights again when the party roster learned someone.
+
+        A member is often recognised only after a few fights (a healer seldom loots, and the
+        roster infers members from shared fights); the fights already shown had them as an
+        outsider.  The closed fights of the current zone visit that ended within
+        REBUILD_WINDOW_S of ``now`` are rebuilt, and a fight's snapshot is replaced only when
+        its group grew (somebody moved from outsider to group, nobody left it), so a member
+        who leaves later stays in the fights they were in.  After a change by hand
+        (:meth:`set_group_override`) whatever changed is taken.  The new snapshots go out
+        through :attr:`encounter_updated` (no auto-copy, no sound); returns them.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            stats = self._stats
+            if stats is None:
+                return []
+            roster = stats.roster
+            by_hand = self._rebuild_all
+            if roster.version == self._rebuilt_version and not by_hand:
+                return []
+            members = roster.members()
+            added = members - self._rebuilt_members
+            self._rebuilt_version, self._rebuilt_members, self._rebuild_all = roster.version, members, False
+            if not by_hand and (not added or not roster.known()):
+                return []
+            updated = self._rebuild_recent(stats, now, only_growth=not by_hand)
+            for snap in updated:
+                self.encounter_updated.emit(snap)
+        if updated:
+            log.info("party changed: %d recent fight(s) counted again", len(updated))
+        return updated
+
+    def _rebuild_recent(self, stats: Stats, now: float, *, only_growth: bool) -> list[EncounterSnapshot]:
+        """The recent fights whose snapshot changed, oldest first (lock held; see above)."""
+        _zone, entered = stats.zone_visit_at(now)
+        positions = {snap.key: i for i, snap in enumerate(self._history[-4 * REBUILD_MAX_FIGHTS:],
+                                                          start=max(0, len(self._history) - 4 * REBUILD_MAX_FIGHTS))}
+        updated: list[EncounterSnapshot] = []
+        rebuilt = 0
+        for enc in reversed(stats.history):
+            if now - enc.end > REBUILD_WINDOW_S or enc.start < entered or rebuilt >= REBUILD_MAX_FIGHTS:
+                break
+            index = positions.get(f"{enc.start:.3f}")
+            if index is None:
+                continue
+            old = self._history[index]
+            if only_growth and not any(not (r.in_group or r.is_npc or r.is_enemy) for r in old.rows):
+                continue  # nobody outside the group: nothing can move in
+            rebuilt += 1
+            new = build_snapshot(stats, enc, self._cfg.player_name)
+            old_group = {r.name for r in old.rows if r.in_group}
+            new_group = {r.name for r in new.rows if r.in_group}
+            changed = new_group > old_group if only_growth else new != old
+            if not changed:
+                continue
+            self._history[index] = new
+            if new.ours and not old.ours:
+                self._session_stats.note_encounter(new.duration)
+                self._session_dirty = True
+            updated.append(new)
+        updated.reverse()
+        return updated
+
+    def _maybe_emit_snapshot(self, now_mono: float) -> None:
+        """Emit the open encounter: <= 10 Hz when dirty, and at least 1 Hz while open."""
+        with self._lock:
+            stats = self._stats
+            if stats is None:
+                return
+            enc = stats.current()
+            if enc is None or not enc.has_damage:
+                # Nothing to show until something is damaged (a lone miss may still be dropped).
+                self._snapshot_dirty = False
+                return
+            elapsed = now_mono - self._last_snapshot_at
+            if (self._snapshot_dirty and elapsed >= SNAPSHOT_MIN_INTERVAL_S) or elapsed >= SNAPSHOT_TICK_S:
+                snap = build_snapshot(stats, enc, self._cfg.player_name, now=time.time())
+                self._last_snapshot_at = now_mono
+                self._snapshot_dirty = False
+                self.snapshot.emit(snap)
+
+    def _emit_status(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            recent = [t for t in self._frame_times if now - t <= 2.0]
+            fps = len(recent) / 2.0 if recent else 0.0
+            tracker = self._tracker
+            occluded = tracker.occluded_frames if tracker is not None else 0
+            if occluded > self._occluded_seen:
+                self._occluded_at = now
+            self._occluded_seen = occluded
+            kinds = list(self._recent_kinds)
+            unreadable = kinds.count("unreadable")
+            garbled = len(kinds) >= GARBLE_MIN_MESSAGES and unreadable >= GARBLE_SHARE * len(kinds)
+            payload: dict[str, Any] = {
+                "state": self._state,
+                "fps": round(fps, 1),
+                "ocr_ms": round(self._last_ocr_ms, 1),
+                "frames": self._frames,
+                "messages": self._messages,
+                "occluded": occluded,
+                "occluded_recent": bool(self._occluded_at) and now - self._occluded_at <= OCCLUDED_RECENT_S,
+                "unreadable_pct": round(100.0 * unreadable / len(kinds), 1) if kinds else 0.0,
+                "garbled": garbled,
+                "replays": tracker.replays_suppressed if tracker is not None else 0,
+                "window_found": self._window_found,
+                "lines": self._last_lines,
+                "scrolled_back": self._scrolled_shown and self._state in ("running", "paused"),
+                "backlog": self._backlog_dropped,
+            }
+        self.status.emit(payload)
+
+    def _finish(self) -> None:
+        """Flush the tracker, close the open encounter and the writer, stop the source.
+
+        Order matters: the tracker flush and the writer close come first so every
+        held line reaches the log files even when the source takes a while to
+        stop; the open encounter (if any) is closed and announced through
+        :attr:`encounter_closed` so it lands in :meth:`history` and the views show
+        it as ended instead of a frozen "live" fight.  The tracker (with its remembered
+        rows), the party roster and the last zone are kept for the next start, and the
+        tracker state and the zone are saved for a restart of the app.  Ends with state
+        ``stopped``.
+        """
+        cfg = self.config
+        try:
+            with self._lock:
+                tracker, writer = self._tracker, self._writer
+                if tracker is not None and writer is not None:
+                    try:
+                        now = time.time()
+                        messages = tracker.flush(now)
+                        if self._restart is not None:
+                            messages = self._filter_restart(messages, now)
+                            messages[:0] = self._resolve_restart()
+                        for msg in messages:
+                            self._handle_message(msg, cfg)
+                    except Exception:  # noqa: BLE001
+                        log.exception("tracker flush failed")
+                self._restart = None
+                try:
+                    self._close_open_encounter("capture stopped")
+                    self._maybe_rebuild_recent()
+                except Exception:  # noqa: BLE001
+                    log.exception("closing the open encounter failed")
+                self._maybe_save_roster(time.monotonic(), force=True)
+                if self._backlog_dropped:
+                    log.info("%d lines on screen at start were not logged again (backlog)", self._backlog_dropped)
+                stats = self._stats
+                if stats is not None:
+                    self._roster = stats.roster
+                    self._stopped_stats = stats
+                    self._last_zone = self._current_zone()
+                if tracker is not None:
+                    try:
+                        self._save_state(cfg, tracker, self._last_zone)
+                    except Exception:  # noqa: BLE001 - the state is a nicety
+                        log.exception("saving the tracker state failed")
+                    self._kept_tracker = (_capture_key(cfg), tracker, time.time())
+                if writer is not None:
+                    try:
+                        writer.close()
+                    except Exception:  # noqa: BLE001
+                        log.exception("log writer close failed")
+                ocr = self._ocr
+                if ocr is not None:
+                    close = getattr(ocr, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except Exception:  # noqa: BLE001
+                            log.debug("ocr close raised", exc_info=True)
+                self._tracker = None
+                self._writer = None
+                self._ocr = None
+                self._stats = None
+        finally:
+            self._close_source()
+            self._window_found = False
+            self._save_vocab()
+            log.info("Engine worker finished: %d frames, %d messages", self._frames, self._messages)
+            self._set_state("stopped")
+            self._emit_status()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _set_state(self, state: str) -> None:
+        if state not in STATES:
+            raise ValueError(f"unknown engine state {state!r}")
+        if state == self._state:
+            return
+        self._state = state
+        log.info("Engine state -> %s", state)
+        self.state_changed.emit(state)
+
+    @staticmethod
+    def _wait_for_frame(source: FrameSource, timeout_s: float) -> np.ndarray | None:
+        """``source.wait_for_frame`` when available, otherwise poll ``latest()``."""
+        waiter = getattr(source, "wait_for_frame", None)
+        if callable(waiter):
+            try:
+                return waiter(timeout_s)
+            except Exception as exc:  # noqa: BLE001 - CaptureError from the capture thread
+                log.warning("wait_for_frame failed: %s", exc)
+                return None
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            frame = source.latest()
+            if frame is not None:
+                return frame
+            time.sleep(0.05)
+        return None

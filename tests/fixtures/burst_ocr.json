@@ -1,0 +1,6821 @@
+{
+ "note": "Anonymized OCR regression fixture: character names and their clipped/garbled variants use synthetic aliases. Original row geometry, timing, numbers, NPC names and ability text are retained. 99 frames at approximately 4 fps; Windows.Media.Ocr en-US with max-channel preprocessing. No screenshot files are included.",
+ "crop": [
+  0,
+  60,
+  700,
+  600
+ ],
+ "frames": [
+  {
+   "t_ms": 0,
+   "file": "f0000_000000.png",
+   "lines": [
+    {
+     "x": 403,
+     "y": 52,
+     "h": 33,
+     "text": "zombie for 45Bånts of"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Starting to attack."
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "You crush a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Nirek appears."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 22,
+     "text": "Nirek ambushes their victim!"
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 24 points of"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for I point of damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    }
+   ]
+  },
+  {
+   "t_ms": 251,
+   "file": "f0001_000251.png",
+   "lines": [
+    {
+     "x": 33,
+     "y": 21,
+     "h": 22,
+     "text": "tarting to attack."
+    },
+    {
+     "x": 69,
+     "y": 68,
+     "h": 11,
+     "text": "cru"
+    },
+    {
+     "x": 38,
+     "y": 99,
+     "h": 23,
+     "text": "avaren cråshes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 142,
+     "h": 22,
+     "text": "Nirek appears."
+    },
+    {
+     "x": 22,
+     "y": 181,
+     "h": 22,
+     "text": "Nirek ambushes their victim!"
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 24 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 17,
+     "text": "Your fervor subsides."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 23,
+     "text": "Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 509,
+   "file": "f0002_000509.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 21,
+     "h": 24,
+     "text": "ou crush a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 19,
+     "y": 57,
+     "h": 28,
+     "text": "Davaren crushes a stumbli , Carnage."
+    },
+    {
+     "x": 51,
+     "y": 108,
+     "h": 16,
+     "text": "-pe appears."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 22,
+     "text": "Nirek ambushes their victim!"
+    },
+    {
+     "x": 22,
+     "y": 181,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 24 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 18,
+     "text": "Your fervor subsides."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "Davaren's spiritual connection is severed."
+    }
+   ]
+  },
+  {
+   "t_ms": 767,
+   "file": "f0003_000767.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 21,
+     "h": 24,
+     "text": "ou crush a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 19,
+     "y": 61,
+     "h": 23,
+     "text": "Davaren crushes a stumbli"
+    },
+    {
+     "x": 36,
+     "y": 108,
+     "h": 16,
+     "text": "i rek appears."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 22,
+     "text": "Nirek ambushes their victim!"
+    },
+    {
+     "x": 22,
+     "y": 181,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 24 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 18,
+     "text": "Your fervor subsides."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "Davaren's spiritual connection is severed."
+    }
+   ]
+  },
+  {
+   "t_ms": 1017,
+   "file": "f0004_001017.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 21,
+     "h": 24,
+     "text": "ou crush a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 18,
+     "y": 57,
+     "h": 28,
+     "text": "Davaren crushes a stumbli mbie-for2points of Carnage."
+    },
+    {
+     "x": 36,
+     "y": 108,
+     "h": 16,
+     "text": "i rek appears."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 22,
+     "text": "Nirek ambushes their victim!"
+    },
+    {
+     "x": 22,
+     "y": 181,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 24 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 18,
+     "text": "Your fervor subsides."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "Davaren's spiritual connection is severed."
+    }
+   ]
+  },
+  {
+   "t_ms": 1275,
+   "file": "f0005_001275.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for I point of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 18,
+     "text": "Your fervor subsides."
+    },
+    {
+     "x": 22,
+     "y": 260,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Davaren's spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 1 1 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 414,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 1528,
+   "file": "f0006_001528.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 61,
+     "h": 24,
+     "text": "You begin castin Cud e f i"
+    },
+    {
+     "x": 39,
+     "y": 102,
+     "h": 17,
+     "text": "our fervor suosides"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Davaren's spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 1 1 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 409,
+     "h": 23,
+     "text": "Talalino pierces a stumbling zombie for I point of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    }
+   ]
+  },
+  {
+   "t_ms": 1780,
+   "file": "f0007_001780.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 61,
+     "h": 24,
+     "text": "You begin castin Cud e f i"
+    },
+    {
+     "x": 39,
+     "y": 102,
+     "h": 17,
+     "text": "our fervor suosides"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Davaren's spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 1 1 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 409,
+     "h": 23,
+     "text": "Talalino pierces a stumbling zombie for I point of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    }
+   ]
+  },
+  {
+   "t_ms": 2035,
+   "file": "f0008_002035.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 61,
+     "h": 24,
+     "text": "You begin casting Cud e f i"
+    },
+    {
+     "x": 39,
+     "y": 102,
+     "h": 17,
+     "text": "our fervor suosides"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Davaren's spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 1 1 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 409,
+     "h": 23,
+     "text": "Talalino pierces a stumbling zombie for I point of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    }
+   ]
+  },
+  {
+   "t_ms": 2294,
+   "file": "f0009_002294.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 21,
+     "h": 24,
+     "text": "ou begin casting Cudgel Of Light."
+    },
+    {
+     "x": 49,
+     "y": 101,
+     "h": 23,
+     "text": "Iavarens ioly StriKe hits a stumbling zombie for 10 points of"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Davaren's spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 1 1 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 24,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 2547,
+   "file": "f0010_002547.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren- s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 2798,
+   "file": "f0011_002798.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren- s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 3048,
+   "file": "f0012_003048.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren- s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 3304,
+   "file": "f0013_003304.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren- s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 3558,
+   "file": "f0014_003558.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren- s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 3816,
+   "file": "f0015_003816.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren- s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 4067,
+   "file": "f0016_004067.png",
+   "lines": [
+    {
+     "x": 49,
+     "y": 102,
+     "h": 22,
+     "text": "D va ren s spiritual connection is severed."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for I I points of damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Your Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "points of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 4319,
+   "file": "f0017_004319.png",
+   "lines": [
+    {
+     "x": 55,
+     "y": 26,
+     "h": 23,
+     "text": "nil,hi's spiritual conme•»"
+    },
+    {
+     "x": 317,
+     "y": 27,
+     "h": 17,
+     "text": "is severed."
+    },
+    {
+     "x": 22,
+     "y": 66,
+     "h": 23,
+     "text": "a stumbling z"
+    },
+    {
+     "x": 315,
+     "y": 63,
+     "h": 26,
+     "text": "•lino-for 'l'l»-ifits of damage."
+    },
+    {
+     "x": 38,
+     "y": 105,
+     "h": 23,
+     "text": "our Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 260,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 299,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 339,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 375,
+     "h": 23,
+     "text": "points of Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite Talalino, but Talalino"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "dodges!"
+    }
+   ]
+  },
+  {
+   "t_ms": 4575,
+   "file": "f0018_004575.png",
+   "lines": [
+    {
+     "x": 55,
+     "y": 26,
+     "h": 23,
+     "text": "tnil,hi's spiritual conme•»"
+    },
+    {
+     "x": 298,
+     "y": 27,
+     "h": 17,
+     "text": "n is severed."
+    },
+    {
+     "x": 38,
+     "y": 63,
+     "h": 37,
+     "text": "stumblinye'2hYIE9eYalalInofofTVVoäfits of damage."
+    },
+    {
+     "x": 79,
+     "y": 105,
+     "h": 23,
+     "text": "Cudgel of Light hits a stumbling zombie for 3 points of"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 260,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 22,
+     "y": 299,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 339,
+     "h": 22,
+     "text": "Nirek's Sanctified Weapon hits a stumbling zombie for 2"
+    },
+    {
+     "x": 21,
+     "y": 375,
+     "h": 23,
+     "text": "points of Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite Talalino, but Talalino"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "dodges!"
+    }
+   ]
+  },
+  {
+   "t_ms": 4826,
+   "file": "f0019_004826.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 31,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 2 points of dama e"
+    },
+    {
+     "x": 425,
+     "y": 72,
+     "h": 16,
+     "text": ".-rg zomD1e for 2"
+    },
+    {
+     "x": 22,
+     "y": 107,
+     "h": 22,
+     "text": "points of Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 145,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite Talalino, but Talalino"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "dodges!"
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Nirek's Slice hits a stumbling zombie for 3 points of Bleed"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "a stumbling zombie is bleeding out."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek's Slice hits a stumbling zombie for 6 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 374,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 21,
+     "y": 414,
+     "h": 22,
+     "text": "Talalino's Sanctified Weapon hits a stumbling zombie for 1"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "point of Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 5083,
+   "file": "f0020_005083.png",
+   "lines": [
+    {
+     "x": 311,
+     "y": 22,
+     "h": 20,
+     "text": "zombie for points of dav"
+    },
+    {
+     "x": 21,
+     "y": 53,
+     "h": 32,
+     "text": "Talalino pierces a stumb • zombie•f0EYpoiHt of Tamage."
+    },
+    {
+     "x": 49,
+     "y": 101,
+     "h": 23,
+     "text": "Ialalinn s banctitied Weapon hits a stumbling zombie for 1"
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 22,
+     "text": "point of Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek jabs a stumbling zombie."
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 24,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 24,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 23,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 23,
+     "text": "Nirek lets loose an empowering battle cry."
+    }
+   ]
+  },
+  {
+   "t_ms": 5334,
+   "file": "f0021_005334.png",
+   "lines": [
+    {
+     "x": 63,
+     "y": 21,
+     "h": 23,
+     "text": "•lino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 499,
+     "y": 63,
+     "h": 16,
+     "text": "zomme ror 1"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Nirek jabs a stumbling zombie."
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 23,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 250,
+     "h": 23,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 23,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 22,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 5586,
+   "file": "f0022_005586.png",
+   "lines": [
+    {
+     "x": 63,
+     "y": 21,
+     "h": 23,
+     "text": "•lino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 499,
+     "y": 63,
+     "h": 16,
+     "text": "zomme ror 1"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Nirek jabs a stumbling zombie."
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 23,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 250,
+     "h": 23,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 23,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 22,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 5841,
+   "file": "f0023_005841.png",
+   "lines": [
+    {
+     "x": 63,
+     "y": 21,
+     "h": 24,
+     "text": "•lino pierces a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 499,
+     "y": 63,
+     "h": 16,
+     "text": "zomme ror 1"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Nirek jabs a stumbling zombie."
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 23,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 250,
+     "h": 23,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 23,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 22,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 6098,
+   "file": "f0024_006098.png",
+   "lines": [
+    {
+     "x": 81,
+     "y": 97,
+     "h": 17,
+     "text": "J 'i r zombie."
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 24,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 211,
+     "h": 23,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 24,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 22,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie loses interest in Nirek."
+    }
+   ]
+  },
+  {
+   "t_ms": 6349,
+   "file": "f0025_006349.png",
+   "lines": [
+    {
+     "x": 81,
+     "y": 97,
+     "h": 17,
+     "text": "J 'i r zombie."
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 24,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 211,
+     "h": 23,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 24,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 22,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie loses interest in Nirek."
+    }
+   ]
+  },
+  {
+   "t_ms": 6604,
+   "file": "f0026_006604.png",
+   "lines": [
+    {
+     "x": 81,
+     "y": 97,
+     "h": 17,
+     "text": "J 'i r zombie."
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 24,
+     "text": "You try to crush a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 211,
+     "h": 23,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 24,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 22,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie loses interest in Nirek."
+    }
+   ]
+  },
+  {
+   "t_ms": 6854,
+   "file": "f0027_006854.png",
+   "lines": [
+    {
+     "x": 108,
+     "y": 18,
+     "h": 17,
+     "text": "Holv Dama"
+    },
+    {
+     "x": 38,
+     "y": 96,
+     "h": 24,
+     "text": "ou trytö¯cfus a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 24,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 171,
+     "h": 24,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 23,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "a stumbling zombie loses interest in Nirek."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    }
+   ]
+  },
+  {
+   "t_ms": 7106,
+   "file": "f0028_007106.png",
+   "lines": [
+    {
+     "x": 108,
+     "y": 18,
+     "h": 17,
+     "text": "Holv Dam-a -h"
+    },
+    {
+     "x": 38,
+     "y": 96,
+     "h": 24,
+     "text": "ou tryto-cfus a stumbling zombie, but miss!"
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 24,
+     "text": "Your Sanctified Weapon hits a stumbling zombie for 2 points"
+    },
+    {
+     "x": 22,
+     "y": 171,
+     "h": 24,
+     "text": "of Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You let loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 23,
+     "text": "Talalino lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "a stumbling zombie loses interest in Nirek."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    }
+   ]
+  },
+  {
+   "t_ms": 7359,
+   "file": "f0029_007359.png",
+   "lines": [
+    {
+     "x": 34,
+     "y": 17,
+     "h": 23,
+     "text": "f Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 51,
+     "h": 24,
+     "text": "You let loose an empowerin bat"
+    },
+    {
+     "x": 48,
+     "y": 92,
+     "h": 28,
+     "text": "alalino-feaf oose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 22,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 22,
+     "text": "a stumbling zombie loses interest in Nirek."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 414,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 7613,
+   "file": "f0030_007613.png",
+   "lines": [
+    {
+     "x": 34,
+     "y": 17,
+     "h": 23,
+     "text": "f Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 51,
+     "h": 24,
+     "text": "You let loose an empowerin bat"
+    },
+    {
+     "x": 48,
+     "y": 92,
+     "h": 28,
+     "text": "alalino-feaf oose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 22,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 22,
+     "text": "a stumbling zombie loses interest in Nirek."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 414,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 7869,
+   "file": "f0031_007869.png",
+   "lines": [
+    {
+     "x": 34,
+     "y": 17,
+     "h": 23,
+     "text": "f Holy Damage."
+    },
+    {
+     "x": 21,
+     "y": 51,
+     "h": 24,
+     "text": "You let loose an empowerin bat"
+    },
+    {
+     "x": 48,
+     "y": 92,
+     "h": 28,
+     "text": "alalino-feaf oose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "Davaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 22,
+     "text": "Nirek lets loose an empowering battle cry."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 22,
+     "text": "a stumbling zombie loses interest in Nirek."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 414,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 8121,
+   "file": "f0032_008121.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 22,
+     "h": 22,
+     "text": "avaren lets loose an empowering battle cry."
+    },
+    {
+     "x": 21,
+     "y": 61,
+     "h": 22,
+     "text": "Nirek lets loose an em o r'"
+    },
+    {
+     "x": 35,
+     "y": 101,
+     "h": 23,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie loses interest in Nirek."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 260,
+     "h": 23,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 300,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 414,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "zombie dodges!"
+    }
+   ]
+  },
+  {
+   "t_ms": 8375,
+   "file": "f0033_008375.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 141,
+     "h": 23,
+     "text": "You begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 260,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 374,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 24,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "Your casting is interrupted."
+    }
+   ]
+  },
+  {
+   "t_ms": 8628,
+   "file": "f0034_008628.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "ou begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 8882,
+   "file": "f0035_008882.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 23,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 19,
+     "text": "ou be in of Li"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 9135,
+   "file": "f0036_009135.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 62,
+     "h": 22,
+     "text": "a stumbling [011) bie II"
+    },
+    {
+     "x": 276,
+     "y": 63,
+     "h": 21,
+     "text": ". r.ieresv in Nirek."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "ou begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 9387,
+   "file": "f0037_009387.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 62,
+     "h": 22,
+     "text": "a stumbling"
+    },
+    {
+     "x": 275,
+     "y": 63,
+     "h": 21,
+     "text": "Interest in Nirek."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "ou begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 9639,
+   "file": "f0038_009639.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 62,
+     "h": 22,
+     "text": "a stumbling"
+    },
+    {
+     "x": 229,
+     "y": 62,
+     "h": 22,
+     "text": "..ses interest in Nirek."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "ou begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 9894,
+   "file": "f0039_009894.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 223,
+     "y": 62,
+     "h": 22,
+     "text": "loses interest in Nirek."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "ou begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 10145,
+   "file": "f0040_010145.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 21,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 168,
+     "y": 62,
+     "h": 22,
+     "text": ". 2 Die loses interest in Nirek."
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "ou begin casting Cudgel of Light."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 335,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 410,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 10411,
+   "file": "f0041_010411.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 61,
+     "h": 24,
+     "text": "ou begin casting Cudgel of Ligh"
+    },
+    {
+     "x": 38,
+     "y": 101,
+     "h": 23,
+     "text": "stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 38,
+     "y": 141,
+     "h": 23,
+     "text": "stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 139,
+     "y": 181,
+     "h": 22,
+     "text": "Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 409,
+     "h": 24,
+     "text": "You crush a stumbling zombie for I point of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 10663,
+   "file": "f0042_010663.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 61,
+     "h": 18,
+     "text": "You be"
+    },
+    {
+     "x": 92,
+     "y": 61,
+     "h": 29,
+     "text": "gineyng Cudgel of Light."
+    },
+    {
+     "x": 296,
+     "y": 101,
+     "h": 22,
+     "text": "bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "a stumbling zom 1"
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie bites YOU or20.points of damage."
+    },
+    {
+     "x": 21,
+     "y": 181,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie för"
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 409,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 10916,
+   "file": "f0043_010916.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 21,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 101,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 251,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 24,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    }
+   ]
+  },
+  {
+   "t_ms": 11166,
+   "file": "f0044_011166.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 21,
+     "h": 24,
+     "text": "a stumbling zombie tries to bite YOU, but misses!"
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 24,
+     "text": "a stumbling zombie bites YOU for 20 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 101,
+     "h": 23,
+     "text": "Talalino's Rend hits a stumbling zombie for 20 points of"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 251,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 24,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    }
+   ]
+  },
+  {
+   "t_ms": 11418,
+   "file": "f0045_011418.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 22,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 101,
+     "h": 24,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 374,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 11670,
+   "file": "f0046_011670.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 22,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 3 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 101,
+     "h": 23,
+     "text": "Talalino tries to pierce a stumbling zombie, but a stumbling"
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 176,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 215,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 374,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 24,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 11941,
+   "file": "f0047_011941.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 96,
+     "h": 24,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 136,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 23,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage:"
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek's Backstab hitQ"
+    },
+    {
+     "x": 19,
+     "y": 371,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren becomes spiritually connected to the divine."
+    }
+   ]
+  },
+  {
+   "t_ms": 12199,
+   "file": "f0048_012199.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 17,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 57,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 96,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 296,
+     "h": 22,
+     "text": "Nirek's Backstab hits"
+    },
+    {
+     "x": 22,
+     "y": 331,
+     "h": 22,
+     "text": "damage,"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    }
+   ]
+  },
+  {
+   "t_ms": 12452,
+   "file": "f0049_012452.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 17,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 57,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 96,
+     "h": 24,
+     "text": "You crush a stumbling zombie for -1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 216,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 296,
+     "h": 22,
+     "text": "Nirek's Backstab"
+    },
+    {
+     "x": 17,
+     "y": 331,
+     "h": 24,
+     "text": "Aamage."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    }
+   ]
+  },
+  {
+   "t_ms": 12702,
+   "file": "f0050_012702.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 17,
+     "h": 23,
+     "text": "zombie dodges!"
+    },
+    {
+     "x": 21,
+     "y": 57,
+     "h": 23,
+     "text": "Your casting is interrupted."
+    },
+    {
+     "x": 21,
+     "y": 96,
+     "h": 24,
+     "text": "You crush a stumbling zombie for 1 point of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 255,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    }
+   ]
+  },
+  {
+   "t_ms": 12959,
+   "file": "f0051_012959.png",
+   "lines": [
+    {
+     "x": 32,
+     "y": 17,
+     "h": 23,
+     "text": "ombie dodges!"
+    },
+    {
+     "x": 38,
+     "y": 58,
+     "h": 22,
+     "text": "our casting is"
+    },
+    {
+     "x": 38,
+     "y": 92,
+     "h": 31,
+     "text": "ou crush a stumblingppmbie for 1 point of damage."
+    },
+    {
+     "x": 38,
+     "y": 135,
+     "h": 26,
+     "text": "stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 172,
+     "h": 30,
+     "text": "Nirek pierces a stumbling zombie fö5,æoints of damage."
+    },
+    {
+     "x": 38,
+     "y": 216,
+     "h": 23,
+     "text": "stumbling zombie's armor breaks."
+    },
+    {
+     "x": 63,
+     "y": 255,
+     "h": 25,
+     "text": "•lino pierces a stumbling zombie for 12 points of-damage"
+    },
+    {
+     "x": 409,
+     "y": 297,
+     "h": 21,
+     "text": "•e 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "Davaren crushes a stumbling 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected tothe.di •ne."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    }
+   ]
+  },
+  {
+   "t_ms": 13211,
+   "file": "f0052_013211.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 61,
+     "h": 24,
+     "text": "stumbling zombie bites Talalino for 19 points of damage."
+    },
+    {
+     "x": 58,
+     "y": 101,
+     "h": 23,
+     "text": "ie pierces a stumbling zombie for 5 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 22,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 374,
+     "h": 23,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 22,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "Holy Damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 13463,
+   "file": "f0053_013463.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 61,
+     "h": 24,
+     "text": "a stumbling zombie's armor breaks."
+    },
+    {
+     "x": 21,
+     "y": 101,
+     "h": 23,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 215,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 295,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 370,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 13718,
+   "file": "f0054_013718.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 26,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 66,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 260,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 22,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 13973,
+   "file": "f0055_013973.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 26,
+     "h": 24,
+     "text": "Talalino pierces a stumbling zombie for 12 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 66,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 180,
+     "h": 24,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 220,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 260,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 374,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 414,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 23,
+     "text": "damage."
+    }
+   ]
+  },
+  {
+   "t_ms": 14227,
+   "file": "f0056_014227.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 26,
+     "h": 23,
+     "text": "Nirek's Backstab ,"
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    }
+   ]
+  },
+  {
+   "t_ms": 14482,
+   "file": "f0057_014482.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 27,
+     "h": 22,
+     "text": "Nirek's"
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    }
+   ]
+  },
+  {
+   "t_ms": 14736,
+   "file": "f0058_014736.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 61,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    }
+   ]
+  },
+  {
+   "t_ms": 14987,
+   "file": "f0059_014987.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 26,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 61,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    }
+   ]
+  },
+  {
+   "t_ms": 15238,
+   "file": "f0060_015238.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 26,
+     "h": 23,
+     "text": "Nirek's Backstab hits a stumbling zombie for 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 62,
+     "h": 22,
+     "text": "damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 141,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 220,
+     "h": 23,
+     "text": "Davaren's Holy Strike hits a stumbling zombie for 15 points of"
+    },
+    {
+     "x": 22,
+     "y": 256,
+     "h": 22,
+     "text": "Holy Damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 375,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 points of"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    }
+   ]
+  },
+  {
+   "t_ms": 15490,
+   "file": "f0061_015490.png",
+   "lines": [
+    {
+     "x": 17,
+     "y": 26,
+     "h": 32,
+     "text": "Yirek's Backstab hits a stumbling zombie för 13 points of"
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 17,
+     "y": 133,
+     "h": 31,
+     "text": "havaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 180,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 335,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    }
+   ]
+  },
+  {
+   "t_ms": 15744,
+   "file": "f0062_015744.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 61,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 141,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 409,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 450,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    }
+   ]
+  },
+  {
+   "t_ms": 15999,
+   "file": "f0063_015999.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 61,
+     "h": 24,
+     "text": "Davaren crushes a stumbling zombie for 8 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 101,
+     "h": 23,
+     "text": "Davaren becomes spiritually connected to the divine."
+    },
+    {
+     "x": 21,
+     "y": 141,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 308,
+     "y": 181,
+     "h": 17,
+     "text": "umblinp zomb"
+    },
+    {
+     "x": 22,
+     "y": 255,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 295,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 409,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 450,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    }
+   ]
+  },
+  {
+   "t_ms": 16249,
+   "file": "f0064_016249.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 21,
+     "h": 23,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Stopped attacking."
+    }
+   ]
+  },
+  {
+   "t_ms": 16499,
+   "file": "f0065_016499.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 21,
+     "h": 23,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Stopped attacking."
+    }
+   ]
+  },
+  {
+   "t_ms": 16751,
+   "file": "f0066_016751.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 21,
+     "h": 23,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Stopped attacking."
+    }
+   ]
+  },
+  {
+   "t_ms": 17001,
+   "file": "f0067_017001.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 21,
+     "h": 23,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Stopped attacking."
+    }
+   ]
+  },
+  {
+   "t_ms": 17254,
+   "file": "f0068_017254.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 24,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 38,
+     "y": 449,
+     "h": 22,
+     "text": "avaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 17507,
+   "file": "f0069_017507.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 291,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 38,
+     "y": 449,
+     "h": 22,
+     "text": "avaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 17767,
+   "file": "f0070_017767.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 291,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 412,
+     "h": 21,
+     "text": "toppe a"
+    },
+    {
+     "x": 174,
+     "y": 416,
+     "h": 17,
+     "text": "ng."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren's Heal he s"
+    },
+    {
+     "x": 254,
+     "y": 449,
+     "h": 23,
+     "text": "'lalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 18022,
+   "file": "f0071_018022.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 96,
+     "h": 24,
+     "text": "stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 35,
+     "y": 136,
+     "h": 23,
+     "text": "irek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 212,
+     "h": 22,
+     "text": "damage,"
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 291,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain d stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 410,
+     "h": 23,
+     "text": "topped attacking."
+    },
+    {
+     "x": 38,
+     "y": 449,
+     "h": 22,
+     "text": "avaren's Heal heals Talalino for"
+    }
+   ]
+  },
+  {
+   "t_ms": 18274,
+   "file": "f0072_018274.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 96,
+     "h": 24,
+     "text": "stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 35,
+     "y": 136,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 212,
+     "h": 22,
+     "text": "damage,"
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 291,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain stumbling zombie,"
+    },
+    {
+     "x": 33,
+     "y": 409,
+     "h": 24,
+     "text": "topped attacking."
+    },
+    {
+     "x": 38,
+     "y": 448,
+     "h": 22,
+     "text": "avaren's Heal heals Talalino for 56 H"
+    }
+   ]
+  },
+  {
+   "t_ms": 18528,
+   "file": "f0073_018528.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 136,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 176,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits"
+    },
+    {
+     "x": 22,
+     "y": 211,
+     "h": 23,
+     "text": "damage."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 24,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 330,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 21,
+     "y": 370,
+     "h": 23,
+     "text": "Your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 18783,
+   "file": "f0074_018783.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 35,
+     "y": 136,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 176,
+     "h": 23,
+     "text": "a stumbling zombie's Strike-hits Talalino\" for 6 points of"
+    },
+    {
+     "x": 38,
+     "y": 250,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 291,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 410,
+     "h": 23,
+     "text": "topped attacking."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 22,
+     "text": "Davaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 19039,
+   "file": "f0075_019039.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 35,
+     "y": 136,
+     "h": 24,
+     "text": "irek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 23,
+     "y": 175,
+     "h": 23,
+     "text": "a stumbling zombie's Strike hits Talalino for 6 poilifs of"
+    },
+    {
+     "x": 23,
+     "y": 211,
+     "h": 24,
+     "text": "clanma#."
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 291,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling"
+    },
+    {
+     "x": 33,
+     "y": 410,
+     "h": 23,
+     "text": "topped attacking."
+    },
+    {
+     "x": 38,
+     "y": 449,
+     "h": 22,
+     "text": "avaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 19289,
+   "file": "f0076_019289.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 56,
+     "h": 23,
+     "text": "stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 15,
+     "y": 211,
+     "h": 22,
+     "text": "Hou try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 251,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 30,
+     "text": "you-try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 327,
+     "h": 30,
+     "text": "our party member Nirek haÅflain a stumbling zombie!"
+    },
+    {
+     "x": 13,
+     "y": 364,
+     "h": 40,
+     "text": "its"
+    },
+    {
+     "x": 33,
+     "y": 364,
+     "h": 29,
+     "text": "topped.att@klng."
+    },
+    {
+     "x": 319,
+     "y": 396,
+     "h": 32,
+     "text": "'f\" 5k HeaRh."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 17,
+     "text": "Dvr H alh s"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren begins caßt•"
+    },
+    {
+     "x": 262,
+     "y": 450,
+     "h": 17,
+     "text": "eal."
+    }
+   ]
+  },
+  {
+   "t_ms": 19544,
+   "file": "f0077_019544.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 56,
+     "h": 23,
+     "text": "stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 251,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 27,
+     "text": "our party member Nirek haé slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 370,
+     "h": 23,
+     "text": "topped attec •ng."
+    },
+    {
+     "x": 55,
+     "y": 410,
+     "h": 18,
+     "text": "ni Heal eals"
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren begi"
+    },
+    {
+     "x": 190,
+     "y": 450,
+     "h": 22,
+     "text": "sting Heal."
+    },
+    {
+     "x": 295,
+     "y": 410,
+     "h": 18,
+     "text": "sh fo"
+    }
+   ]
+  },
+  {
+   "t_ms": 19798,
+   "file": "f0078_019798.png",
+   "lines": [
+    {
+     "x": 38,
+     "y": 56,
+     "h": 23,
+     "text": "stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 18,
+     "y": 244,
+     "h": 30,
+     "text": "frravren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 325,
+     "h": 30,
+     "text": "our party-member Nirek l\\as slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 363,
+     "h": 30,
+     "text": "toppedåttackin ."
+    },
+    {
+     "x": 259,
+     "y": 408,
+     "h": 25,
+     "text": "•lisö for 56 Health."
+    },
+    {
+     "x": 38,
+     "y": 409,
+     "h": 24,
+     "text": "avaryys Hea eals"
+    },
+    {
+     "x": 22,
+     "y": 450,
+     "h": 21,
+     "text": "Dava e ins casting Heal."
+    }
+   ]
+  },
+  {
+   "t_ms": 20049,
+   "file": "f0079_020049.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 56,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 17,
+     "y": 251,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 289,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 136,
+     "y": 325,
+     "h": 28,
+     "text": "member Nirek has, slain a stumbling zombie!"
+    },
+    {
+     "x": 38,
+     "y": 336,
+     "h": 14,
+     "text": "our"
+    },
+    {
+     "x": 14,
+     "y": 363,
+     "h": 32,
+     "text": "stopped attackingÄ ,"
+    },
+    {
+     "x": 48,
+     "y": 407,
+     "h": 26,
+     "text": "Varen's Heal he •Talalino for 56 Health."
+    },
+    {
+     "x": 38,
+     "y": 450,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 636,
+     "y": 295,
+     "h": 19,
+     "text": "i"
+    },
+    {
+     "x": 636,
+     "y": 325,
+     "h": 39,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 20304,
+   "file": "f0080_020304.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 56,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 51,
+     "y": 316,
+     "h": 37,
+     "text": "ugarty member Birek has slain a stumbling zombie!"
+    },
+    {
+     "x": 14,
+     "y": 361,
+     "h": 32,
+     "text": "Stoppedåttacking , ,"
+    },
+    {
+     "x": 38,
+     "y": 406,
+     "h": 25,
+     "text": "alaren's Heal he s-Talalino for 56 Health."
+    },
+    {
+     "x": 38,
+     "y": 450,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 636,
+     "y": 325,
+     "h": 37,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 20556,
+   "file": "f0081_020556.png",
+   "lines": [
+    {
+     "x": 22,
+     "y": 56,
+     "h": 23,
+     "text": "a stumbling zombie bites Talalino for 20 points of damage."
+    },
+    {
+     "x": 22,
+     "y": 96,
+     "h": 24,
+     "text": "Nirek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 51,
+     "y": 315,
+     "h": 38,
+     "text": "hEparty member birek has slain a stumbling zombie!"
+    },
+    {
+     "x": 38,
+     "y": 405,
+     "h": 23,
+     "text": "avaren's Heal he s Talalino får 56Health."
+    },
+    {
+     "x": 38,
+     "y": 450,
+     "h": 22,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 636,
+     "y": 325,
+     "h": 35,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 20812,
+   "file": "f0082_020812.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 17,
+     "y": 211,
+     "h": 34,
+     "text": "'Davaren begins casting Heal."
+    },
+    {
+     "x": 18,
+     "y": 248,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 34,
+     "text": "our party met?ber Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 330,
+     "h": 30,
+     "text": "topped attackiny."
+    },
+    {
+     "x": 38,
+     "y": 376,
+     "h": 11,
+     "text": "avrn"
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 450,
+     "h": 22,
+     "text": "avaren's Heal heals Talalino for"
+    },
+    {
+     "x": 402,
+     "y": 454,
+     "h": 13,
+     "text": "ea t"
+    }
+   ]
+  },
+  {
+   "t_ms": 21065,
+   "file": "f0083_021065.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 23,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 330,
+     "h": 24,
+     "text": "topped attacking."
+    },
+    {
+     "x": 15,
+     "y": 370,
+     "h": 23,
+     "text": "arvaren's Heal heals Talalino for Health."
+    },
+    {
+     "x": 38,
+     "y": 449,
+     "h": 23,
+     "text": "avaren's Heal heals Talalino r 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 21319,
+   "file": "f0084_021319.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 16,
+     "y": 206,
+     "h": 28,
+     "text": "'davaren begins casting Heal."
+    },
+    {
+     "x": 15,
+     "y": 250,
+     "h": 22,
+     "text": "Nou try to attack, but you are too far away."
+    },
+    {
+     "x": 15,
+     "y": 290,
+     "h": 29,
+     "text": "Your party member Nireéhas slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 330,
+     "h": 24,
+     "text": "topped attacking."
+    },
+    {
+     "x": 38,
+     "y": 360,
+     "h": 29,
+     "text": "avaren's Heal heals Talalino For 56 Health."
+    },
+    {
+     "x": 13,
+     "y": 410,
+     "h": 22,
+     "text": "A egins castin Heal,"
+    },
+    {
+     "x": 22,
+     "y": 445,
+     "h": 27,
+     "text": "Davaren's Heal heals T Kip h for 56 Health."
+    },
+    {
+     "x": 636,
+     "y": 263,
+     "h": 35,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 21573,
+   "file": "f0085_021573.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 211,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 18,
+     "y": 251,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 24,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 17,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attackinge_"
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "avaren's Heal heals Talalino for 56 Health."
+    },
+    {
+     "x": 17,
+     "y": 410,
+     "h": 23,
+     "text": "'Davaren begins casting Hea"
+    },
+    {
+     "x": 204,
+     "y": 449,
+     "h": 24,
+     "text": "s Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 21827,
+   "file": "f0086_021827.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 211,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 18,
+     "y": 251,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 17,
+     "y": 290,
+     "h": 24,
+     "text": "your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 17,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "avaren's Heal heals Talalino for 56 Health."
+    },
+    {
+     "x": 16,
+     "y": 405,
+     "h": 28,
+     "text": "havaren begins casting He"
+    },
+    {
+     "x": 245,
+     "y": 449,
+     "h": 24,
+     "text": "alalino for 56 Health."
+    },
+    {
+     "x": 636,
+     "y": 278,
+     "h": 39,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 22084,
+   "file": "f0087_022084.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 17,
+     "y": 207,
+     "h": 32,
+     "text": "(Davaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 22,
+     "text": "Vou try to attack, but you are too far away."
+    },
+    {
+     "x": 17,
+     "y": 290,
+     "h": 24,
+     "text": "'Your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 17,
+     "y": 370,
+     "h": 27,
+     "text": "'avaren's Talalino for 56 Health."
+    },
+    {
+     "x": 17,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren begins eastirvHeal."
+    },
+    {
+     "x": 177,
+     "y": 449,
+     "h": 24,
+     "text": "eals Talalino for 56 Health."
+    },
+    {
+     "x": 636,
+     "y": 286,
+     "h": 19,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 22334,
+   "file": "f0088_022334.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 250,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 14,
+     "y": 290,
+     "h": 34,
+     "text": "Nour party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 17,
+     "y": 370,
+     "h": 26,
+     "text": "Pavaren's Heel he s Talalino for 56Health"
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 26,
+     "text": "avaren begirås castrng„yeal:-"
+    },
+    {
+     "x": 163,
+     "y": 449,
+     "h": 24,
+     "text": "heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 22591,
+   "file": "f0089_022591.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 15,
+     "y": 290,
+     "h": 36,
+     "text": "lour party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 17,
+     "y": 329,
+     "h": 25,
+     "text": "Stopped-attacking."
+    },
+    {
+     "x": 38,
+     "y": 370,
+     "h": 23,
+     "text": "avaren's I-Veal h als Talalino for 56 Health."
+    },
+    {
+     "x": 38,
+     "y": 409,
+     "h": 24,
+     "text": "avaren caÄting Heali"
+    },
+    {
+     "x": 131,
+     "y": 449,
+     "h": 24,
+     "text": "eal heals Talalino for 56 Health."
+    },
+    {
+     "x": 55,
+     "y": 456,
+     "h": 11,
+     "text": "n"
+    },
+    {
+     "x": 636,
+     "y": 312,
+     "h": 24,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 22844,
+   "file": "f0090_022844.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 38,
+     "y": 251,
+     "h": 22,
+     "text": "ou try to attack, but you are too far away."
+    },
+    {
+     "x": 15,
+     "y": 290,
+     "h": 27,
+     "text": "your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 16,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 15,
+     "y": 366,
+     "h": 27,
+     "text": "daamen's Heal Talalino foö56Hea1th."
+    },
+    {
+     "x": 17,
+     "y": 406,
+     "h": 28,
+     "text": "j,Dava1en begins easting Heal."
+    },
+    {
+     "x": 130,
+     "y": 449,
+     "h": 24,
+     "text": "eal heals Talalino for 56 Health."
+    },
+    {
+     "x": 38,
+     "y": 456,
+     "h": 11,
+     "text": "avr"
+    },
+    {
+     "x": 636,
+     "y": 310,
+     "h": 21,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 23097,
+   "file": "f0091_023097.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 17,
+     "y": 246,
+     "h": 23,
+     "text": "-You try to attack, but you are too far away."
+    },
+    {
+     "x": 14,
+     "y": 289,
+     "h": 29,
+     "text": "Your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 20,
+     "y": 370,
+     "h": 35,
+     "text": "Davaren's HealYals Talalino for 56 Health."
+    },
+    {
+     "x": 38,
+     "y": 405,
+     "h": 28,
+     "text": "avaren béginsÄting Heal."
+    },
+    {
+     "x": 94,
+     "y": 449,
+     "h": 24,
+     "text": "'s Heal heals Talalino for 56 Health."
+    },
+    {
+     "x": 636,
+     "y": 223,
+     "h": 17,
+     "text": "i"
+    },
+    {
+     "x": 636,
+     "y": 308,
+     "h": 21,
+     "text": "i"
+    }
+   ]
+  },
+  {
+   "t_ms": 23348,
+   "file": "f0092_023348.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 15,
+     "y": 288,
+     "h": 24,
+     "text": "{Your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 16,
+     "y": 366,
+     "h": 32,
+     "text": "# rvarn's I--hl healsValalino for 56 Health."
+    },
+    {
+     "x": 16,
+     "y": 406,
+     "h": 30,
+     "text": "'avaryybegins casting Heal."
+    },
+    {
+     "x": 94,
+     "y": 449,
+     "h": 24,
+     "text": "'s Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 23605,
+   "file": "f0093_023605.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 21,
+     "y": 210,
+     "h": 24,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 38,
+     "y": 290,
+     "h": 24,
+     "text": "our party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 16,
+     "y": 366,
+     "h": 26,
+     "text": "ft ovÅzen's H al heals Talalino for 56 Health."
+    },
+    {
+     "x": 16,
+     "y": 406,
+     "h": 30,
+     "text": "ifr"
+    },
+    {
+     "x": 38,
+     "y": 410,
+     "h": 23,
+     "text": "avar begins casting Heal."
+    },
+    {
+     "x": 13,
+     "y": 443,
+     "h": 34,
+     "text": "Äavaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 23860,
+   "file": "f0094_023860.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 18,
+     "y": 248,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 15,
+     "y": 290,
+     "h": 34,
+     "text": "your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 33,
+     "y": 330,
+     "h": 24,
+     "text": "topped attacking."
+    },
+    {
+     "x": 16,
+     "y": 366,
+     "h": 40,
+     "text": "'Davaren':yeal heals Talalino for 56 Health."
+    },
+    {
+     "x": 15,
+     "y": 396,
+     "h": 39,
+     "text": "&ovåzen begins casting Heal."
+    },
+    {
+     "x": 12,
+     "y": 447,
+     "h": 26,
+     "text": "'Davaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 24114,
+   "file": "f0095_024114.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 16,
+     "y": 249,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 17,
+     "y": 290,
+     "h": 24,
+     "text": "•Your party member Nirek has slain a stumbling zombi"
+    },
+    {
+     "x": 22,
+     "y": 327,
+     "h": 26,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 16,
+     "y": 365,
+     "h": 32,
+     "text": "fravare)AHeaI heals Talalino for 56 Health."
+    },
+    {
+     "x": 14,
+     "y": 410,
+     "h": 23,
+     "text": "\"fvaren begins casting Heal."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 24367,
+   "file": "f0096_024367.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 211,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 21,
+     "y": 290,
+     "h": 23,
+     "text": "Your party member Nirek has slain a"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 113,
+     "y": 370,
+     "h": 23,
+     "text": "Heal heals Talalino for 56 Health."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 24622,
+   "file": "f0097_024622.png",
+   "lines": [
+    {
+     "x": 21,
+     "y": 171,
+     "h": 22,
+     "text": "You try to attack, but you must face your target."
+    },
+    {
+     "x": 22,
+     "y": 209,
+     "h": 25,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 250,
+     "h": 24,
+     "text": "you try to attack, but you are too far away."
+    },
+    {
+     "x": 21,
+     "y": 289,
+     "h": 23,
+     "text": "Your party member Nirek has slain a stumblin"
+    },
+    {
+     "x": 22,
+     "y": 330,
+     "h": 24,
+     "text": "Stopped attackin"
+    },
+    {
+     "x": 15,
+     "y": 365,
+     "h": 40,
+     "text": "Davmrens Heal heals Talalino for 56 Health."
+    },
+    {
+     "x": 22,
+     "y": 410,
+     "h": 23,
+     "text": "Davaren begins casting Heal."
+    },
+    {
+     "x": 22,
+     "y": 449,
+     "h": 24,
+     "text": "Davaren's Heal heals Talalino for 56 Health."
+    }
+   ]
+  },
+  {
+   "t_ms": 24876,
+   "file": "f0098_024876.png",
+   "lines": [
+    {
+     "x": 35,
+     "y": 17,
+     "h": 23,
+     "text": "irek pierces a stumbling zombie for 2 points of damage."
+    },
+    {
+     "x": 38,
+     "y": 131,
+     "h": 22,
+     "text": "ou try to attack, but you must face your target."
+    },
+    {
+     "x": 38,
+     "y": 171,
+     "h": 23,
+     "text": "avaren begins casting Heal."
+    },
+    {
+     "x": 21,
+     "y": 211,
+     "h": 22,
+     "text": "You try to attack, but you are too far away."
+    },
+    {
+     "x": 21,
+     "y": 251,
+     "h": 26,
+     "text": "your party member Nirek has slain a stumbling zombie!"
+    },
+    {
+     "x": 22,
+     "y": 290,
+     "h": 24,
+     "text": "Stopped attacking."
+    },
+    {
+     "x": 38,
+     "y": 330,
+     "h": 23,
+     "text": "avaren's Heal heavy alalino for 56 Health."
+    },
+    {
+     "x": 99,
+     "y": 370,
+     "h": 23,
+     "text": "begins casting Heal."
+    },
+    {
+     "x": 22,
+     "y": 409,
+     "h": 23,
+     "text": "Davarens Heal heals Talalino for 56 Health."
+    },
+    {
+     "x": 21,
+     "y": 449,
+     "h": 24,
+     "text": "You begin casting Cudgel of Light."
+    }
+   ]
+  }
+ ]
+}

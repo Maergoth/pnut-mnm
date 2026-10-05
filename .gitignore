@@ -1,0 +1,40 @@
+# Python and tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Your own data: logs, learned spellings, settings and triggers stay on your PC
+logs/
+exports/
+map_cache/
+config.json
+triggers.json
+vocabulary.json
+
+# Generated when the app runs
+assets/sounds/
+assets/ui/
+
+# Real game captures and the original build notes: they show other players' names and
+# machine details, so they are never published
+assets/reference/
+tests/fixtures/frames/
+tests/fixtures/burst[2-9]*_ocr.json
+private/
+SPEC.md
+APP_SPEC.md
+
+# Editors and OS clutter
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+*.stackdump
