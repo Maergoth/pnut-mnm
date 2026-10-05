@@ -1213,7 +1213,7 @@ class App(QApplication):
             show_overlay = True
         self.set_overlay_visible(bool(show_overlay))
         self._sync_overlay_settings()  # Settings > Overlay shows what the overlay really uses
-        self.set_map_visible(self.settings.value("map/visible", False, type=bool))
+        self.set_map_visible(self.settings.value("map/visible", True, type=bool))
         if selftest_seconds is None and self.settings.value("map/download_on_startup", False, type=bool):
             QTimer.singleShot(0, self.map_downloads.start)
         if selftest_seconds is None and self.settings.value("app/update_on_startup", False, type=bool):

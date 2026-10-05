@@ -40,6 +40,17 @@ class _MapWindow(QWidget):
     def on_message(self, *_args):
         pass
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.visibility_changed.emit(True)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.visibility_changed.emit(False)
+
+    def shutdown(self):
+        self.close()
+
 
 class _DownloadController(QObject):
     started = Signal()
@@ -49,6 +60,9 @@ class _DownloadController(QObject):
 
     def start(self):
         raise AssertionError("No network work should run while testing the shared lock")
+
+    def shutdown(self):
+        pass
 
 
 class _AppHarness:
@@ -114,6 +128,32 @@ class MapLockWiringTests(unittest.TestCase):
         self.assertEqual(host.window.page("settings").overlay_locked.isChecked(), locked)
         self.assertEqual(host.tray._overlay_locked, locked)
         self.assertEqual(self.settings.value("overlay/locked", type=bool), locked)
+
+    def test_fresh_install_opens_map_and_quit_keeps_open_preference(self):
+        host = self.bootstrap()
+        self.assertTrue(host.map_overlay.isVisible())
+        self.assertTrue(host.window._map_button.isChecked())
+        host.shutdown()
+        self.assertFalse(host.map_overlay.isVisible())
+        reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
+        self.assertTrue(reopened.value("map/visible", False, type=bool))
+
+    def test_saved_closed_map_stays_closed_and_can_be_reopened(self):
+        self.settings.setValue("map/visible", False)
+        host = self.bootstrap()
+        self.assertFalse(host.map_overlay.isVisible())
+        self.assertFalse(host.window._map_button.isChecked())
+        host.window._map_button.click()
+        self.assertTrue(host.map_overlay.isVisible())
+        self.assertTrue(self.settings.value("map/visible", False, type=bool))
+
+    def test_closing_map_saves_closed_preference_through_app_quit(self):
+        host = self.bootstrap()
+        host.map_overlay.close()
+        self.assertFalse(host.window._map_button.isChecked())
+        host.shutdown()
+        reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
+        self.assertFalse(reopened.value("map/visible", True, type=bool))
 
     def test_bootstrap_uses_persisted_effective_lock_and_appearance(self):
         self.settings.setValue("overlay/locked", True)

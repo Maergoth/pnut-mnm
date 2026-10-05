@@ -198,6 +198,8 @@ class MapOverlay(QWidget):
         self._normal_geometry = QRect()
         self._closing = False
         self._current_zone = str(settings.value("map/zone", "") or "")
+        self._saved_view = self._read_view_state(settings.value("map/view", {}))
+        self._restore_view = self._saved_view
         self.setMinimumSize(360, 240)
         self.resize(900, 650)
         layout = QVBoxLayout(self)
@@ -264,6 +266,26 @@ class MapOverlay(QWidget):
             screens = [screen.availableGeometry() for screen in QGuiApplication.screens()]
             if any(area.contains(rect.center()) for area in screens):
                 self.setGeometry(rect)
+        if settings.value("map/fullscreen", False, type=bool):
+            self._normal_geometry = self.geometry()
+            # Set the state without showing: a previously closed map stays closed.
+            self.setWindowState(self.windowState() | Qt.WindowState.WindowFullScreen)
+            self._update_fullscreen_icon()
+            self.drag_handle.hide()
+            self._position_chrome()
+
+    @staticmethod
+    def _read_view_state(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict) or not isinstance(value.get("zone"), str) or not isinstance(value.get("url"), str):
+            return None
+        if not value["zone"] or not value["url"] or not isinstance(value.get("fit"), bool):
+            return None
+        for key, low, high in (("scale", 0.015, 12), ("x", 0, 1), ("y", 0, 1)):
+            number = value.get(key)
+            # Bounds also reject NaN/infinity without converting huge integers to float.
+            if isinstance(number, bool) or not isinstance(number, (int, float)) or not low <= number <= high:
+                return None
+        return value.copy()
 
     @property
     def current_zone(self) -> str:
@@ -313,6 +335,9 @@ class MapOverlay(QWidget):
             return
         if title == self._current_zone and (self._loaded_zone == title or self._token in self._loads):
             return
+        self.save_state()
+        if title != self._current_zone:
+            self._restore_view = None
         self._current_zone = title
         self.settings.setValue("map/zone", title)
         self.zone.setCurrentText(title)
@@ -339,8 +364,10 @@ class MapOverlay(QWidget):
         if not preserve_view or not self.view.scene().items():
             self._set_status(f"Loading {self._current_zone}…")
             self.view.set_image(QImage())
-        worker = _Load(self._token, self.repo, self._current_zone, entry, refresh, self._slots,
-                       self._selected_url if preserve_view else "")
+        preferred_url = self._selected_url if preserve_view else ""
+        if not preferred_url and self._saved_view and self._saved_view["zone"] == self._current_zone:
+            preferred_url = self._saved_view["url"]
+        worker = _Load(self._token, self.repo, self._current_zone, entry, refresh, self._slots, preferred_url)
         worker.signal.ready.connect(self._ready)
         self._loads[self._token] = worker
         worker.start()
@@ -389,6 +416,15 @@ class MapOverlay(QWidget):
                                                   and selected_url == self._selected_url))
         self._selected_url = selected_url
         self._loaded_zone = self._current_zone
+        saved = self._restore_view
+        self._restore_view = None
+        if saved and saved["zone"] == self._current_zone and saved["url"] == selected_url and not saved["fit"]:
+            self.view.resetTransform()
+            self.view.scale(saved["scale"], saved["scale"])
+            self.view._fit = False
+            rect = self.view.sceneRect()
+            self.view.centerOn(rect.left() + saved["x"] * rect.width(), rect.top() + saved["y"] * rect.height())
+        self.save_state()
         self._set_status("")
 
     def _set_status(self, text: str) -> None:
@@ -553,6 +589,8 @@ class MapOverlay(QWidget):
 
     def _select_map(self, index: int) -> None:
         if 0 <= index < len(self._entries):
+            self.save_state()
+            self._restore_view = None
             self.load(entry=self._entries[index])
 
     def toggle_fullscreen(self) -> None:
@@ -565,6 +603,7 @@ class MapOverlay(QWidget):
             self._update_fullscreen_icon()
             self.drag_handle.hide()
             self._position_chrome()
+            self.save_state()
 
     def exit_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -574,6 +613,7 @@ class MapOverlay(QWidget):
             self._update_fullscreen_icon()
             self.drag_handle.setVisible(not self._locked)
             self._position_chrome()
+            self.save_state()
 
     def showEvent(self, event: Any) -> None:  # noqa: N802
         super().showEvent(event)
@@ -583,7 +623,8 @@ class MapOverlay(QWidget):
 
     def hideEvent(self, event: Any) -> None:  # noqa: N802
         self._end_drag()
-        self.save_state()
+        if not self._closing:
+            self.save_state()
         super().hideEvent(event)
         self.visibility_changed.emit(False)
 
@@ -591,6 +632,18 @@ class MapOverlay(QWidget):
         rect = self._normal_geometry if self.isFullScreen() else self.geometry()
         if rect.isValid():
             self.settings.setValue("map/geometry", rect)
+        self.settings.setValue("map/fullscreen", self.isFullScreen())
+        if self._loaded_zone == self._current_zone and self._selected_url and self.view.scene().items():
+            rect = self.view.sceneRect()
+            centre = self.view.mapToScene(self.view.viewport().rect().center())
+            state = {
+                "zone": self._current_zone, "url": self._selected_url, "fit": self.view._fit,
+                "scale": min(12.0, max(0.015, self.view.transform().m11())),
+                "x": min(1.0, max(0.0, (centre.x() - rect.left()) / rect.width())),
+                "y": min(1.0, max(0.0, (centre.y() - rect.top()) / rect.height())),
+            }
+            self._saved_view = state
+            self.settings.setValue("map/view", state)
 
     def shutdown(self) -> None:
         self._closing = True

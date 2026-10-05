@@ -19,6 +19,10 @@ ZIP under `dist/releases/`, extracts it into a temporary directory, and runs tha
 EXE with a minimal Windows PATH. Publish only the ZIP and its `.sha256` file after this
 check passes. Machine-specific install metadata and smoke reports are not release assets.
 
+Installed copies are updated through PNUT's **Update** feature. Development and release
+tasks must not replace binaries or change files in a user's installed App folder; publish
+the tested release to GitHub so the app can download it.
+
 
 ### Repository map
 

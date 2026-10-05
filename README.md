@@ -353,7 +353,10 @@ overlay, and with the overlay unlocked it can be dragged off and snapped back (d
 overlay's bottom edge, double-click it, or right-click > Snap to overlay); the auto-attack bar
 then docks under the overlay directly.
 
-**Map overlay.** Click **Map** in the top bar to open a separate always-on-top map window.
+**Map overlay.** The separate always-on-top map opens by default on a fresh install. After
+that, PNUT remembers whether you left it open or closed. Click **Map** in the top bar to
+show or hide it. The selected zone and map, window size and position, fullscreen state,
+zoom and pan are restored when you return.
 The map uses the overlay's rounded frame, colors, opacity and font scale. Hover over its top
 edge to reveal the single header with zone/map selectors and a fullscreen icon. The header
 hides when you move away. Turn off **Lock overlay** to show the header's dotted drag handle;
@@ -371,6 +374,8 @@ check **On startup** to do this automatically at launch (unchecked by default). 
 the map source. Zones without a map show a clear message. An unavailable map never leaves the previous zone's image on
 screen. Only public zone pages and images are requested; player names and combat logs are
 never sent to the wiki.
+To save space, place the map over the chat PNUT is logging. The default window capture (WGC)
+reads the game underneath the map; desktop capture (mss) needs the chat to remain uncovered.
 
 **Restarting does not log the chat twice.** The app saves what it has read
 (`logs\tracker_state.json`) when capture stops and every 50 lines, and a restart within 10

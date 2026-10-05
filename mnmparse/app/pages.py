@@ -2137,6 +2137,14 @@ class SettingsPage(QWidget):
         row.addWidget(self.map_download_on_startup)
         row.addStretch(1)
         layout.addLayout(row)
+        tip = _label(
+            "Save space by placing the map over the chat window PNUT is logging. "
+            "This works with the default window capture (WGC); desktop capture (mss) "
+            "needs the chat to remain uncovered.",
+            "Muted",
+        )
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
         self.map_download_status = _label("", "Muted")
         self.map_download_status.setTextFormat(Qt.TextFormat.PlainText)
         self.map_download_status.setWordWrap(True)
