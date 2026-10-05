@@ -7,6 +7,7 @@ in the user's triggers.json. Stable IDs let upgrades preserve edits and deletion
 INVIS_BREAK_ID = "637b7466b6"
 INVIS_BREAK_PATTERN = "You begin to feel yourself appearing"
 INVIS_BREAK_PATTERN_REVISION = f"{INVIS_BREAK_ID}:full-phrase-v1"
+INVIS_BREAK_ALERT_REVISION = f"{INVIS_BREAK_ID}:immediate-alert-v1"
 
 PRESETS: tuple[dict, ...] = (
     {
@@ -19,8 +20,8 @@ PRESETS: tuple[dict, ...] = (
     },
     {
         "id": INVIS_BREAK_ID, "name": "Invis Break", "pattern": INVIS_BREAK_PATTERN,
-        "action": "speak", "sound": "Falling", "speech": "InvisBreak",
-        "cooldown_s": 2.0, "timer": True, "timer_seconds": 30.0,
-        "timer_warn_s": 1.0, "timer_warn_action": "speak",
+        "action": "sound", "sound": "Falling", "speech": "InvisBreak",
+        "cooldown_s": 2.0, "timer": False,
+        "timer_warn_s": 0.0, "timer_warn_action": "none", "timer_end_action": "none",
     },
 )

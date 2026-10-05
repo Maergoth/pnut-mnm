@@ -400,6 +400,10 @@ Corrupted codes are rejected rather than imported with changed settings.
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
 Invis Break matches **You begin to feel yourself appearing**. Version 0.1.6 corrects the old
 default match once while preserving customized patterns, other settings, and deleted presets.
+New installs use an immediate Falling sound with no Invis Break countdown or delayed alerts.
+Version 0.1.9 removes the old default 30-second countdown once, preserving your chosen immediate
+audio. Custom durations and delayed cues are left as configured. The usual fading trigger
+notification still appears.
 Healkick starts disabled, matching the original preset; enable it when wanted. Existing custom
 triggers are preserved, and **Restore starter triggers** restores missing starters.
 

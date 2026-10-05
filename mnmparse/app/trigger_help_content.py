@@ -316,7 +316,10 @@ settings. Duplicate is useful for adapting a spell rank; change the pattern and 
 only the name. Export your collection for a portable backup.</p>
 <p>Every installation includes Gatekick, Healkick and Invis Break. Healkick starts disabled;
 enable it when you want that warning. Invis Break watches
-<code>You begin to feel yourself appearing</code>. Restore starter triggers restores missing
+<code>You begin to feel yourself appearing</code> and plays an immediate Falling sound on a
+fresh install, without a countdown or delayed warning. Existing installations keep their
+chosen immediate audio when the old default countdown is removed.
+Restore starter triggers restores missing
 starters while keeping existing customizations. An app update preserves your own triggers.
 Check for overlapping enabled definitions when you hear duplicate alerts.</p>
 

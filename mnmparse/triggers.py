@@ -256,7 +256,8 @@ class TriggerStore:
     def install_presets(self) -> bool:
         """Add bundled starters once, preserving customizations and deliberate deletions."""
         from .trigger_presets import (
-            INVIS_BREAK_ID, INVIS_BREAK_PATTERN, INVIS_BREAK_PATTERN_REVISION, PRESETS,
+            INVIS_BREAK_ID, INVIS_BREAK_PATTERN, INVIS_BREAK_PATTERN_REVISION,
+            INVIS_BREAK_ALERT_REVISION, PRESETS,
         )
 
         changed = False
@@ -281,6 +282,26 @@ class TriggerStore:
             # Record skipped/deleted presets too: a later deliberate edit must not be
             # silently undone on every startup (or a future app update).
             self.installed_presets.add(INVIS_BREAK_PATTERN_REVISION)
+            changed = True
+        if INVIS_BREAK_ALERT_REVISION not in self.installed_presets:
+            trigger = self.find(INVIS_BREAK_ID)
+            # Retire the starter's old 30-second countdown, including copies
+            # whose owner already silenced its warning/end. Preserve customized
+            # timers and the user's chosen immediate audio, label and match mode.
+            if (trigger is not None and trigger.pattern == INVIS_BREAK_PATTERN
+                    and trigger.mode in ("contains", "starts")
+                    and trigger.timer and trigger.timer_seconds == 30
+                    and trigger.timer_warn_s in (0, 1)
+                    and (trigger.timer_warn_action == "none"
+                         or (trigger.timer_warn_action == "speak"
+                             and trigger.timer_warn_speech == "{label} soon"))
+                    and (trigger.timer_end_action == "none"
+                         or (trigger.timer_end_action == "sound" and trigger.timer_end_sound == "Bell"))):
+                trigger.timer = False
+                trigger.timer_warn_s = 0.0
+                trigger.timer_warn_action = "none"
+                trigger.timer_end_action = "none"
+            self.installed_presets.add(INVIS_BREAK_ALERT_REVISION)
             changed = True
         return changed
 

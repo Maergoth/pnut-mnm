@@ -633,7 +633,11 @@ class TriggersPage(QWidget):
     def _restore_presets(self) -> None:
         if self.runner is None:
             return
-        self.runner.store.installed_presets.clear()
+        from mnmparse.trigger_presets import PRESETS
+
+        # Restore missing starters without rerunning one-time migrations over
+        # settings the user deliberately changed after an update.
+        self.runner.store.installed_presets.difference_update(preset["id"] for preset in PRESETS)
         self.runner.store.install_presets()
         self._refill_list()
         self._schedule_save()
