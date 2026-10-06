@@ -10,7 +10,7 @@ trigger timers and a resizable map overlay that follows your current zone.
 
 For maintainers: [development guide](docs/DEVELOPMENT.md) and [repository file audit](docs/FILE_AUDIT.md).
 
-If you have any questions, contact @Maergoth in discord.
+If you have any questions, contact @Maergoth in discord. He doesn't use this.
 
 ## See PNUT in action
 
