@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
-from mnmparse.app import APP_NAME, theme
+from mnmparse.app import theme
+from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
 from mnmparse.maps import MapImage, MapRepository, ZONES, zone_title
 
@@ -175,7 +176,7 @@ class MapOverlay(QWidget):
     def __init__(self, settings: QSettings, repository: MapRepository | None = None) -> None:
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint |
                          Qt.WindowType.FramelessWindowHint)
-        self.setWindowTitle(f"{APP_NAME} — Map")
+        self.setWindowTitle(window_title("map"))
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
@@ -341,7 +342,7 @@ class MapOverlay(QWidget):
         self._current_zone = title
         self.settings.setValue("map/zone", title)
         self.zone.setCurrentText(title)
-        self.setWindowTitle(f"{APP_NAME} — {title}")
+        self.setWindowTitle(window_title("map"))
         # Clear immediately so a late response cannot show the previous zone's map.
         self._token += 1
         self._cancel_loads()

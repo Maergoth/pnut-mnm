@@ -79,6 +79,7 @@ from mnmparse.app import APP_NAME, APP_TAGLINE, APP_VERSION, ORGANIZATION, SETTI
 from mnmparse.app import icon as app_icon
 from mnmparse.app.tray import TrayIcon
 from mnmparse.app.widgets import WarningLatch, capture_warning
+from mnmparse.app.window_identity import window_title
 from mnmparse.config import Config, load_config, project_path
 
 log = logging.getLogger(__name__)
@@ -547,7 +548,7 @@ class MainWindow(QMainWindow):
         self._nav_buttons: dict[str, _NavButton] = {}
         self._fitting_top_bar = False
 
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(window_title("main"))
         self.resize(DEFAULT_WINDOW_SIZE)
         self.setMinimumSize(MIN_WINDOW_SIZE)
 
@@ -912,7 +913,7 @@ class MainWindow(QMainWindow):
         setter = getattr(settings_page, "set_engine_state", None)
         if callable(setter):
             setter(state)
-        self.setWindowTitle(f"{APP_NAME} - {STATE_TEXT.get(state, state)}" if running else APP_NAME)
+        self.setWindowTitle(window_title("main"))
         self._update_state_label()
         self._fit_top_bar()
 
@@ -1183,6 +1184,7 @@ class App(QApplication):
     def __init__(self, argv: Sequence[str]) -> None:
         super().__init__(list(argv))
         self.setApplicationName(APP_NAME)
+        self.setApplicationDisplayName(window_title("application"))
         self.setOrganizationName(ORGANIZATION)
         self.setApplicationVersion(APP_VERSION)
         self.setQuitOnLastWindowClosed(False)  # the tray keeps us alive when the window hides

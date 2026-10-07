@@ -12,6 +12,15 @@ from typing import Sequence
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch diagnostics before importing Qt, so DLL failures become reports."""
     args = list(sys.argv[1:] if argv is None else argv)
+    from mnmparse.app.launch_identity import LaunchError, launch_if_needed, report_launch_error
+
+    try:
+        launched = launch_if_needed(args, wait="--smoke-test" in args)
+    except LaunchError as exc:
+        report_launch_error(exc, args)
+        return 1
+    if launched is not None:
+        return launched
     if "--smoke-test" in args:
         import argparse
         from pathlib import Path

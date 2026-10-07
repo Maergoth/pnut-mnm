@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QTextBrow
 
 from mnmparse.app.trigger_help_content import TRIGGER_HELP_HTML
 from mnmparse.app.widgets import token
+from mnmparse.app.window_identity import window_title
 
 
 class TriggerHelpDialog(QDialog):
@@ -15,7 +16,7 @@ class TriggerHelpDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Timer/trigger help")
+        self.setWindowTitle(window_title("trigger-help"))
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setSizeGripEnabled(True)
         layout = QVBoxLayout(self)

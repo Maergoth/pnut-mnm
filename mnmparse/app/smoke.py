@@ -10,6 +10,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
@@ -133,6 +134,9 @@ def _exercise(report: dict[str, Any]) -> None:
             if "Table of contents" not in guide_text or "Righteous Smite II: 154 damage" not in guide_text:
                 raise RuntimeError("The packaged trigger guide is missing its content or examples")
             report["trigger_help"] = True
+            report["window_titles"] = [item.windowTitle() for item in [*windows, overlay.timer_panel, overlay.attack_bar]]
+            if not all(re.fullmatch(r"[0-9a-f]{24}", title) for title in report["window_titles"]):
+                raise RuntimeError("An application window is missing its randomized session title")
         finally:
             # Any geometry writes go to the temporary INI file, never the real registry.
             for window in reversed(windows):
@@ -175,6 +179,28 @@ def run_smoke_test(report_path: Path, *, timeout_seconds: float = 20.0) -> int:
     try:
         write_report()
         watchdog.start()
+        if report["frozen"]:
+            report["stage"] = "verify session executable"
+            from mnmparse.app.launch_identity import is_session_executable
+            from mnmparse.app.app_updates import installed_directory
+
+            report["randomized_executable"] = is_session_executable(Path(sys.executable))
+            if not report["randomized_executable"]:
+                raise RuntimeError("The packaged application did not launch with a session executable name")
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+            kernel32.GetModuleFileNameW.restype = wintypes.DWORD
+            filename = ctypes.create_unicode_buffer(32768)
+            length = kernel32.GetModuleFileNameW(None, filename, len(filename))
+            if not length or length >= len(filename):
+                raise ctypes.WinError(ctypes.get_last_error())
+            report["native_executable"] = filename.value
+            if Path(filename.value).name != Path(sys.executable).name:
+                raise RuntimeError("The native process image does not match the session executable")
+            report["update_directory"] = str(installed_directory())
         _exercise(report)
         report.update(ok=True, stage="complete")
     except BaseException as exc:

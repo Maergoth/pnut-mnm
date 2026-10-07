@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from mnmparse.app.widgets import ElidedLabel, token
+from mnmparse.app.window_identity import window_title
 from mnmparse.trigger_exchange import external_sound_files
 from mnmparse.triggers import Trigger
 
@@ -26,7 +27,7 @@ class TriggerChatExportDialog(QDialog):
         if not isinstance(code, str) or not code or "\n" in code or "\r" in code:
             raise ValueError("A timer must be shared as one chat line.")
         self.code = code
-        self.setWindowTitle("Share timer in game chat")
+        self.setWindowTitle(window_title("trigger-export"))
         self.setModal(False)
         self.resize(620, 380)
         self.setMinimumSize(440, 380)
@@ -121,7 +122,7 @@ class TriggerSharePrompt(QDialog):
 
     def __init__(self, trigger: Trigger, sender: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Import shared timer")
+        self.setWindowTitle(window_title("trigger-import"))
         self.setModal(False)
         self.resize(600, 600)
         self.setMinimumSize(440, 380)

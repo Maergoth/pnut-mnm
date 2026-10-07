@@ -13,7 +13,7 @@ from __future__ import annotations
 from mnmparse import __version__ as _pipeline_version
 
 APP_NAME: str = "PNUT M&M"
-"""Display name used for the window title, QApplication name and the tray icon."""
+"""Brand used inside the app and tray; native window titles are temporary aliases."""
 
 APP_VERSION: str = _pipeline_version
 """Version string shown on the About page; tracks the pipeline package version."""

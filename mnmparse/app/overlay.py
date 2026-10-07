@@ -62,6 +62,7 @@ from PySide6.QtWidgets import (
 
 from mnmparse.app.attack_bar import AttackBar
 from mnmparse.app.timer_panel import TimerPanel
+from mnmparse.app.window_identity import window_title
 from mnmparse.app.session_view import SessionView
 from mnmparse.app.widgets import (
     ElidedLabel,
@@ -794,7 +795,7 @@ class OverlayWindow(QWidget):
         self._settings = settings
         self._cfg = cfg
         self.setObjectName("OverlayWindow")
-        self.setWindowTitle("PNUT M&M Overlay")
+        self.setWindowTitle(window_title("overlay"))
         self.setWindowFlags(OVERLAY_FLAGS)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)

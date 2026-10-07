@@ -162,6 +162,41 @@ class ControllerTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_installed_directory_accepts_canonical_and_validated_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            canonical = root / updates.EXECUTABLE
+            canonical.write_bytes(b"application")
+            (root / "_internal").mkdir()
+            session = root / ("a" * 24 + ".exe")
+            session.write_bytes(b"application")
+            with patch.object(updates.sys, "frozen", True, create=True), \
+                 patch.object(updates.sys, "platform", "win32"):
+                with patch.object(updates.sys, "executable", str(canonical)):
+                    self.assertEqual(updates.installed_directory(), root)
+                with patch.object(updates.sys, "executable", str(session)), \
+                     patch.object(updates, "is_session_executable", return_value=True) as validate:
+                    self.assertEqual(updates.installed_directory(), root)
+                    validate.assert_called_once_with(session)
+
+    def test_unowned_or_incomplete_session_cannot_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            canonical = root / updates.EXECUTABLE
+            canonical.write_bytes(b"application")
+            (root / "_internal").mkdir()
+            session = root / ("a" * 24 + ".exe")
+            session.write_bytes(b"foreign application")
+            with patch.object(updates.sys, "frozen", True, create=True), \
+                 patch.object(updates.sys, "platform", "win32"), \
+                 patch.object(updates.sys, "executable", str(session)):
+                with self.assertRaises(updates.UpdateError):
+                    updates.installed_directory()
+                canonical.unlink()
+                with patch.object(updates, "is_session_executable", return_value=True), \
+                     self.assertRaises(updates.UpdateError):
+                    updates.installed_directory()
+
     def test_source_mode_reports_requirement_without_network(self):
         controller = updates.AppUpdateController()
         messages = []

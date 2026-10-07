@@ -98,6 +98,14 @@ code-signed, so the first time Windows SmartScreen may say "Windows protected yo
 (`triggers.json`), logs and learned spellings (`logs\`) are created next to the exe and are never
 part of a download.
 
+**Names on each launch.** The Windows download starts the app under a freshly generated
+executable name each time. Its main window, overlays and timer dialogs also receive random
+window titles that stay consistent until you quit. Keep launching `PNUT M&M.exe`; shortcuts,
+settings and the Update button continue to work. Older temporary executable copies are
+cleaned up on later launches. Source runs randomize window titles but keep the Python process name.
+This removes the usual fixed process/window labels; it does not make PNUT undetectable.
+The launcher appears briefly, and its files, icon and other identifying information remain.
+
 **App updates.** At the top of **Settings**, click **Update** to download the latest stable
 Windows release from GitHub. When it is ready, click **Restart to update**. PNUT verifies the
 download, replaces its application files, and keeps your configuration, triggers, logs and

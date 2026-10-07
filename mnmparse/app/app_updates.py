@@ -28,11 +28,11 @@ import zipfile
 from PySide6.QtCore import QObject, Signal, Slot
 
 from mnmparse.app import APP_VERSION
+from mnmparse.app.launch_identity import EXECUTABLE, is_session_executable
 
 log = logging.getLogger(__name__)
 REPOSITORY = "Maergoth/pnut-mnm"
 LATEST_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
-EXECUTABLE = "PNUT M&M.exe"
 MAX_DOWNLOAD = 512 * 1024 * 1024
 MAX_EXPANDED = 1536 * 1024 * 1024
 MAX_FILES = 20000
@@ -247,8 +247,11 @@ def installed_directory() -> Path:
         raise UpdateError("Application updates are available in the installed Windows build. Update development source with Git.")
     executable = Path(sys.executable).absolute()
     install = executable.parent
-    if (executable.name != EXECUTABLE or not executable.is_file()
-            or not (install / "_internal").is_dir() or _is_link(executable)):
+    canonical = install / EXECUTABLE
+    if (not executable.is_file() or not canonical.is_file()
+            or not (install / "_internal").is_dir() or _is_link(executable)
+            or _is_link(canonical)
+            or (executable.name != EXECUTABLE and not is_session_executable(executable))):
         raise UpdateError("This installation does not have the expected PNUT application files.")
     for path in (install, *install.parents, install / "_internal", install / "START HERE.txt"):
         if path.exists() and _is_link(path):

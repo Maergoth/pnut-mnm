@@ -17,6 +17,8 @@ from PySide6.QtCore import QPointF, QRect, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QMenu, QWidget
 
+from mnmparse.app.window_identity import window_title
+
 if TYPE_CHECKING:
     from mnmparse.app.overlay import OverlayWindow
 
@@ -34,7 +36,7 @@ class DockedPanel(QWidget):
         super().__init__(None)
         self._owner = owner
         self._settings = settings
-        self.setWindowTitle(self.TITLE)
+        self.setWindowTitle(window_title(f"panel:{self.SETTINGS_GROUP}"))
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
