@@ -229,33 +229,44 @@ def add_group_entries(menu: QMenu, row: Any, emit: Any) -> dict[Any, Any]:
 
 
 def add_pet_entries(menu: QMenu, row: Any, snap: Any, emit: Any) -> dict[Any, Any]:
-    """Shared ownership submenu for app/overlay; NPC-like names can be charmed pets."""
-    if row is None or snap is None or getattr(row, "is_you", False):
+    """Assign a combatant, or manage each pet already included in an owner's row."""
+    if row is None or snap is None:
         return {}
     name = str(getattr(row, "name", "") or "")
     if not name:
         return {}
+    pets = list(dict.fromkeys(getattr(row, "attributed_pets", ()) or ()))
+    if getattr(row, "is_you", False) and not pets:
+        return {}
     members = set(getattr(snap, "group_members", ()) or ())
     members.update(r.name for r in getattr(snap, "rows", ()) if
                    getattr(r, "in_group", True) and not any(getattr(r, k, False) for k in ("is_npc", "is_enemy", "is_pet")))
-    members.discard(name)
-    owner = str(getattr(row, "pet_owner", "") or "")
-    if owner:
-        members.add(owner)
     menu.addSeparator()
-    submenu = menu.addMenu("Assign pet to group member")
     handlers: dict[Any, Any] = {}
-    for member in sorted(members, key=str.casefold):
-        action = submenu.addAction(member)
-        action.setCheckable(True)
-        action.setChecked(member == owner)
-        handlers[action] = lambda member=member: emit(name, member)
-    if not members:
-        submenu.addAction("No group members known yet").setEnabled(False)
-    if owner:
-        submenu.addSeparator()
-        clear = submenu.addAction("Clear pet assignment")
-        handlers[clear] = lambda: emit(name, None)
+
+    def choices(submenu: QMenu, pet: str, owner: str) -> None:
+        eligible = members - {pet}
+        if owner:
+            eligible.add(owner)
+        for member in sorted(eligible, key=str.casefold):
+            action = submenu.addAction(member)
+            action.setCheckable(True)
+            action.setChecked(member == owner)
+            handlers[action] = lambda pet=pet, member=member: emit(pet, member)
+        if not eligible:
+            submenu.addAction("No group members known yet").setEnabled(False)
+        if owner:
+            submenu.addSeparator()
+            clear = submenu.addAction("Clear pet assignment")
+            handlers[clear] = lambda pet=pet: emit(pet, None)
+
+    if pets:
+        submenu = menu.addMenu("Manage included pets")
+        for pet in pets:
+            choices(submenu.addMenu(pet), pet, name)
+    else:
+        owner = str(getattr(row, "pet_owner", "") or "")
+        choices(menu.addMenu("Assign pet to group member"), name, owner)
     return handlers
 
 
@@ -1127,11 +1138,11 @@ class OverlayWindow(QWidget):
         summary = self.zone_summary()
         if summary is None:
             return None
-        person = next((r for r in summary.rows if r.name == getattr(row, "name", None)), None)
+        person = owner_row(summary, str(getattr(row, "name", "")))
         if person is None:
             return None
         name = person.name
-        fought = [s for s in self._visit_snaps(self._snap) if any(r.name == name for r in s.rows)] if self._snap else []
+        fought = [s for s in self._visit_snaps(self._snap) if owner_row(s, name) is not None] if self._snap else []
         return zone_tooltip(
             person, zone=summary.zone, fights=len(fought) or 1, of=summary.encounters,
             combat_s=sum(float(s.duration) for s in fought) or summary.duration,

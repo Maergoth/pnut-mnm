@@ -294,9 +294,13 @@ does not count toward your group's totals. Changing this setting updates the dis
 fight and encounter history immediately.
 
 The chat seldom says whose pet a pet is. Right-click any combatant in the Live meter or
-in the overlay and use **Assign pet to group member** to select yourself or a group member. Pets keep their own
-rows, labeled with their owner; their output counts toward that owner's group and personal
-view without being counted twice. **Clear pet assignment** removes the manual link. Assignments
+in the overlay and use **Assign pet to group member** to select yourself or a group member.
+An attributed pet merges into its owner's parse: one row labeled **Owner + Owner's Pet**
+shows their combined damage, healing, damage taken and utility. Multiple pets use **Owner +
+Owner's Pets**. Pet abilities keep their pet's name in the breakdown, and group totals count
+each contribution once. Attributed pets follow their owner's group inclusion. Right-click
+the combined owner row to reassign a pet or use
+**Clear pet assignment** to remove its manual link. Assignments
 are remembered across restarts and update the displayed encounters. The existing **Count as
 my group**, **Don't count as my group**, and **Let the chat decide** controls remain available.
 

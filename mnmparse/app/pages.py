@@ -78,7 +78,7 @@ import mnmparse.app as _app_pkg
 from mnmparse.app import theme
 from mnmparse.app.crop_picker import CropPicker, button_qss, css_color, qcolor
 from mnmparse.app.models import ActorRow, EncounterSnapshot, SkillRow, build_snapshot, merge_snapshots, owner_row, snapshot_rows_for_tab
-from mnmparse.app.widgets import ElidedLabel, FeedView, FlowLayout, MeterTable, SliderRow, StatusChip, ToggleSwitch
+from mnmparse.app.widgets import ElidedLabel, FeedView, FlowLayout, MeterTable, SliderRow, StatusChip, ToggleSwitch, actor_display_name
 from mnmparse.config import (
     CAPTURE_BACKENDS,
     DEFAULT_CONFIG_PATH,
@@ -353,7 +353,7 @@ def export_csv(snap: EncounterSnapshot, path: Path) -> Path:
         writer = csv.writer(fh)
         writer.writerow(header)
         for row in snap.rows:
-            values: list[Any] = [snap.label, row.name]
+            values: list[Any] = [snap.label, actor_display_name(row)]
             values.extend(getattr(row, name) for name in _CSV_NUMERIC_FIELDS)
             values.extend(int(flag) for flag in (row.is_you, row.is_npc, row.is_pet))
             writer.writerow(values)
@@ -687,7 +687,7 @@ class _DetailsPanel(QFrame):
                 cell.setText("-")
             self._fit_skills_height()
             return
-        self._name.setText(row.name)
+        self._name.setText(actor_display_name(row))
         self._name.setStyleSheet(f"color: {row.color};")
         if row.is_you:
             kind = "you"

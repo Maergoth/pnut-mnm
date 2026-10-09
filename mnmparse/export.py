@@ -81,7 +81,7 @@ LINE_FIELDS = {
 #: Per-person placeholders.
 ACTOR_FIELDS = {
     "rank": "place in the list (1, 2, ...)",
-    "name": "character name",
+    "name": "character name, including attributed pets",
     "dps": "damage per second",
     "damage": "damage dealt",
     "share": "share of the group's damage (%)",
@@ -190,7 +190,7 @@ def format_snapshot(snap: Any, fmt: ExportFormat) -> str:
     for rank, row in enumerate(people, 1):
         entries.append(render(fmt.actor, {
             "rank": rank,
-            "name": str(getattr(row, "name", "") or "?"),
+            "name": str(getattr(row, "display_name", None) or getattr(row, "name", "") or "?"),
             "dps": _rate(getattr(row, "damage", 0), active, getattr(row, "dps", 0.0)),
             "damage": int(getattr(row, "damage", 0) or 0),
             "share": _Pct(100.0 * float(getattr(row, "share", 0.0) or 0.0)),

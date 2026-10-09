@@ -246,6 +246,11 @@ def hit_pct_or_unknown(row: Any) -> float:
     return float(getattr(row, "hit_pct", 0.0) or 0.0) if getattr(row, "misses_shown", True) else -1.0
 
 
+def actor_display_name(row: Any) -> str:
+    """Presentation label, keeping ``name`` available for selections and actions."""
+    return str(getattr(row, "display_name", None) or getattr(row, "name", ""))
+
+
 def fmt_mmss(seconds: float) -> str:
     """``125.4 -> "02:05"`` (hours roll into the minutes field)."""
     try:
@@ -288,7 +293,7 @@ def _columns_for(metric: str) -> list[_Column]:
     numbers); the name and the metric's own number always stay.
     """
     rank = _Column("rank", "#", _CENTER, "88", lambda r, s: 0, lambda v: str(v), drop=9)
-    name = _Column("name", "Name", _LEFT, "", lambda r, s: str(r.name), lambda v: str(v), stretch=True)
+    name = _Column("name", "Name", _LEFT, "", lambda r, s: actor_display_name(r), lambda v: str(v), stretch=True)
 
     def share(drop: int) -> _Column:
         return _Column("share", "%", _RIGHT, "100.0%", lambda r, s: float(s), fmt_pct, drop=drop)
@@ -543,7 +548,10 @@ def _cell_tooltip(row: Any, key: str) -> str:
     """Hover breakdown for a meter cell: skills under damage columns, heal detail under
     heal columns, crowd-control detail under the CC column, the general summary elsewhere."""
     g = lambda name, default=0: getattr(row, name, default) or default  # noqa: E731
-    title = f"<b>{row.name}</b>"
+    title = f"<b>{html.escape(actor_display_name(row))}</b>"
+    pets = getattr(row, "attributed_pets", ()) or ()
+    if pets:
+        title += f"<br><i>Includes {html.escape(', '.join(pets))}</i>"
     if getattr(row, "pet_owner", ""):
         title += f"<br><i>Pet of {html.escape(row.pet_owner)}</i>"
     if is_outsider(row):
@@ -632,7 +640,7 @@ def zone_tooltip(row: Any, *, zone: str, fights: int, combat_s: float, of: int |
     where = zone or "this zone"
     total = f" of {of}" if of is not None and of != fights else ""
     head = (
-        f"<b>{row.name}</b> &middot; {where}<br>"
+        f"<b>{html.escape(actor_display_name(row))}</b> &middot; {html.escape(where)}<br>"
         f"in {fights}{total} fight{'s' if (of or fights) != 1 else ''}, {fmt_mmss(combat_s)} in combat"
     )
     lines = [
@@ -654,7 +662,7 @@ def zone_tooltip(row: Any, *, zone: str, fights: int, combat_s: float, of: int |
 def _row_tooltip(row: Any) -> str:
     g = lambda k, d=0: getattr(row, k, d)  # noqa: E731
     return (
-        f"{row.name}\n"
+        f"{actor_display_name(row)}\n"
         f"Damage {fmt_int(g('damage'))}  ({fmt_rate(g('dps'))} dps)\n"
         f"Taken {fmt_int(g('taken'))}  Heals {fmt_int(g('heals'))}  Healed {fmt_int(g('healed'))}\n"
         f"Swings {g('swings')}  Hits {g('hits')}  Misses {g('misses')}  Max {fmt_int(g('max_hit'))}"
@@ -1878,6 +1886,7 @@ __all__ = [
     "SliderRow",
     "StatusChip",
     "ToggleSwitch",
+    "actor_display_name",
     "feed_color",
     "fmt_int",
     "fmt_mmss",

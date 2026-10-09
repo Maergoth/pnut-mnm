@@ -47,7 +47,7 @@ def _exercise(report: dict[str, Any]) -> None:
         importlib.import_module(name)
         report["imports"].append(name)
 
-    from PySide6.QtCore import QEventLoop, QSettings, qVersion
+    from PySide6.QtCore import QEventLoop, QSettings, Qt, qVersion
     from PySide6.QtWidgets import QApplication
 
     from mnmparse import config
@@ -103,6 +103,36 @@ def _exercise(report: dict[str, Any]) -> None:
                 raise RuntimeError("Startup check unexpectedly started capture")
             report["windows"] = [type(window).__name__ for window in windows]
             report["pages"] = sorted(window._pages)
+
+            report["stage"] = "exercise merged pet attribution"
+            from mnmparse.app.models import build_snapshot
+            from mnmparse.parser import parse_line
+            from mnmparse.stats import Stats
+
+            stats = Stats(player_name="SmokeOwner")
+            stats.roster.set_pet_owner("SmokePet", "SmokeOwner")
+            for offset, line in enumerate((
+                "You crush a rat for 20 points of damage.",
+                "SmokePet bites a rat for 30 points of damage.",
+            )):
+                stats.add(parse_line(line, 100.0 + offset, "SmokeOwner"))
+            snapshot = build_snapshot(stats, stats.current(), "SmokeOwner")
+            owner = next(row for row in snapshot.rows if row.name == "SmokeOwner")
+            expected_label = "SmokeOwner + SmokeOwner's Pet"
+            if (owner.damage != 50 or owner.display_name != expected_label
+                    or any(row.name == "SmokePet" for row in snapshot.rows)
+                    or snapshot.total_damage != 50):
+                raise RuntimeError("The packaged pet attribution did not merge into the owner")
+            window.page("live")._pane.set_snapshot(snapshot)
+            overlay.set_snapshot(snapshot)
+            overlay._flush_snapshot()
+            for table in (window.page("live")._pane.table, overlay._table):
+                model = table._model
+                names = [model.data(model.index(index, model.column_index("name")), Qt.ItemDataRole.DisplayRole)
+                         for index in range(model.rowCount())]
+                if names.count(expected_label) != 1 or "SmokePet" in names:
+                    raise RuntimeError("The packaged meter did not display one combined owner row")
+            report["pet_rollup"] = {"label": expected_label, "damage": owner.damage}
 
             report["stage"] = "load bundled presets"
             store = TriggerStore()

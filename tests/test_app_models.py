@@ -93,38 +93,38 @@ class BuildSnapshotTests(unittest.TestCase):
 
     def test_rows_present_and_sorted_by_damage(self) -> None:
         names = [r.name for r in self.snap.rows]
-        self.assertEqual(names[:4], [PLAYER, ZOMBIE, "Tovozen", "Fluffy"])
+        self.assertEqual(names[:3], [PLAYER, ZOMBIE, "Tovozen"])
         self.assertIn("Wululiso", names)
         self.assertNotIn("WulDliso", names)  # merged by canonical_map
-        self.assertEqual(len(names), 5)
+        self.assertEqual(len(names), 4)
 
     def test_player_row(self) -> None:
         you = row(self.snap, PLAYER)
         self.assertTrue(you.is_you)
         self.assertFalse(you.is_npc)
         self.assertFalse(you.is_pet)
-        self.assertEqual(you.damage, 34)
+        self.assertEqual(you.damage, 41)
         self.assertEqual(you.taken, 5)
         self.assertEqual(you.heals, 0)
         self.assertEqual(you.healed, 0)
-        self.assertEqual((you.swings, you.hits, you.misses), (4, 3, 1))
-        self.assertAlmostEqual(you.hit_pct, 75.0)
+        self.assertEqual((you.swings, you.hits, you.misses), (5, 4, 1))
+        self.assertAlmostEqual(you.hit_pct, 80.0)
         self.assertEqual(you.max_hit, 20)
-        self.assertAlmostEqual(you.avg_hit, round(34 / 3, 2))
-        self.assertAlmostEqual(you.dps, round(34 / DURATION, 2))
+        self.assertAlmostEqual(you.avg_hit, round(41 / 4, 2))
+        self.assertAlmostEqual(you.dps, round(41 / DURATION, 2))
         self.assertAlmostEqual(you.dtps, round(5 / DURATION, 2))
-        self.assertAlmostEqual(you.share, 34 / TOTAL_DAMAGE)
+        self.assertAlmostEqual(you.share, 41 / TOTAL_DAMAGE)
 
     def test_player_skill_breakdown(self) -> None:
         you = row(self.snap, PLAYER)
-        self.assertEqual([s.skill for s in you.skills], ["crush", "kick"])
+        self.assertEqual([s.skill for s in you.skills], ["crush", "Fluffy: bite", "kick"])
         crush = you.skills[0]
         self.assertIsInstance(crush, SkillRow)
         self.assertEqual((crush.hits, crush.misses, crush.count), (2, 1, 3))
         self.assertEqual(crush.total, 30)
         self.assertEqual(crush.max_hit, 20)
         self.assertAlmostEqual(crush.avg, 15.0)
-        kick = you.skills[1]
+        kick = you.skills[2]
         self.assertEqual((kick.hits, kick.misses, kick.total, kick.max_hit), (1, 0, 4, 4))
 
     def test_npc_row_counts_absorb_as_miss(self) -> None:
@@ -151,13 +151,14 @@ class BuildSnapshotTests(unittest.TestCase):
         self.assertAlmostEqual(tovozen.hps, round(32 / DURATION, 2))
         self.assertEqual([s.skill for s in tovozen.skills], ["Holy Strike"])
 
-    def test_pet_row(self) -> None:
-        pet = row(self.snap, "Fluffy")
-        self.assertTrue(pet.is_pet)
-        self.assertFalse(pet.is_npc)
-        self.assertFalse(pet.is_you)
-        self.assertEqual(pet.damage, 7)
-        self.assertEqual((pet.swings, pet.hits, pet.misses), (1, 1, 0))
+    def test_pet_is_included_in_owner_row(self) -> None:
+        you = row(self.snap, PLAYER)
+        self.assertEqual(you.attributed_pets, ["Fluffy"])
+        self.assertEqual(you.display_name, f"{PLAYER} + {PLAYER}'s Pet")
+        self.assertNotIn("Fluffy", [r.name for r in self.snap.rows])
+        pet_skill = next(s for s in you.skills if s.skill == "Fluffy: bite")
+        self.assertEqual(pet_skill.total, 7)
+        self.assertEqual((pet_skill.hits, pet_skill.misses), (1, 0))
 
     def test_wrapped_name_variant_merged_into_taken(self) -> None:
         wululiso = row(self.snap, "Wululiso")
@@ -183,11 +184,11 @@ class BuildSnapshotTests(unittest.TestCase):
         again = build_snapshot(self.stats, self.enc, PLAYER)
         self.assertEqual([r.color for r in again.rows], [r.color for r in self.snap.rows])
         self.assertNotEqual(row(self.snap, PLAYER).color, row(self.snap, ZOMBIE).color)
-        self.assertNotEqual(row(self.snap, "Fluffy").color, row(self.snap, "Tovozen").color)
+        self.assertNotEqual(row(self.snap, PLAYER).color, row(self.snap, "Tovozen").color)
 
     def test_rows_for_tabs(self) -> None:
         damage = [r.name for r in snapshot_rows_for_tab(self.snap, "damage")]
-        self.assertEqual(damage, [PLAYER, ZOMBIE, "Tovozen", "Fluffy"])
+        self.assertEqual(damage, [PLAYER, ZOMBIE, "Tovozen"])
         healing = [r.name for r in snapshot_rows_for_tab(self.snap, "healing")]
         self.assertEqual(healing, ["Tovozen"])
         taken = [r.name for r in snapshot_rows_for_tab(self.snap, "taken")]
@@ -198,7 +199,7 @@ class BuildSnapshotTests(unittest.TestCase):
         live = build_snapshot(self.stats, self.enc, PLAYER, now=30.5)
         self.assertAlmostEqual(live.duration, 30.5)
         self.assertAlmostEqual(live.raid_dps, round(TOTAL_DAMAGE / 30.5, 2))
-        self.assertAlmostEqual(row(live, PLAYER).dps, round(34 / 30.5, 2))
+        self.assertAlmostEqual(row(live, PLAYER).dps, round(41 / 30.5, 2))
         earlier = build_snapshot(self.stats, self.enc, PLAYER, now=2.0)
         self.assertAlmostEqual(earlier.duration, DURATION)  # never shrinks below the events
 
@@ -228,7 +229,7 @@ class BuildSnapshotTests(unittest.TestCase):
         snap = build_snapshot(stats, enc, "")
         you = row(snap, "You")
         self.assertTrue(you.is_you)
-        self.assertEqual(you.damage, 34)
+        self.assertEqual(you.damage, 41)
 
 
 class EmptyAndEdgeCaseTests(unittest.TestCase):

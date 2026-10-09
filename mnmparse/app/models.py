@@ -3,8 +3,8 @@
 This module is pure Python: it imports nothing from Qt so it can be unit-tested
 headless and reused by any front end.  :func:`build_snapshot` turns a
 :class:`mnmparse.stats.Encounter` into an immutable-by-convention
-:class:`EncounterSnapshot` with one :class:`ActorRow` per participant (players,
-NPCs and pets alike); the UI filters the rows per tab with
+:class:`EncounterSnapshot` with one :class:`ActorRow` per participant; attributed
+pets contribute to their owner's row. The UI filters the rows per tab with
 :func:`snapshot_rows_for_tab`.
 
 Numbers follow :meth:`mnmparse.stats.Stats.actor_table` where the two overlap
@@ -197,8 +197,16 @@ class ActorRow:
     misses_shown: bool = True
     deaths: int = 0  #: times this actor died in the fight ("X has been slain by Y", "You have been slain")
     killed_by: dict[str, int] = field(default_factory=dict)  #: who killed them, and how often
-    pet_owner: str = ""  #: named owner; the row's own numbers are kept separate
+    pet_owner: str = ""  #: named owner on a raw pet row before it is folded into its owner
     attributed_pets: list[str] = field(default_factory=list)  #: pets included in an owner summary
+
+    @property
+    def display_name(self) -> str:
+        """The visible label; ``name`` remains the owner's stable character identity."""
+        if not self.attributed_pets:
+            return self.name
+        pets = "Pet" if len(self.attributed_pets) == 1 else "Pets"
+        return f"{self.name} + {self.name}'s {pets}"
 
 
 @dataclass
@@ -887,7 +895,7 @@ def _classify_sides(
     # A manually assigned pet follows its owner, even if its name once looked like a mob.
     group -= set(pet_owners)
     group |= {pet for pet, owner in pet_owners.items() if owner in group}
-    group -= excluded
+    group -= excluded - set(pet_owners)
     enemies = {name for name in names if is_npc_name(name)} - group - set(pet_owners)
     edges: set[tuple[str, str]] = set()
     for ev in events:
@@ -1003,6 +1011,21 @@ def build_snapshot(
     """
     canon = stats.canonical_map(enc)
     you_name = player_name or "You"
+    roster = getattr(stats, "roster", None)
+    assignments = roster.pet_owners() if roster is not None else {}
+    # Explicit ownership declares two distinct identities, even when OCR would otherwise
+    # merge their similar spellings. Apply this before accumulating either one's numbers.
+    identities = set(assignments) | {
+        you_name if owner.casefold() in {"you", you_name.casefold()} else owner
+        for owner in assignments.values()
+    }
+    by_canonical: dict[str, set[str]] = {}
+    for name in identities:
+        by_canonical.setdefault(canon.get(name, name), set()).add(name)
+    for names in by_canonical.values():
+        if len(names) > 1:
+            for name in names:
+                canon[name] = name
     vocab = getattr(stats, "vocab", None)
     accs = _accumulate(enc.events, canon, vocab=vocab)
 
@@ -1010,10 +1033,9 @@ def build_snapshot(
     if vocab is not None:
         party |= {vocab.canonical("player", n) or n for n in party}
     party |= {canon.get(n, n) for n in party}
-    roster = getattr(stats, "roster", None)
     pet_owners = {acc.name: you_name for acc in accs.values() if acc.is_pet}
-    if roster is not None:
-        for pet, owner in roster.pet_owners().items():
+    if assignments:
+        for pet, owner in assignments.items():
             owner = you_name if owner.casefold() in {"you", you_name.casefold()} else canon.get(owner, owner)
             pet_owners[canon.get(pet, pet)] = owner
     for pet in pet_owners:
@@ -1066,7 +1088,7 @@ def build_snapshot(
     kills = int(count_kills(enc)) if callable(count_kills) else len(killed)
     visit_at = getattr(stats, "zone_visit_at", None)
     zone, zone_since = visit_at(enc.start) if callable(visit_at) else ("", 0.0)
-    return EncounterSnapshot(
+    snap = EncounterSnapshot(
         key=f"{enc.start:.3f}",
         label=_fight_label(enc, canon, enemies, group),
         start=enc.start,
@@ -1085,6 +1107,13 @@ def build_snapshot(
         active_duration=active_duration,
         group_members=sorted(({you_name} | party) - set(pet_owners), key=str.casefold),
     )
+    owners = {row.pet_owner for row in rows if row.pet_owner}
+    if owners:
+        combined = [owner_row(snap, owner, you_name=you_name) for owner in sorted(owners)]
+        snap.rows = [row for row in rows if not row.pet_owner and row.name not in owners]
+        snap.rows.extend(row for row in combined if row is not None)
+        snap.rows.sort(key=lambda row: (-row.damage, row.name))
+    return snap
 
 
 # ---------------------------------------------------------------------------
@@ -1233,10 +1262,11 @@ def merge_snapshots(
                 enemy_heals=sum(int(getattr(r, "enemy_heals", 0) or 0) for r in parts),
                 in_group=any(r.in_group for r in parts),
                 is_enemy=any(r.is_enemy for r in parts),
-                misses_shown=any(r.misses_shown for r in parts),
+                misses_shown=all(r.misses_shown for r in parts),
                 deaths=sum(int(getattr(r, "deaths", 0) or 0) for r in parts),
                 killed_by=_sum_counts(getattr(r, "killed_by", {}) or {} for r in parts),
                 pet_owner=next((r.pet_owner for r in reversed(parts) if r.pet_owner), ""),
+                attributed_pets=sorted({pet for r in parts for pet in r.attributed_pets}, key=str.casefold),
             )
         )
     rows.sort(key=lambda r: (-r.damage, r.name))
@@ -1265,21 +1295,25 @@ def merge_snapshots(
     )
 
 
-def owner_row(snap: EncounterSnapshot, owner: str) -> ActorRow | None:
-    """Owner plus pets for a personal summary, leaving the meter's separate rows untouched.
+def owner_row(snap: EncounterSnapshot, owner: str, *, you_name: str | None = None) -> ActorRow | None:
+    """The owner's combined parse, also accepting older snapshots with separate pet rows.
 
     Pet skills include their source name, so the personal breakdown explains exactly what
     contributed. This also works when only the pet acted in the encounter.
     """
     direct = next((r for r in snap.rows if r.name == owner or (r.is_you and owner == "You")), None)
     name = direct.name if direct is not None else owner
-    pets = [r for r in snap.rows if r.pet_owner == name]
+    pets = [r for r in snap.rows if r is not direct and r.name != name and r.pet_owner == name]
     if not pets:
         return direct
+    is_you = direct.is_you if direct is not None else name == (you_name or "You")
+    is_enemy = direct.is_enemy if direct is not None else False
+    color = direct.color if direct is not None else actor_color(name, is_you=is_you, is_npc=is_enemy, is_pet=False)
     parts = [direct] if direct is not None else []
     for pet in pets:
         parts.append(dataclasses.replace(
-            pet, name=name, is_pet=False, pet_owner="", is_you=bool(direct and direct.is_you),
+            pet, name=name, is_pet=False, pet_owner="", is_you=is_you,
+            is_npc=bool(direct and direct.is_npc), is_enemy=is_enemy, color=color,
             skills=[dataclasses.replace(s, skill=f"{pet.name}: {s.skill}") for s in pet.skills],
             heal_skills=[dataclasses.replace(s, skill=f"{pet.name}: {s.skill}") for s in pet.heal_skills],
             taken_from=[dataclasses.replace(s, skill=f"{pet.name}: {s.skill}") for s in pet.taken_from],
@@ -1287,7 +1321,11 @@ def owner_row(snap: EncounterSnapshot, owner: str) -> ActorRow | None:
             debuff_skills={f"{pet.name}: {k}": v for k, v in pet.debuff_skills.items()},
         ))
     merged = merge_snapshots([dataclasses.replace(snap, rows=parts)], key=snap.key, label=snap.label)
-    return dataclasses.replace(merged.rows[0], attributed_pets=[r.name for r in pets])
+    return dataclasses.replace(
+        merged.rows[0],
+        share=sum(row.share for row in parts),
+        attributed_pets=sorted(set(direct.attributed_pets if direct is not None else []) | {r.name for r in pets}, key=str.casefold),
+    )
 
 
 def snapshot_rows_for_tab(snap: EncounterSnapshot, tab: str) -> list[ActorRow]:

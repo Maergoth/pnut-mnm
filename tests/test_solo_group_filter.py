@@ -142,9 +142,10 @@ class SoloGroupFilterTests(unittest.TestCase):
                 snap = snapshot(stats)
                 self.assertTrue(snap.ours)
                 self.assertEqual(snap.total_damage, 7)
-                pet = next(row for row in snap.rows if row.name == "Fluffy")
-                self.assertTrue(pet.in_group)
-                self.assertEqual(pet.pet_owner, owner)
+                merged = next(row for row in snap.rows if row.name == owner)
+                self.assertTrue(merged.in_group)
+                self.assertEqual(merged.attributed_pets, ["Fluffy"])
+                self.assertNotIn("Fluffy", [row.name for row in snap.rows])
 
     def test_leaving_party_returns_new_fights_to_solo_filter(self) -> None:
         stats = Stats(8.0, player_name=PLAYER)
