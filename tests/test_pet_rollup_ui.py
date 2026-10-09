@@ -143,7 +143,7 @@ class PetRollupUiTests(unittest.TestCase):
         csv_path = export_csv(snap, Path(self.tmp.name) / "parse.csv")
         with csv_path.open(newline="", encoding="utf-8") as fh:
             rows = list(csv.DictReader(fh))
-        owner = next(item for item in rows if item["name"] == label)
+        owner = next(item for item in rows if item["name"] == f"{PLAYER}+Pet")
         self.assertEqual(owner["damage"], "65")
         self.assertFalse(any(item["name"] in ("Kulepu", "Ralu") for item in rows))
         json_path = export_json(snap, Path(self.tmp.name) / "parse.json")

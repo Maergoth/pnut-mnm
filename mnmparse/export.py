@@ -31,6 +31,7 @@ __all__ = [
     "PRESETS",
     "SORTS",
     "ExportFormat",
+    "actor_export_name",
     "format_from_config",
     "format_snapshot",
     "has_people",
@@ -81,7 +82,7 @@ LINE_FIELDS = {
 #: Per-person placeholders.
 ACTOR_FIELDS = {
     "rank": "place in the list (1, 2, ...)",
-    "name": "character name, including attributed pets",
+    "name": "character name (+Pet when pet output is included)",
     "dps": "damage per second",
     "damage": "damage dealt",
     "share": "share of the group's damage (%)",
@@ -176,6 +177,12 @@ def _rate(amount: Any, active: float, fallback: Any) -> float:
     return float(fallback or 0.0)
 
 
+def actor_export_name(row: Any) -> str:
+    """Compact owner label for exports, including any number of attributed pets."""
+    name = str(getattr(row, "name", "") or "?")
+    return f"{name}+Pet" if getattr(row, "attributed_pets", ()) else name
+
+
 def format_snapshot(snap: Any, fmt: ExportFormat) -> str:
     """The one-line summary of ``snap`` (an ``EncounterSnapshot``) in ``fmt``.
 
@@ -190,7 +197,7 @@ def format_snapshot(snap: Any, fmt: ExportFormat) -> str:
     for rank, row in enumerate(people, 1):
         entries.append(render(fmt.actor, {
             "rank": rank,
-            "name": str(getattr(row, "display_name", None) or getattr(row, "name", "") or "?"),
+            "name": actor_export_name(row),
             "dps": _rate(getattr(row, "damage", 0), active, getattr(row, "dps", 0.0)),
             "damage": int(getattr(row, "damage", 0) or 0),
             "share": _Pct(100.0 * float(getattr(row, "share", 0.0) or 0.0)),

@@ -31,7 +31,7 @@ class PetRollupExportTests(unittest.TestCase):
         ])
         fmt = ExportFormat("{damage}: {actors}", "{rank}:{name}:{damage}:{share:.0f}", " | ")
         self.assertEqual(format_snapshot(snap, fmt),
-                         "60: 1:Maergoth + Maergoth's Pet:50:83 | 2:Tamsin:10:17")
+                         "60: 1:Maergoth+Pet:50:83 | 2:Tamsin:10:17")
 
     def test_healing_export_includes_pet_heals_once(self):
         snap = snapshot([
@@ -40,16 +40,16 @@ class PetRollupExportTests(unittest.TestCase):
             "Kulepu's Heal heals Maergoth for 18 Health.",
         ])
         fmt = ExportFormat("{actors}", "{name} {heal}", sort="healing")
-        self.assertEqual(format_snapshot(snap, fmt), "Maergoth + Maergoth's Pet 40")
+        self.assertEqual(format_snapshot(snap, fmt), "Maergoth+Pet 40")
 
     def test_pet_only_fight_lists_the_owner_and_multiple_pets_survive_zone_merge(self):
         one = snapshot(["Kulepu bites a rat for 7 points of damage."])
         two = snapshot(["Fizzy bites a rat for 11 points of damage."], pets=("Fizzy",))
         fmt = ExportFormat("{actors}", "{name} {damage}")
         self.assertTrue(has_people(one, fmt))
-        self.assertEqual(format_snapshot(one, fmt), "Maergoth + Maergoth's Pet 7")
+        self.assertEqual(format_snapshot(one, fmt), "Maergoth+Pet 7")
         summary = merge_snapshots([one, two], key="zone", label="zone")
-        self.assertEqual(format_snapshot(summary, fmt), "Maergoth + Maergoth's Pets 18")
+        self.assertEqual(format_snapshot(summary, fmt), "Maergoth+Pet 18")
         self.assertEqual(summary.total_damage, 18)
 
 

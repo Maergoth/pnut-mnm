@@ -88,6 +88,7 @@ from mnmparse.config import (
     project_path,
     save_config,
 )
+from mnmparse.export import actor_export_name
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
@@ -353,7 +354,7 @@ def export_csv(snap: EncounterSnapshot, path: Path) -> Path:
         writer = csv.writer(fh)
         writer.writerow(header)
         for row in snap.rows:
-            values: list[Any] = [snap.label, actor_display_name(row)]
+            values: list[Any] = [snap.label, actor_export_name(row)]
             values.extend(getattr(row, name) for name in _CSV_NUMERIC_FIELDS)
             values.extend(int(flag) for flag in (row.is_you, row.is_npc, row.is_pet))
             writer.writerow(values)
