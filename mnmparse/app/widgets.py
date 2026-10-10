@@ -1832,10 +1832,10 @@ def capture_warning(status: dict[str, Any]) -> tuple[str, str] | None:
     if status.get("garbled"):
         pct = float(status.get("unreadable_pct", 0.0) or 0.0)
         return (
-            "Chat hard to read",
-            f"The chat text is hard to read right now ({pct:.0f}% of the recent lines could not be "
-            "read). Check that nothing overlaps the Combat chat and that the crop still matches it "
-            "(Settings > Crop).",
+            "Messages not recognized",
+            f"{pct:.0f}% of recent messages could not be fully parsed or needed an estimated amount. "
+            "Check the affected text in Feed, and confirm that the crop matches the Combat chat "
+            "(Settings > Crop). Poor OCR and unsupported messages can both cause this warning.",
         )
     if status.get("scrolled_back"):
         return (

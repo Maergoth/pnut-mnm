@@ -62,6 +62,7 @@ mnmparse/            library + CLI
   trigger_exchange.py validated JSON sharing, legacy timer conversion and duplicate-safe merging
   trigger_chat.py    compact single-trigger chat encoding, checksums and bounded fragment assembly
   export.py          one-line clipboard summaries of a fight: presets, templates, format_snapshot
+  diagnostics.py     local OCR diagnosis ZIP: settings, recent evidence and a fresh Combat crop
   party.py           PartyRoster: explicit party chat evidence, manual in/out choices, party.json
   logwriter.py       logs/combat_*.log (EQ style) and logs/events_*.jsonl, each starting with a format header
   config.py          Config dataclass, config.json load/save, PROJECT_ROOT (exe-aware)
@@ -263,15 +264,18 @@ re-read from its content on every layout request (`MainWindow._sync_minimum_size
    a row is replaced only if its group grew. While `Tracker.scrolled_back` has lasted
    `SCROLLED_BACK_SHOW_S`, the status carries `scrolled_back` and the encounter timeout waits
    (`SCROLLED_BACK_HOLD_MAX_S` at most); a crop of fewer than `MIN_CROP_ROWS` rows is reported
-   once on `notice`. Only `unknown` lines, fragments and Dummy Fix estimates count as
-   unreadable, and session time in combat counts only fights where `snap.ours`.
+   once on `notice`. Unrecognized messages, incomplete abilities and Dummy Fix estimates
+   count as unreadable; completely parsed messages with missing punctuation do not. Session
+   time in combat counts only fights where `snap.ours`. The local OCR Diagnosis export includes
+   bounded recent messages and OCR rows, current settings, and a fresh Combat-crop image when
+   available; it cannot recover lines that were never captured.
 
 ### Message grammar
 
 `grammar.py` holds every line shape observed, each rule with a verbatim example, and
 `tests/test_parser.py` checks them.
 Short version of the families (names: players are capitalized words, NPCs are article plus
-lowercase words, "You/Your/YOU" is the viewer):
+words that may contain capitals, hyphens and internal apostrophes, "You/Your/YOU" is the viewer):
 
 - Melee: `X crushes Y [with their bow] for N points of damage[ (2 absorbed)][ (Block 6)].`,
   `You try to crush Y, but miss!`, `X tries to bite YOU, but YOU dodge!` (dodge, parry,

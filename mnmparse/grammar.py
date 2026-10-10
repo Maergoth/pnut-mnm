@@ -15,8 +15,8 @@ Name forms (see SPEC section 3):
 
 * player names are a single capitalised word (``Tovozen``), including the
   pronoun forms ``You`` / ``Your`` / ``YOU``;
-* NPC names are an article followed by lowercase words
-  (``a stumbling zombie``).
+* NPC names are an article followed by words, including internal capitals,
+  hyphens and apostrophes (``a stumbling zombie``, ``a Mur'Hua scavenger``).
 
 Every rule is anchored at both ends; the shared ``TAIL`` tolerates the
 terminal punctuation the game prints (``.`` ``!``) as well as the commas,
@@ -33,6 +33,7 @@ __all__ = [
     "KINDS",
     "YOU_TOKENS",
     "PLAYER",
+    "NPC_WORD",
     "NPC",
     "NAME",
     "RULES",
@@ -176,9 +177,13 @@ PLAYER: str = r"[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}"
 to three capitalised words (``Toilmaster Verith``)."""
 
 _NPC_STOP: str = r"(?!(?:with|for|but|on|to|from|is|are|has|have|was|were)\b)"
-NPC: str = rf"(?:a|an|the)\s+[A-Za-z][a-z\-]*(?:\s+{_NPC_STOP}[A-Za-z][a-z\-]*)*(?:'s\s+pet)?"
+NPC_WORD: str = r"[A-Za-z][A-Za-z\-]*(?:'(?!s\b)[A-Za-z][A-Za-z\-]*)*"
+"""One NPC-name word, including ``Mur'Hua`` or ``MurHua``. A terminal ``'s``
+belongs to the surrounding possessive or pet rule, not to the word itself."""
+
+NPC: str = rf"(?:a|an|the)\s+{NPC_WORD}(?:\s+{_NPC_STOP}{NPC_WORD})*(?:'s\s+pet)?"
 """An NPC name: a lowercase article followed by one or more words, which may be
-capitalised proper nouns (``a Wyrmsbane crusader``, ``a Dustrend priest``).  The words
+proper nouns (``a Wyrmsbane crusader``, ``a Mur'Hua scavenger``).  The words
 that introduce the rest of a sentence (``with their bow``, ``for 3 points``,
 ``but they absorb``) can never be part of the name. An NPC's unnamed pet
 (``a Bloodynose frightener's pet``) is a distinct combatant."""
@@ -222,7 +227,7 @@ _ABILITY_VERBS: str = (
 """Verbs seen between an ability name and its target: ``hits`` for most, ``bleeds`` for
 damage-over-time ticks (``X's Barbed Arrow bleeds Y for 3 points of Bleed Damage.``)."""
 
-_NPC_GREEDY: str = r"(?:a|an|the)\s+[A-Za-z][a-z\-]*(?:\s+[a-z][a-z\-]*)*"
+_NPC_GREEDY: str = rf"(?:a|an|the)\s+{NPC_WORD}(?:\s+{NPC_WORD})*"
 """An NPC name with no stop words (for the status catch-all, where the sentence shape
 after the name decides where the name ends)."""
 
@@ -250,7 +255,7 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("coin", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+(?P<amount>\d+)\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse(?P<split>.*)$"),
     # the NPC name and "'s corpse," cut off by the window edge: "Gozif loots 9 copper coins from
     # a risen and you receive 2 copper corpse as your split."
-    ("coin", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+(?P<amount>\d+)\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+from\s+(?P<target>(?:a|an|the)\s+[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)*?)(?P<split>,?\s+and\s+(?:you\s+)?rece\w*\s.*)$"),
+    ("coin", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+(?P<amount>\d+)\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+from\s+(?P<target>{NPC})(?P<split>,?\s+and\s+(?:you\s+)?rece\w*\s.*)$"),
     # the end of a coin line that wrapped onto its own row (the split may name no denomination)
     ("coin_split", rf"^(?P<price>{_MULTI_COIN})(?:\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse)?\s+(?:as\s+)?your\s+split{_TAIL}"),
     ("coin_split", rf"^(?P<amount>\d+|O)\s+(?:(?P<dtype>platinum|gold|silver|copper)\s+)?coins?(?:\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse)?\s+(?:as\s+)?your\s+split{_TAIL}"),
@@ -474,16 +479,16 @@ MESSAGE_START_RX = re.compile(
     r"|[A-Z][a-z]{2,}'s\s+[A-Z]"
     r"|[A-Z][a-z]{2,}\s+(?:hits|slashes|crushes|pierces|punches|kicks|bashes|bites|claws|"
     r"begins|tries|has|have|loots|crafts|heals|is|looks|staggers|casts)\b"
-    r"|(?:a|an|the)\s+(?:[A-Za-z][a-z\-]*\s+){1,4}?(?:hits|slashes|crushes|pierces|punches|kicks|"
+    rf"|(?:a|an|the)\s+(?:{NPC_WORD}\s+){{1,4}}?(?:hits|slashes|crushes|pierces|punches|kicks|"
     r"bashes|bites|claws|mauls|stings|begins|tries|has|is|looks|loses|staggers|resists|awakens)\b"
-    r"|(?:a|an|the)\s+(?:[A-Za-z][a-z\-]*\s+){0,3}?[A-Za-z][a-z\-]*'s\s+[A-Z]"
+    rf"|(?:a|an|the)\s+(?:{NPC_WORD}\s+){{0,3}}?{NPC_WORD}'s\s+[A-Z]"
     r")"
 )
 
 
 def starts_message(text: str) -> bool:
     """True when ``text`` begins like a complete message (see :data:`MESSAGE_START_RX`)."""
-    return MESSAGE_START_RX.match(text.strip()) is not None
+    return MESSAGE_START_RX.match(text.strip().replace("’", "'").replace("‘", "'")) is not None
 
 
 def is_npc_name(name: str | None) -> bool:

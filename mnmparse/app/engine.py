@@ -26,6 +26,7 @@ Win32 lookup) and never activated, messaged or sent input.
 from __future__ import annotations
 
 import dataclasses
+import copy
 import json
 import logging
 import os
@@ -58,10 +59,14 @@ OCCLUDED_RECENT_S = 10.0
 GARBLE_SHARE = 0.35
 GARBLE_WINDOW = 40
 GARBLE_MIN_MESSAGES = 20
-#: Event kinds that count as unreadable for the banner (with fragments and Dummy Fix guesses,
-#: which are unknown lines given a number).  Every other kind is a line that was read, however
-#: rare: a vendor stop or a corpse run is not an OCR failure.
-UNREADABLE_KINDS = frozenset({"unknown"})
+#: Unrecognized messages, incomplete abilities, and Dummy Fix guesses count as unreadable.
+#: A tracker fragment can still parse completely (e.g. a hit missing its final period),
+#: so the fragment flag alone does not mean combat information was lost.
+UNREADABLE_KINDS = frozenset({"unknown", "ability_partial"})
+DIAG_MESSAGE_LIMIT = 100
+DIAG_FRAME_LIMIT = 3
+DIAG_ROW_LIMIT = 100
+DIAG_TEXT_LIMIT = 2000
 
 #: What the tracker remembered when capture stopped (seq and text of the emitted rows), so a
 #: restart recognises the chat lines still on screen instead of logging them again.
@@ -303,6 +308,7 @@ class Engine(QObject):
 
         self._source: FrameSource | None = None
         self._ocr: OcrEngine | None = None
+        self._active_ocr_settings = (cfg.ocr_engine, float(cfg.ocr_scale))
         self._tracker: Tracker | None = None
         self._stats: Stats | None = None
         self._stopped_stats: Stats | None = None  #: last capture's source events for ownership corrections
@@ -330,6 +336,9 @@ class Engine(QObject):
         )
         self._session_dirty = False
         self._recent_kinds: deque[str] = deque(maxlen=GARBLE_WINDOW)
+        self._diagnostic_messages: deque[dict[str, Any]] = deque(maxlen=DIAG_MESSAGE_LIMIT)
+        self._diagnostic_frames: deque[dict[str, Any]] = deque(maxlen=DIAG_FRAME_LIMIT)
+        self._diagnostic_run_started: float | None = None
         self._occluded_seen = 0
         self._occluded_at = 0.0  #: monotonic time occlusion was last seen
         self._last_vocab_save = time.monotonic()
@@ -477,6 +486,65 @@ class Engine(QObject):
         with self._lock:
             return self._session_stats.snapshot()
 
+    def ocr_diagnosis(self) -> dict[str, Any]:
+        """Copy recent capture evidence without grabbing a frame or emitting signals.
+
+        Safe to call from an export worker while live capture continues. Rows and messages
+        are bounded samples, not a record of lines that were never captured.
+        """
+        with self._lock:
+            saved = dataclasses.asdict(self._cfg)
+            saved["crop"] = list(self._cfg.crop)
+            active_cfg = self._capture_config(self._cfg) if self._ocr is not None else self._cfg
+            effective = dataclasses.asdict(active_cfg)
+            effective["crop"] = list(active_cfg.crop)
+            active_engine, active_scale = self._active_ocr_settings
+            tracker = self._tracker
+            messages = list(self._diagnostic_messages)
+            result = {
+                "saved_settings": saved,
+                "effective_settings": effective,
+                "active_ocr": {
+                    "available": self._ocr is not None,
+                    "engine": active_engine if self._ocr is not None else None,
+                    "scale": active_scale if self._ocr is not None else None,
+                    "recognizer_language": getattr(self._ocr, "language", None),
+                    "implementation": type(self._ocr).__name__ if self._ocr is not None else None,
+                },
+                "pending_ocr_settings": {
+                    "engine": self._cfg.ocr_engine,
+                    "scale": float(self._cfg.ocr_scale),
+                    "requires_capture_restart": self._ocr is not None and (
+                        self._cfg.ocr_engine != active_engine or float(self._cfg.ocr_scale) != active_scale
+                    ),
+                },
+                "runtime": dict(self._status_payload(), paused=self._paused,
+                                capture_thread_running=self.is_running,
+                                run_started_at=self._diagnostic_run_started),
+                "tracker": {
+                    "available": tracker is not None,
+                    "row_pitch_pixels": tracker.pitch if tracker is not None else None,
+                    "line_height_pixels": tracker.line_height if tracker is not None else None,
+                    "text_margin_pixels": tracker.margin if tracker is not None else None,
+                    "typical_complete_line_characters": tracker.complete_len if tracker is not None else None,
+                    "pending_rows": len(tracker.pending) if tracker is not None else 0,
+                    "waiting_wrapped_line": tracker.held.text[:DIAG_TEXT_LIMIT]
+                    if tracker is not None and tracker.held is not None else None,
+                },
+                "recent_messages": messages,
+                "missed_messages": [message for message in messages if message["unreadable"]],
+                "recent_ocr_frames": list(self._diagnostic_frames),
+                "sample_limits": {
+                    "messages": DIAG_MESSAGE_LIMIT, "ocr_frames": DIAG_FRAME_LIMIT,
+                    "rows_per_frame": DIAG_ROW_LIMIT, "characters_per_text": DIAG_TEXT_LIMIT,
+                },
+                "limitations": [
+                    "Missed messages are recent captured messages that were unrecognized, incomplete, or estimated.",
+                    "Lines that were never captured, scrolled away between frames, or arrived while chat was covered cannot be recovered.",
+                ],
+            }
+            return copy.deepcopy(result)
+
     def reset_session(self) -> None:
         """Start the session counters over (keeps the encounter history)."""
         with self._lock:
@@ -609,6 +677,7 @@ class Engine(QObject):
 
     def _save_state(self, cfg: Config, tracker: Tracker, zone: str) -> None:
         """Save the tracker state and the last zone next to the logs (worker thread)."""
+        cfg = self._capture_config(cfg)
         now = time.time()
         folder = project_path(cfg.log_dir)
         try:
@@ -618,6 +687,11 @@ class Engine(QObject):
         except OSError as exc:
             log.warning("could not save the tracker state: %s", exc)
         self._since_state_save = 0
+
+    def _capture_config(self, cfg: Config) -> Config:
+        """Use the OCR settings selected at start until the running engine is replaced."""
+        engine, scale = self._active_ocr_settings
+        return dataclasses.replace(cfg, ocr_engine=engine, ocr_scale=scale)
 
     def set_group_override(self, name: str, in_group: bool | None) -> None:
         """Count ``name`` in or out of the group by hand (``None``: follow the chat again).
@@ -816,7 +890,12 @@ class Engine(QObject):
         saved_zone = self._load_session_state(cfg)
         with self._lock:
             self._ocr = ocr
+            self._active_ocr_settings = (cfg.ocr_engine, float(cfg.ocr_scale))
             self._tracker = tracker
+            self._recent_kinds.clear()
+            self._diagnostic_messages.clear()
+            self._diagnostic_frames.clear()
+            self._diagnostic_run_started = time.time()
             self._restart = _RestartTail(tail) if tail else None
             self._install_stats(cfg, saved_zone)
             self._writer = LogWriter(
@@ -941,6 +1020,7 @@ class Engine(QObject):
         tracker = self._tracker
         if ocr is None or tracker is None:
             return
+        cfg = self._capture_config(cfg)
         try:
             img = preprocess(frame if cropped else crop_frame(frame, tuple(cfg.crop)), cfg.preprocess, cfg.ocr_scale)
         except ValueError as exc:
@@ -952,6 +1032,24 @@ class Engine(QObject):
         now = time.time()
         with self._lock:
             new_messages = tracker.update(lines, now)
+            self._diagnostic_frames.append({
+                "read_at": now,
+                "crop": list(cfg.crop),
+                "input_dimensions": {"width": int(frame.shape[1]), "height": int(frame.shape[0]),
+                                     "already_cropped": bool(cropped)},
+                "ocr_dimensions": {"width": int(img.shape[1]), "height": int(img.shape[0])},
+                "ocr_engine": cfg.ocr_engine,
+                "ocr_scale": float(cfg.ocr_scale),
+                "preprocess": cfg.preprocess,
+                "ocr_ms": round(ocr_ms, 1),
+                "row_count": len(lines),
+                "rows_truncated": len(lines) > DIAG_ROW_LIMIT,
+                "coordinate_space": "unscaled_combat_crop_pixels",
+                "rows": [{"x": int(line.x), "y": int(line.y), "h": int(line.h),
+                          "text": line.text[:DIAG_TEXT_LIMIT],
+                          "text_truncated": len(line.text) > DIAG_TEXT_LIMIT}
+                         for line in lines[:DIAG_ROW_LIMIT]],
+            })
             self._frames += 1
             self._frame_times.append(time.monotonic())
             self._last_ocr_ms = ocr_ms
@@ -1055,7 +1153,7 @@ class Engine(QObject):
             return
         self._rows_warned = True  # judged once per start (and per config change)
         _left, top, _right, bottom = (int(v) for v in cfg.crop)
-        rows = (bottom - top) * float(cfg.ocr_scale) / max(1.0, float(tracker.pitch))
+        rows = (bottom - top) / max(1.0, float(tracker.pitch))
         if rows >= MIN_CROP_ROWS:
             return
         text = (
@@ -1111,8 +1209,23 @@ class Engine(QObject):
             if guess is not None and stats.estimate_amount(guess):
                 ev = guess
         self._names.observe(ev)
-        unreadable = ev.kind in UNREADABLE_KINDS or msg.fragment or ev.estimated
+        unreadable = ev.kind in UNREADABLE_KINDS or ev.estimated
         self._recent_kinds.append("unreadable" if unreadable else ev.kind)
+        reason = ("estimated_amount" if ev.estimated else
+                  "unrecognized_message" if ev.kind == "unknown" else
+                  "incomplete_ability" if ev.kind == "ability_partial" else None)
+        self._diagnostic_messages.append({
+            "first_seen": msg.first_seen,
+            "frames_seen": msg.frames_seen,
+            "raw_text": msg.text[:DIAG_TEXT_LIMIT],
+            "raw_text_truncated": len(msg.text) > DIAG_TEXT_LIMIT,
+            "parsed_text": ev.text[:DIAG_TEXT_LIMIT],
+            "kind": ev.kind, "actor": ev.actor, "target": ev.target, "amount": ev.amount,
+            "skill": ev.skill, "damage_type": ev.dtype,
+            "fragment": bool(msg.fragment), "estimated": bool(ev.estimated),
+            "estimated_timestamp": bool(getattr(msg, "estimated_ts", False)),
+            "unreadable": bool(unreadable), "unreadable_reason": reason,
+        })
         if not NOT_LOGGED_RX.match(msg.text):
             writer.write_event(ev)
         before = len(stats.history)
@@ -1251,7 +1364,8 @@ class Engine(QObject):
                 self._snapshot_dirty = False
                 self.snapshot.emit(snap)
 
-    def _emit_status(self) -> None:
+    def _status_payload(self) -> dict[str, Any]:
+        """Snapshot counters shared by the status UI and local diagnosis exports."""
         with self._lock:
             now = time.monotonic()
             recent = [t for t in self._frame_times if now - t <= 2.0]
@@ -1280,7 +1394,10 @@ class Engine(QObject):
                 "scrolled_back": self._scrolled_shown and self._state in ("running", "paused"),
                 "backlog": self._backlog_dropped,
             }
-        self.status.emit(payload)
+            return payload
+
+    def _emit_status(self) -> None:
+        self.status.emit(self._status_payload())
 
     def _finish(self) -> None:
         """Flush the tracker, close the open encounter and the writer, stop the source.
@@ -1294,7 +1411,7 @@ class Engine(QObject):
         tracker state and the zone are saved for a restart of the app.  Ends with state
         ``stopped``.
         """
-        cfg = self.config
+        cfg = self._capture_config(self.config)
         try:
             with self._lock:
                 tracker, writer = self._tracker, self._writer

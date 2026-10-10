@@ -164,7 +164,8 @@ The better the text looks, the better the OCR.
    lost.
 6. Open the app, go to **Settings > Crop**, press **Capture frame**, drag the rectangle over the
    chat text only (exclude the tab header), press **Test OCR** to confirm the lines read
-   correctly, and **Save**.
+   correctly, and **Save**. If you change OCR **Engine** or **Upscale**, stop and start capture
+   after saving; Test OCR previews the edited settings immediately.
 
 Which chat window is read is decided by that rectangle alone: the app captures the whole game
 window as a picture and reads only the pixels inside the crop. Nothing is hooked. With two chat
@@ -189,12 +190,21 @@ Capture details (game window found, capture rate, OCR time, messages, covered fr
 unreadable lines, re-read lines skipped) are in the Status section in Settings. A
 warning bar appears under the top bar, and a small one on the overlay, only when something
 needs you: a game panel covering the Combat chat (lines scrolling by meanwhile are lost) or
-chat text that mostly does not read. **Dismiss** (or a click on the overlay's warning) hides it
+messages that could not be fully parsed or needed an estimated amount. A successfully parsed
+hit does not count as unreadable just because its final punctuation was missing. **Dismiss**
+(or a click on the overlay's warning) hides it
 until the problem has cleared and comes back. While the Combat chat is scrolled up (it does not
 show its newest line) the overlay shows a "Chat scrolled up" note and the status bar says so
 too; lines that arrive meanwhile are read once the chat shows its newest line again, with
 times spread over the gap, and the open fight does not time out meanwhile (for up to two
 minutes).
+
+For troubleshooting, use **Settings > Status > OCR Diagnosis** to save a ZIP report.
+It includes saved and edited settings, whether the crop is default or custom, the active
+OCR configuration and language, capture statistics, recent unrecognized or incomplete
+messages, and a fresh image of the Combat chat crop when the game is available. The report
+also records screen size and DPI. Saving it does not upload or send anything. It includes
+recent captured messages; lines that scrolled past without being captured cannot be recovered.
 
 - **Live:** every encounter, grouped like Advanced Combat Tracker: one collapsible header per
   zone visit ("Night Harbor (West) · 61 encounters", time stamped with when you entered, the

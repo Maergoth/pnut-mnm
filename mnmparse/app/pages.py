@@ -23,13 +23,14 @@ import dataclasses
 import json
 import logging
 import re
+import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QPointF, QRectF, QSettings, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QPoint, QPointF, QRectF, QSettings, QSize, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -94,6 +95,32 @@ if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
 
 log = logging.getLogger(__name__)
+
+
+class _OcrDiagnosisJob(QObject):
+    """Export off the GUI thread; own the worker until it delivers its result."""
+
+    done = Signal(object, object)
+
+    def __init__(self, fn: Callable[[], Path]) -> None:
+        # A parentless QObject survives a Settings page being destroyed mid-export.
+        super().__init__()
+        self._fn = fn
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="ocr-diagnosis-export", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            result = self._fn()
+        except Exception as exc:  # noqa: BLE001 - return failures to the GUI
+            log.exception("OCR diagnosis export failed")
+            self.done.emit(None, exc)
+        else:
+            self.done.emit(result, None)
+
 
 __all__ = [
     "AboutPage",
@@ -1983,6 +2010,8 @@ class SettingsPage(QWidget):
         self._settings = settings
         self._cfg = cfg
         self._loading = False
+        self._ocr_diagnosis_busy = False
+        self._ocr_diagnosis_job: _OcrDiagnosisJob | None = None
         self._captions: list[tuple[QWidget, QLabel, str]] = []
         self.setStyleSheet(_page_qss())
 
@@ -2261,7 +2290,7 @@ class SettingsPage(QWidget):
             ("ocr", "OCR time", "Time to read one frame"),
             ("messages", "Messages logged", "Since capture started"),
             ("occluded", "Covered frames skipped", "A game panel was over the chat; lines scrolling by meanwhile are lost"),
-            ("unreadable", "Unreadable recent lines", "Share of the last 40 lines that matched no known message"),
+            ("unreadable", "Unreadable recent lines", "Share of the last 40 messages not fully parsed or needing an estimated amount"),
             ("replays", "Re-read lines skipped", "Old chat lines shown again (scrolled back, re-rendered) and not counted twice"),
         ):
             value = QLabel("-")
@@ -2269,7 +2298,80 @@ class SettingsPage(QWidget):
             _tabular(value)
             self._status_values[key] = value
             self._row(form, caption, value, hint)
+        self.ocr_diagnosis_button = QPushButton("OCR Diagnosis")
+        self.ocr_diagnosis_button.setObjectName("Chip")
+        self.ocr_diagnosis_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ocr_diagnosis_button.clicked.connect(self._request_ocr_diagnosis)
+        self._row(
+            form, "Diagnosis report", self.ocr_diagnosis_button,
+            "Export settings, recent messages, and the Combat chat crop image to a ZIP.",
+        )
+        self.ocr_diagnosis_status = _label("", "Muted")
+        self.ocr_diagnosis_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.ocr_diagnosis_status.setWordWrap(True)
+        self.ocr_diagnosis_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow(self.ocr_diagnosis_status)
         self.set_engine_state(getattr(self._engine, "state", "stopped") or "stopped")
+
+    def _ocr_diagnosis_metadata(self) -> dict[str, Any]:
+        """Collect Qt/preview details on the GUI thread before the export starts."""
+        metadata: dict[str, Any] = {"preview_ocr_line_count": self.crop_picker._lines.count()}
+        frame = self.crop_picker.frame()
+        if frame is not None:
+            metadata["frame_dimensions"] = {"width": int(frame.shape[1]), "height": int(frame.shape[0])}
+        screen = self.screen()
+        if screen is not None:
+            geometry, available = screen.geometry(), screen.availableGeometry()
+            metadata["screen"] = {
+                "geometry": {"width": geometry.width(), "height": geometry.height()},
+                "available_geometry": {"width": available.width(), "height": available.height()},
+                "device_pixel_ratio": float(screen.devicePixelRatio()),
+                "logical_dpi": float(screen.logicalDotsPerInch()),
+            }
+        return metadata
+
+    def _request_ocr_diagnosis(self) -> None:
+        if self._ocr_diagnosis_busy:
+            return
+        self._ocr_diagnosis_busy = True
+        self.ocr_diagnosis_button.setEnabled(False)
+        try:
+            cfg = self.form_config()
+            default = project_path(cfg.log_dir) / "exports" / f"ocr-diagnosis-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+            filename, _filter = QFileDialog.getSaveFileName(
+                self, "Save OCR Diagnosis", str(default), "Diagnosis ZIP (*.zip)",
+            )
+            if not filename:
+                self._ocr_diagnosis_busy = False
+                self.ocr_diagnosis_button.setEnabled(True)
+                return
+            path = Path(filename)
+            if not path.suffix:
+                path = path.with_suffix(".zip")
+            metadata = self._ocr_diagnosis_metadata()
+            engine = self._engine
+            from mnmparse.diagnostics import write_ocr_diagnosis
+
+            job = _OcrDiagnosisJob(
+                lambda: write_ocr_diagnosis(path, engine, edited_config=cfg, preview_metadata=metadata)
+            )
+            self._ocr_diagnosis_job = job
+            job.done.connect(self._on_ocr_diagnosis_done)
+            job.done.connect(job.deleteLater)
+            self.ocr_diagnosis_status.setText("Exporting OCR Diagnosis…")
+            job.start()
+        except Exception as exc:  # noqa: BLE001 - file dialog/setup errors also restore the button
+            self._on_ocr_diagnosis_done(None, exc)
+
+    @Slot(object, object)
+    def _on_ocr_diagnosis_done(self, result: object, error: object) -> None:
+        self._ocr_diagnosis_job = None
+        self._ocr_diagnosis_busy = False
+        self.ocr_diagnosis_button.setEnabled(True)
+        if error is not None:
+            self.ocr_diagnosis_status.setText(f"Could not export OCR Diagnosis: {error}")
+        else:
+            self.ocr_diagnosis_status.setText(f"Saved OCR Diagnosis: {result}")
 
     def set_engine_state(self, state: str) -> None:
         """Show the engine state in the Status section."""
@@ -2348,7 +2450,11 @@ class SettingsPage(QWidget):
         self._row(form, "Capture rate", self.fps, "Frames read per second; 6 keeps up with a busy chat")
 
     def _build_ocr(self) -> None:
-        form = self._section("OCR", "Windows OCR with max-channel preprocessing at 1x is the measured sweet spot.")
+        form = self._section(
+            "OCR",
+            "Windows OCR with max-channel preprocessing at 1x is the measured sweet spot. "
+            "Save changes to apply them to capture; after changing Engine or Upscale, stop and start capture.",
+        )
         self.ocr_engine = self._combo(OCR_ENGINES)
         self.ocr_scale = self._dspin(0.5, 4.0, 0.25, 2, "x")
         self.preprocess = self._combo(PREPROCESS_MODES)

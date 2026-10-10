@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 
-from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, RULES, Event, is_you, lemmatize, starts_message
+from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, NPC, NPC_WORD, RULES, Event, is_you, lemmatize, starts_message
 
 #: "... and you receive 2 copper coins ... as your split": the number and the word after it (a
 #: denomination, or the OCR's remains of one: "2 coppe", "1 cc", "3 COI", "O coins", "4 cavalier's")
@@ -125,7 +125,7 @@ _DROPPED_APOSTROPHE_RX = re.compile(
 )
 #: The NPC form: "a dunes madmans Strike hits YOU" -> "a dunes madman's Strike hits YOU".
 _DROPPED_NPC_APOSTROPHE_RX = re.compile(
-    r"^((?:a|an|the) [a-z]+(?: [a-z]+)*?)s (?=[A-Z][A-Za-z']*(?: [A-Z]\w*)* (?:hits|heals)\b)"
+    rf"^((?:a|an|the) {NPC_WORD}(?: {NPC_WORD})*?)s (?=[A-Z][A-Za-z']*(?: [A-Z]\w*)* (?:hits|heals)\b)"
 )
 #: The s lost instead: "ovozen' Heal heals Wululiso" -> "ovozen's Heal heals Wululiso"
 _BARE_APOSTROPHE_RX = re.compile(r"^([A-Za-z][a-z]{2,})' (?=[A-Z][a-z])")
@@ -657,7 +657,7 @@ def _garbled_skill(skill: str | None) -> bool:
 #: "Gozif's Slice hits a for 3+oints,ofrBleed Damag": the ability and who used it are readable
 #: even when the rest is not.  Credited for crowd control and debuffs; never counted as damage.
 _PARTIAL_ABILITY_RX = re.compile(
-    r"^(?:(?P<actor>[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?|(?:a|an|the)\s+[a-z]+(?:\s+[a-z]+){0,2})'s|(?P<you>Your))\s+"
+    rf"^(?:(?P<actor>[A-Z][a-z]{{2,}}(?:\s+[A-Z][a-z]+)?|{NPC})'s|(?P<you>Your))\s+"
     r"(?P<skill>[A-Z][a-z']+(?:\s+(?:of\s+|the\s+)?[A-Z][a-z']+){0,3}(?:\s+[IVX]{1,4})?)\s+(?:hits?|heals?)\b"
 )
 
