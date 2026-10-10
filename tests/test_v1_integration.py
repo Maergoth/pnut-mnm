@@ -29,7 +29,7 @@ def _probe(root: Path):
     assert not any(isinstance(page, _MissingPage) for page in app.window._pages.values())
     assert "Casual Mode" in app.window._mode_button.text()
     assert not app.triggers.store.path.samefile(Path(__file__).parents[1] / "triggers.json") if (Path(__file__).parents[1] / "triggers.json").exists() else True
-    assert app.triggers.store.path == root / "triggers.json"
+    assert app.triggers.store.path.resolve() == (root / "triggers.json").resolve()
     assert "revenge" not in dict(app.overlay._tabs.visible_tabs())
     options = app.window.page("settings")
     options._on_morality_mode(False)  # The separate switch tests exercise the actual pledge.

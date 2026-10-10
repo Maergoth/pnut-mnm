@@ -91,7 +91,9 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertGreater(report["chat_share_chars"], 0)
             self.assertLessEqual(report["chat_share_chars"], 255)
             self.assertGreaterEqual(len(report["window_titles"]), 8)
-            self.assertEqual(report["pet_rollup"], {"label": "SmokeOwner + SmokeOwner's Pet", "damage": 50})
+            self.assertEqual(report["pet_rollup"], {
+                "label": "SmokeOwner + SmokeOwner's Pet", "overlay_label": "SmokeOwner + Pet", "damage": 50,
+            })
             self.assertEqual(report["legal_documents"], ["open-source", "privacy", "terms"])
             self.assertTrue(report["image_processing"])
             self.assertEqual(report["setup"]["style"], "Modern")

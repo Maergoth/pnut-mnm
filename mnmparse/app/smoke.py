@@ -234,13 +234,16 @@ def _exercise(report: dict[str, Any]) -> None:
             window.page("live")._pane.set_snapshot(snapshot)
             overlay.set_snapshot(snapshot)
             overlay._flush_snapshot()
-            for table in (window.page("live")._pane.table, overlay._table):
+            expected_overlay_label = "SmokeOwner + Pet"
+            for table, display_label in ((window.page("live")._pane.table, expected_label),
+                                         (overlay._table, expected_overlay_label)):
                 model = table._model
                 names = [model.data(model.index(index, model.column_index("name")), Qt.ItemDataRole.DisplayRole)
                          for index in range(model.rowCount())]
-                if names.count(expected_label) != 1 or "SmokePet" in names:
+                if names.count(display_label) != 1 or "SmokePet" in names:
                     raise RuntimeError("The packaged meter did not display one combined owner row")
-            report["pet_rollup"] = {"label": expected_label, "damage": owner.damage}
+            report["pet_rollup"] = {"label": expected_label, "overlay_label": expected_overlay_label,
+                                    "damage": owner.damage}
 
             report["stage"] = "exercise fresh Casual views and export"
             from mnmparse.export import format_from_config, format_snapshot

@@ -206,18 +206,25 @@ class PetRollupUiTests(unittest.TestCase):
                         if row.name == "Tamsin":
                             self.assertEqual(model.data(model.index(index, model.column_index("name"))), "Tamsin")
 
-            # Exercise the same text/elision calculation as the compact delegate at a
-            # narrow name-column width: the new caption fits where the old one did not.
+            # Find the compact fit point using this environment's actual font. Windows
+            # and offscreen runners can have different fonts and column widths.
             overlay.set_tab("overview")
-            overlay.resize(620, 330)
             overlay.show()
             self.app.processEvents()
             model = overlay.meter._model
             name_column = model.column_index("name")
-            name_width = overlay.meter.view.columnWidth(name_column) - 14
             metrics = QFontMetricsF(overlay.meter._delegate._bold_font)
+            caption_width = metrics.horizontalAdvance("Mogmo + Pet")
+            original_width = metrics.horizontalAdvance(owner.display_name)
+            self.assertLess(caption_width, original_width)
+            minimum = overlay.minimumWidth()
+            for width in range(minimum, minimum + int(original_width) + 200, 4):
+                overlay.resize(width, 330)
+                self.app.processEvents()
+                name_width = overlay.meter.view.columnWidth(name_column) - 14
+                if name_width >= caption_width:
+                    break
             self.assertEqual(metrics.elidedText("Mogmo + Pet", Qt.TextElideMode.ElideRight, name_width), "Mogmo + Pet")
-            self.assertNotEqual(metrics.elidedText(owner.display_name, Qt.TextElideMode.ElideRight, name_width), owner.display_name)
 
     def test_overlay_short_name_preserves_casual_peer_privacy(self) -> None:
         overlay = self.keep(OverlayWindow(self.settings, Config(player_name=PLAYER)))

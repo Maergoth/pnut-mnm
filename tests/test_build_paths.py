@@ -128,7 +128,9 @@ class BuildOutputPathTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
             self.assertEqual(result.returncode, 0, result.stderr)
             values = json.loads(result.stdout)
-            self.assertEqual(Path(values["resolved"]), root / "dist/candidates/setup-fix-20261010")
+            # PowerShell expands 8.3 TEMP aliases while tempfile may retain them.
+            self.assertEqual(Path(values["resolved"]).resolve(),
+                             (root / "dist/candidates/setup-fix-20261010").resolve())
             self.assertEqual(values["rejected"], ["..", "linked/new"])
 
 
