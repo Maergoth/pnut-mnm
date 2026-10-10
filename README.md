@@ -442,7 +442,8 @@ that, PNUT remembers whether you left it open or closed. Click **Map** in the to
 show or hide it. The selected zone and map, window size and position, fullscreen state,
 zoom and pan are restored when you return.
 The map uses the overlay's rounded frame, colors, opacity and font scale. Hover over its top
-edge to reveal the single header with zone/map selectors and a fullscreen icon. The header
+edge to reveal the single header with zone/map selectors and a fullscreen icon. Click the
+arrow at the top left of the header to open the displayed zone's wiki page. The header
 hides when you move away. Turn off **Lock overlay** to show the header's dotted drag handle;
 drag that handle to move the window, or drag its edges to resize. Locking fixes the window's
 position and size while zone selection, panning and zoom remain available. F11 fills the screen, and Escape

@@ -5,8 +5,8 @@ import logging
 import threading
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
@@ -15,9 +15,29 @@ from PySide6.QtWidgets import (
 from mnmparse.app import theme
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
-from mnmparse.maps import MapImage, MapRepository, ZONES, zone_title
+from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title
 
 log = logging.getLogger(__name__)
+
+
+def _wiki_icon() -> QIcon:
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(theme.qcolor(theme.MUTED), 3, Qt.PenStyle.SolidLine,
+                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    frame = QPainterPath()
+    frame.moveTo(17, 10)
+    for x, y in ((8, 10), (8, 32), (30, 32), (30, 23)):
+        frame.lineTo(x, y)
+    painter.drawPath(frame)
+    painter.drawLine(18, 22, 32, 8)
+    painter.drawLine(22, 8, 32, 8)
+    painter.drawLine(32, 8, 32, 18)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
 
 
 class _MapHeader(QWidget):
@@ -212,6 +232,13 @@ class MapOverlay(QWidget):
         top = QHBoxLayout(self.header)
         top.setContentsMargins(6, 6, 6, 6)
         top.setSpacing(6)
+        self.wiki_link = QToolButton()
+        self.wiki_link.setIcon(_wiki_icon())
+        self.wiki_link.setIconSize(QSize(20, 20))
+        self.wiki_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.wiki_link.clicked.connect(self._open_zone_wiki)
+        self._update_wiki_link()
+        top.addWidget(self.wiki_link)
         self.drag_handle = _DragHandle(self.header)
         top.addWidget(self.drag_handle)
         self.zone = _MapCombo()
@@ -253,7 +280,8 @@ class MapOverlay(QWidget):
         self._header_hide.setInterval(300)
         self._header_hide.timeout.connect(self._hide_header)
         for widget in (self, self.view.viewport(), self.header, self.zone,
-                       self.zone.lineEdit(), self.variants, self.fullscreen, self.drag_handle):
+                       self.zone.lineEdit(), self.variants, self.fullscreen, self.drag_handle,
+                       self.wiki_link):
             widget.setMouseTracking(True)
             widget.installEventFilter(self)
         self.header.hide()
@@ -321,6 +349,7 @@ class MapOverlay(QWidget):
             QGraphicsView {{ border: none; }}
         """)
         size = max(30, round(px * 2.3))
+        self.wiki_link.setFixedSize(size, size)
         self.drag_handle.setFixedSize(max(24, round(px * 1.85)), size)
         self.fullscreen.setFixedSize(size, size)
         self._position_chrome()
@@ -340,6 +369,7 @@ class MapOverlay(QWidget):
         if title != self._current_zone:
             self._restore_view = None
         self._current_zone = title
+        self._update_wiki_link()
         self.settings.setValue("map/zone", title)
         self.zone.setCurrentText(title)
         self.setWindowTitle(window_title("map"))
@@ -445,6 +475,17 @@ class MapOverlay(QWidget):
         self._editing_zone = False
         self._header_hide.start()
 
+    def _update_wiki_link(self) -> None:
+        self.wiki_link.setEnabled(bool(self._current_zone))
+        name = (f"Open {self._current_zone} on the wiki" if self._current_zone
+                else "Select a zone to open its wiki page")
+        self.wiki_link.setAccessibleName(name)
+        self.wiki_link.setToolTip(name)
+
+    def _open_zone_wiki(self) -> None:
+        if self._current_zone:
+            QDesktopServices.openUrl(QUrl(wiki_url(self._current_zone)))
+
     def _update_fullscreen_icon(self) -> None:
         fullscreen = self.isFullScreen()
         # Four corner marks, reversed for the return-to-window action.
@@ -545,6 +586,8 @@ class MapOverlay(QWidget):
                     watched.setCursor(Qt.CursorShape.SizeBDiagCursor)
                 elif watched is self.drag_handle or (watched is self.header and not self._locked and not self.isFullScreen()):
                     watched.setCursor(Qt.CursorShape.SizeAllCursor)
+                elif watched is self.wiki_link:
+                    watched.setCursor(Qt.CursorShape.PointingHandCursor)
                 else:
                     watched.unsetCursor()
             if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
