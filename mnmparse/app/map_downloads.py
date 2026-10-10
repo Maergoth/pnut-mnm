@@ -3,51 +3,115 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
+from queue import Empty, Queue
+from typing import TypeVar
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from mnmparse.maps import MapRepository, ZONES
+from mnmparse.maps import MapImage, MapRepository, ZONES
 
 log = logging.getLogger(__name__)
+MAX_MAP_WORKERS = 4
+_Item = TypeVar("_Item")
+_Result = TypeVar("_Result")
+
+
+def _parallel_map(items: Sequence[_Item], cancelled: threading.Event,
+                  operation: Callable[[_Item], _Result]) -> list[_Result | Exception | None]:
+    """Bound requests without making stalled requests hold application exit open."""
+    pending: Queue[tuple[int, _Item]] = Queue()
+    for index, item in enumerate(items):
+        pending.put((index, item))
+    results: list[_Result | Exception | None] = [None] * len(items)
+
+    def run() -> None:
+        while not cancelled.is_set():
+            try:
+                index, item = pending.get_nowait()
+            except Empty:
+                return
+            if cancelled.is_set():
+                return
+            try:
+                results[index] = operation(item)
+            except Exception as exc:
+                results[index] = exc
+
+    workers = [threading.Thread(target=run, name="map-request", daemon=True)
+               for _ in range(min(MAX_MAP_WORKERS, len(items)))]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        while worker.is_alive():
+            worker.join(timeout=0.1)
+            if cancelled.is_set():
+                return results
+    return results
 
 
 def _download_maps(repository: MapRepository, zones: Iterable[str],
                    cancelled: threading.Event, progress: Callable[[str], None]) -> str:
-    """Refresh every map variant, preserving old cache files when requests fail."""
+    """Check every variant, downloading changed images and retaining offline maps."""
     zones = tuple(zones)
-    downloaded = page_failures = image_failures = 0
-    image_results: dict[str, bool] = {}
-    for index, zone in enumerate(zones, 1):
-        if cancelled.is_set():
-            return "Map download cancelled."
-        progress(f"Downloading maps: {zone} ({index}/{len(zones)})…")
-        try:
-            entries = repository.maps(zone, refresh=True, strict=True, persist=False)
-        except Exception as exc:
-            log.info("Map update for %s failed: %s", zone, exc)
+    downloaded = unchanged = page_failures = image_failures = 0
+
+    def load_zone(item: tuple[int, str]) -> list[MapImage]:
+        index, zone = item
+        progress(f"Checking maps: {zone} ({index}/{len(zones)})…")
+        return repository.maps(zone, refresh=True, strict=True, persist=False)
+
+    page_results = _parallel_map(tuple(enumerate(zones, 1)), cancelled, load_zone)
+    if cancelled.is_set():
+        return "Map download cancelled."
+    staged: list[tuple[str, list[MapImage]]] = []
+    unique_images: dict[str, MapImage] = {}
+    for zone, entries in zip(zones, page_results):
+        if isinstance(entries, Exception):
+            log.info("Map update for %s failed: %s", zone, entries)
             page_failures += 1
             continue
-        zone_complete = True
+        if entries is None:
+            continue
+        staged.append((zone, entries))
         for entry in entries:
-            if cancelled.is_set():
-                return "Map download cancelled."
-            if entry.url in image_results:
-                zone_complete = zone_complete and image_results[entry.url]
-                continue
-            try:
-                repository.image(entry, refresh=True, strict=True)
-            except Exception as exc:
-                log.info("Map image update for %s failed: %s", entry.title, exc)
-                image_failures += 1
-                image_results[entry.url] = False
-                zone_complete = False
-            else:
+            unique_images.setdefault(entry.url, entry)
+    if cancelled.is_set():
+        return "Map download cancelled."
+    images = tuple(unique_images.values())
+    hashes: dict[str, str] = {}
+    if images:
+        try:
+            hashes = repository.image_hashes(images)
+        except Exception as exc:
+            log.info("Could not check map image versions; refreshing images: %s", exc)
+    if cancelled.is_set():
+        return "Map download cancelled."
+
+    def update_image(item: tuple[int, MapImage]) -> bool:
+        index, entry = item
+        progress(f"Updating maps: {entry.title} ({index}/{len(images)})…")
+        return repository.update_image(entry, sha1=hashes.get(entry.url))
+
+    updates = _parallel_map(tuple(enumerate(images, 1)), cancelled, update_image)
+    if cancelled.is_set():
+        return "Map download cancelled."
+    image_results: dict[str, bool] = {}
+    for entry, updated in zip(images, updates):
+        if isinstance(updated, Exception):
+            log.info("Map image update for %s failed: %s", entry.title, updated)
+            image_failures += 1
+            image_results[entry.url] = False
+        else:
+            image_results[entry.url] = True
+            if updated:
                 downloaded += 1
-                image_results[entry.url] = True
+            else:
+                unchanged += 1
+    for zone, entries in staged:
         if cancelled.is_set():
             return "Map download cancelled."
-        if zone_complete:
+        if all(image_results.get(entry.url, False) for entry in entries):
             try:
                 repository.save_maps(zone, entries, strict=True)
             except Exception as exc:
@@ -56,6 +120,8 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
     if cancelled.is_set():
         return "Map download cancelled."
     result = f"Downloaded {downloaded} {'map' if downloaded == 1 else 'maps'}."
+    if unchanged:
+        result += f" {unchanged} {'map' if unchanged == 1 else 'maps'} unchanged."
     failures = []
     if page_failures:
         failures.append(f"{page_failures} {'zone' if page_failures == 1 else 'zones'}")

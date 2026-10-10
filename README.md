@@ -481,7 +481,10 @@ map or floor when the wiki has several. Directional Night Harbor names use the s
 Maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
 Maps download when opened and are cached in `map_cache/` for offline use. At the top of
 **Settings**, **Download latest maps** updates every known zone's maps in the background;
-check **On startup** to do this automatically at launch (unchecked by default). The adjacent **wiki** link opens
+check **On startup** to do this automatically at launch (unchecked by default). Updates compare
+the wiki's current file hashes with the cached images and download only missing or changed
+maps. A few requests run at once to speed up checks and downloads. If the wiki cannot provide
+file hashes, the app downloads the images to check for changes. The adjacent **wiki** link opens
 the map source. Zones without a map show a clear message. An unavailable map never leaves the previous zone's image on
 screen. Only public zone pages and images are requested; player names and combat logs are
 never sent to the wiki.

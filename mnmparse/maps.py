@@ -6,6 +6,7 @@ player names never leave the app. Network work is run off the GUI thread.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from collections.abc import Iterable
 import hashlib
 from html.parser import HTMLParser
 import json
@@ -20,7 +21,9 @@ from urllib.request import Request, urlopen
 log = logging.getLogger(__name__)
 WIKI = "https://monstersandmemories.miraheze.org"
 USER_AGENT = "MnMZoneMaps/1.0 (community wiki map viewer)"
-MAX_DOWNLOAD = 24 * 1024 * 1024
+# The Ancient Crypt original is about 40 MB. Keep full-resolution maps bounded
+# without rejecting this legitimate map on every startup.
+MAX_DOWNLOAD = 64 * 1024 * 1024
 # Zone titles from Category:Zones. Editable selection also accepts newly added zones.
 ZONES = (
     "Ail'Vorith", "Ancient Crypt", "Blacktide Bay", "Blind Midden", "Caves of Irem",
@@ -130,9 +133,14 @@ def _download(url: str) -> bytes:
     with urlopen(request, timeout=15) as response:
         if not _allowed_url(response.geturl()):
             raise ValueError("Unexpected map redirect")
+        length = response.headers.get("Content-Length")
+        if length is not None and int(length) > MAX_DOWNLOAD:
+            raise ValueError("Map exceeds the 64 MB download limit")
         data = response.read(MAX_DOWNLOAD + 1)
+        if length is not None and len(data) != int(length):
+            raise ValueError("Map download was incomplete")
     if len(data) > MAX_DOWNLOAD:
-        raise ValueError("Map exceeds the 24 MB download limit")
+        raise ValueError("Map exceeds the 64 MB download limit")
     return data
 
 
@@ -215,14 +223,77 @@ class MapRepository:
                 return cached
             raise
 
-    def image(self, entry: MapImage, *, refresh: bool = False, strict: bool = False) -> bytes:
+    def image_hashes(self, entries: Iterable[MapImage]) -> dict[str, str]:
+        """Check current file hashes in small API batches, without image transfers.
+
+        Compare actual cached content, so caches from older versions need no
+        migration. A page revision cannot detect a replacement at the same image
+        URL; imageinfo reports the uploaded file's own hash instead.
+        """
+        titles = {}
+        for entry in entries:
+            if _allowed_url(entry.url):
+                filename = unquote(urlsplit(entry.url).path.rsplit("/", 1)[-1])
+                if filename:
+                    titles["File:" + filename.replace("_", " ")] = entry.url
+        hashes = {}
+        names = list(titles)
+        for start in range(0, len(names), 50):
+            url = WIKI + "/w/api.php?" + urlencode({
+                "action": "query", "prop": "imageinfo", "iiprop": "sha1|url",
+                "titles": "|".join(names[start:start + 50]), "format": "json",
+            })
+            payload = json.loads(_download(url))
+            if "error" in payload:
+                raise ValueError(payload["error"].get("info", "Could not check map versions"))
+            for page in payload["query"]["pages"].values():
+                info = page.get("imageinfo", [])
+                if not info:
+                    continue
+                remote = info[0]
+                digest = remote.get("sha1", "")
+                image_url = remote.get("url", "")
+                # Require a matching original URL: a similarly named file from
+                # another repository must never validate this cached image.
+                if (isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)
+                        and isinstance(image_url, str) and _allowed_url(image_url)):
+                    for name in names[start:start + 50]:
+                        local_url = titles[name]
+                        if unquote(image_url) == unquote(local_url):
+                            hashes[local_url] = digest.lower()
+        return hashes
+
+    def _cached_image(self, entry: MapImage) -> bytes | None:
         path = self._path(entry.url, ".image")
-        cached = None
         try:
             if path.stat().st_size <= MAX_DOWNLOAD:
-                cached = path.read_bytes() or None
+                return path.read_bytes() or None
         except OSError:
             pass
+        return None
+
+    def update_image(self, entry: MapImage, *, sha1: str | None = None) -> bool:
+        """Reuse a matching image or download and atomically cache its replacement.
+
+        Return whether content changed. If version metadata is unavailable, a
+        full request still detects updates; failures preserve the offline cache.
+        """
+        cached = self._cached_image(entry)
+        if sha1 is not None and cached is not None and hashlib.sha1(cached).hexdigest() == sha1:
+            return False
+        data = _download(entry.url)
+        if not data:
+            raise ValueError("Map image download was empty")
+        if sha1 is not None and hashlib.sha1(data).hexdigest() != sha1:
+            raise ValueError("Map image does not match the wiki's current version. Try again later.")
+        if data == cached:
+            return False
+        self._save(self._path(entry.url, ".image"), data, strict=True)
+        return True
+
+    def image(self, entry: MapImage, *, refresh: bool = False, strict: bool = False) -> bytes:
+        path = self._path(entry.url, ".image")
+        cached = self._cached_image(entry)
         if cached is not None and not refresh:
             return cached
         try:

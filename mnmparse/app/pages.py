@@ -2151,6 +2151,7 @@ class SettingsPage(QWidget):
         self.map_download_button = QPushButton("Download latest maps")
         self.map_download_button.setObjectName("Chip")
         self.map_download_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.map_download_button.setToolTip("Check the wiki and download only new or changed map images.")
         self.map_download_button.clicked.connect(self.map_download_requested.emit)
         row.addWidget(self.map_download_button)
         self.map_download_source = QLabel(
@@ -2159,6 +2160,7 @@ class SettingsPage(QWidget):
         self.map_download_source.setOpenExternalLinks(True)
         row.addWidget(self.map_download_source)
         self.map_download_on_startup = QCheckBox("On startup")
+        self.map_download_on_startup.setToolTip("Check for map updates on startup; unchanged images use the disk cache.")
         self.map_download_on_startup.setChecked(
             self._settings.value("map/download_on_startup", False, type=bool)
         )
