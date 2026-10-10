@@ -380,7 +380,7 @@ class _MeterModel(QAbstractTableModel):
         self._metric = "damage"
         self._columns: list[_Column] = _columns_for("damage")
         self._rows: list[Any] = []
-        #: Optional ``row -> html`` for the Name column (the overlay's zone-wide summary).
+        #: Optional ``row -> html`` for the Name column (the overlay's active-tab breakdown).
         self.name_tooltip: Callable[[Any], str | None] | None = None
         self._values: list[float] = []
         self._shares: list[float] = []
@@ -560,6 +560,18 @@ def _cell_tooltip(row: Any, key: str) -> str:
                   "Right-click to count them (a party member's pet, say).</i>")
     elif getattr(row, "is_enemy", False) and not getattr(row, "is_npc", False):
         title += "<br><i>Enemy (fought your group)</i>"
+    if key == "overview":
+        lines = [
+            ["Damage", f"{int(g('damage')):,}", f"{float(g('dps')):,.1f} DPS"],
+            ["Healing", f"{int(g('heals')):,}", f"{float(g('hps')):,.1f} HPS"],
+            ["Utility", f"{int(g('utility')):,}",
+             f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro"],
+            ["Taken", f"{int(g('taken')):,}",
+             f"{float(g('dtps')):,.1f} DTPS, {int(g('prevented')):,} prevented"],
+            ["Deaths", f"{int(g('deaths'))}", ""],
+        ]
+        table = _tip_table(["", "Total", ""], lines)
+        return f"<div style=\"{_TIP_STYLE}\">{title}<br>{table}</div>"
     if key in ("damage", "dps", "hit_pct", "max", "share"):
         skills = list(g("skills", []) or [])
         lines = [

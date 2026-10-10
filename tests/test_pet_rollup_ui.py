@@ -152,7 +152,7 @@ class PetRollupUiTests(unittest.TestCase):
         self.assertEqual(owner["attributed_pets"], ["Kulepu", "Ralu"])
         self.assertEqual(owner["damage"], 65)
 
-    def test_overlay_zone_hover_counts_pet_only_fights_for_owner(self) -> None:
+    def test_overlay_name_hover_uses_selected_fight_and_combined_pet_sources(self) -> None:
         overlay = self.keep(OverlayWindow(self.settings, Config(player_name=PLAYER)))
         overlay.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         first = replace(attributed_fight(pet_only=True), key="one", closed=True, zone="Night Harbor", zone_since=90)
@@ -160,12 +160,21 @@ class PetRollupUiTests(unittest.TestCase):
         overlay.set_history([first, second])
         overlay.set_snapshot(second)
         overlay._flush_snapshot()
-        row = next(row for row in second.rows if row.name == PLAYER)
-        tooltip = overlay._name_tooltip(row)
-        self.assertIn("in 2 fights", tooltip)
-        self.assertIn("80", tooltip)
-        self.assertIn("Maergoth + Maergoth&#x27;s Pet", tooltip)
-        overlay.copy_current()
+        overlay.set_tab("damage")
+        for selected, amount, has_owner_damage in [(second, 50, True), (first, 30, False),
+                                                   (overlay.zone_summary(second), 80, True)]:
+            with self.subTest(encounter=selected.key):
+                overlay.show_encounter(selected)
+                model = overlay.meter._model
+                row = next(i for i, actor in enumerate(model._rows) if actor.name == PLAYER)
+                tooltip = model.data(model.index(row, model.column_index("name")), Qt.ItemDataRole.ToolTipRole)
+                self.assertIn(f"Damage {amount}", tooltip)
+                if amount != 80:
+                    self.assertNotIn("Damage 80", tooltip, "other encounters cannot enter the hover breakdown")
+                self.assertIn("Maergoth + Maergoth&#x27;s Pet", tooltip)
+                self.assertIn("Kulepu: slash", tooltip)
+                self.assertEqual("crush" in tooltip, has_owner_damage)
+                self.assertNotIn("in 2 fights", tooltip)
 
 
 if __name__ == "__main__":

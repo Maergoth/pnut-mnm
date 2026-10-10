@@ -259,9 +259,10 @@ is on. Everything persists between runs.
 
 **Overlay hover cards.** Hover a number for its breakdown (DPS: damage by ability; HPS: healing
 by spell; Utility: crowd control, debuffs and aggro; Taken: damage by attacker). Hover a name for
-that person's summary over every fight of the current zone visit (damage, healing, taken,
-utility, melee, top abilities). Tooltips used to never appear: the overlay never becomes the
-active window, so it sets `WA_AlwaysShowToolTips`.
+that row's breakdown for the selected tab and encounter: abilities on Damage, spells on
+Healing, attackers on Taken, and a summary on Overview. Selecting a zone's "all fights" group
+shows the same breakdown over that group's encounters. Name hovers also follow the tab in
+your own sources view. Tooltips appear even while the game has focus.
 
 **Earlier fights on the overlay.** Click the encounter name (it has a small arrow) for a list of
 earlier fights grouped by zone, plus "all fights" per zone. Picking one shows it as if it had
