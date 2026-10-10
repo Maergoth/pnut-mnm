@@ -148,6 +148,7 @@ class Match:
     line: str
     text: str
     groups: dict[str, str] = field(default_factory=dict)
+    privacy_mode: str = ""  #: presentation-only matches have already withheld source captures
 
     def values(self, **extra: str) -> dict[str, str]:
         vals = {"line": self.line, "match": self.text, "name": self.trigger.name}
@@ -453,6 +454,8 @@ class ActiveTimer:
     low_color: str = ""
     low_s: float = 5.0
     keep_until_dismissed: bool = False
+    private_label: str = ""  #: approved static personal title for protected presentation
+    private_player: str = ""  #: character identity required by that approval; empty for manual titles
 
     def remaining(self, now: float) -> float:
         return max(0.0, self.start + self.duration - now)

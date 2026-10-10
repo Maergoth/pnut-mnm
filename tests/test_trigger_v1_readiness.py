@@ -199,13 +199,13 @@ class TriggerPresentationTests(unittest.TestCase):
         self.assertEqual(self.runner.audio._speech_queue, [])
         self.assertEqual(self.runner.board.timers[0].label, "Timer")
 
-    def test_casual_file_action_is_silent_and_manual_timer_name_is_hidden(self):
+    def test_casual_file_action_is_silent_and_manual_timer_keeps_its_authored_name(self):
         self.trigger.action = "file"
         self.trigger.file = "Peer99.wav"
         self.runner.observe("Peer99 hits for 17", now=10)
         self.assertEqual(self.runner.audio.run.call_args.args[0], "none")
         self.assertEqual(self.runner.audio.run.call_args.kwargs["file"], "")
-        self.assertEqual(self.runner.start_one_time_timer("Peer99", 10).label, "Timer")
+        self.assertEqual(self.runner.start_one_time_timer("Peer99", 10).label, "Peer99")
 
     def test_muting_survives_save_and_unmute_restores_master(self):
         self.store.volume = 37

@@ -61,6 +61,44 @@ class RoleAverageTests(unittest.TestCase):
         ]), CFG)
         self.assertEqual(group(safe).damage, 400)  # Median would be 100.
 
+    def test_actual_own_damage_share_and_group_remainder_are_preserved(self):
+        raw = encounter([actor("Owner", 250), actor("Two", 150), actor("Three", 600)])
+        raw.rows[0].share = .25
+        safe = project_encounter(raw, CFG)
+        self.assertEqual(safe.rows[0].share, .25)
+        self.assertEqual(group(safe).share, .75)
+        self.assertEqual(group(safe).damage, 330)
+        self.assertEqual(safe.total_damage, 250)  # No new exact group total is published.
+
+    def test_real_damage_share_includes_own_pet_and_excludes_outsiders(self):
+        from mnmparse.app.models import build_snapshot
+        from mnmparse.parser import parse_line
+        from mnmparse.stats import Stats
+
+        stats = Stats(player_name="Owner")
+        for name in ("Tamsin", "Vesper"):
+            stats.roster.set_manual(name, True)
+        stats.roster.set_pet_owner("Sprout", "Owner")
+        for index, line in enumerate((
+            "You crush a rat for 200 points of damage.",
+            "Sprout bites a rat for 50 points of damage.",
+            "Tamsin crushes a rat for 150 points of damage.",
+            "Vesper crushes a rat for 600 points of damage.",
+            "Outsider crushes a rat for 99999 points of damage.",
+        )):
+            stats.add(parse_line(line, 100 + index, "Owner"))
+        safe = project_encounter(build_snapshot(stats, stats.current(), "Owner"), CFG)
+        self.assertEqual(safe.rows[0].damage, 250)
+        self.assertEqual(safe.rows[0].share, .25)
+        self.assertEqual(group(safe).share, .75)
+
+    def test_group_remainder_stays_visible_when_role_average_is_withheld(self):
+        raw = encounter([actor("Owner", 250), actor("Healer", 150, 400), actor("Three", 600)])
+        raw.rows[0].share = .25
+        safe = project_encounter(raw, CFG)
+        self.assertFalse(metric_available(group(safe), "damage"))
+        self.assertEqual((safe.rows[0].share, group(safe).share), (.25, .75))
+
     def test_positive_ties_count_in_both_roles(self):
         safe = project_encounter(encounter([
             actor("Owner", 100, 100), actor("Two", 200, 200), actor("Three", 300, 300),

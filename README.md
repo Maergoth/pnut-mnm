@@ -212,6 +212,8 @@ Damage/DPS averages need at least three active damage contributors whose damage 
 their healing. Healing/HPS averages need at least three active healing contributors whose
 healing is at least their damage. Positive ties count in both; inactive members count in
 neither. A role with too few contributors shows **—** and has no exported average.
+Your damage percentage is your actual share of the group total; the group row shows the
+remaining share, independently of its displayed damage average.
 
 To request **Elitist Scumbag Mode**, drag the red handle most of the way right. A click or
 short drag keeps Carebear Mode. The confirmation requires the promise that you
@@ -469,8 +471,10 @@ Use `III` in both fields for a separate rank III trigger, or remove ` II` for th
 The named capture `(?P<damage>\d+)` supplies `{damage}`; matching only the spell name does
 not capture a number. **Start a timer** can stay off when you only want the fading popup.
 
-Carebear Mode keeps matching internally, but displays generic timer labels, protects speech,
-silences custom sound files and hides custom definitions, captured suggestions and sharing.
+Carebear Mode keeps personal rebuff titles, manually started timer names and bundled starter
+titles visible. Other timer labels stay generic, and captured chat and regex values stay hidden.
+It protects speech, silences custom sound files and hides custom definitions, captured
+suggestions and sharing.
 The editing and sharing walkthrough below applies to confirmed Elitist mode. Expensive
 regular expressions are stopped and disabled rather than freezing capture or the editor.
 

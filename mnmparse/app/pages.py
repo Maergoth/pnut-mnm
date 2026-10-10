@@ -807,6 +807,8 @@ class _DetailsPanel(QFrame):
             "utility": f"{_num(utility)}  ·  {_utility_types_text(row)}" if utility else "0",
         }
         tips = {
+            "share": ("Remaining group damage, excluding you." if getattr(row, "average_counts", {})
+                      else "Share of your group's actual damage."),
             "hits": f"{_num(row.hits)} hits and {_num(row.misses)} misses out of {_num(row.swings)} swings",
             "max_hit": "Largest single hit, and the average damaging hit",
             "heals": f"{_num(row.heals)} healing done ({row.hps:,.1f} per second)",

@@ -213,7 +213,7 @@ def _exercise(report: dict[str, Any]) -> None:
             report["pages"] = sorted(window._pages)
 
             report["stage"] = "exercise merged pet attribution"
-            from mnmparse.app.models import build_snapshot
+            from mnmparse.app.models import build_snapshot, owner_row
             from mnmparse.parser import parse_line
             from mnmparse.stats import Stats
 
@@ -288,12 +288,40 @@ def _exercise(report: dict[str, Any]) -> None:
             if (average.damage != 43 or average.heals != 200
                     or average.average_counts != {"damage": 3, "heals": 3}):
                 raise RuntimeError("The protected role averages included the opposite role")
+            if (protected.rows[0].share != owner_row(snapshot, "SmokeOwner").share
+                    or abs(protected.rows[0].share + average.share - 1.0) > 1e-9):
+                raise RuntimeError("The protected damage percentages were derived from averages")
             report["role_averages"] = {"damage": average.damage, "heals": average.heals,
                                        "contributors": average.average_counts}
             exported = format_snapshot(protected, format_from_config(casual_cfg))
             if any(peer in exported for peer in (*damage_peers, *healers)) or "SmokeOwner" not in exported:
                 raise RuntimeError("Fresh Carebear export did not enforce the shared projection")
             report["casual_projection"] = True
+
+            report["stage"] = "exercise personal rebuff title"
+            from mnmparse.app.triggers_runtime import TriggerRunner
+            from mnmparse.triggers import Trigger
+
+            rebuff_store = TriggerStore(Path(temporary) / "rebuff-triggers.json")
+            rebuff_store.triggers = [Trigger(name="Rebuff", pattern="Your Armor wears off",
+                                            action="none", timer=True)]
+            rebuff_runner = TriggerRunner(rebuff_store)
+            try:
+                rebuff_runner.set_config(casual_cfg)
+                matched = rebuff_runner.observe("Your Armor wears off.", now=100)
+                if (len(matched) != 1 or rebuff_runner.board.timers[0].label != "Rebuff"
+                        or matched[0].trigger.name != "Rebuff" or matched[0].groups
+                        or "Your Armor" in matched[0].line):
+                    raise RuntimeError("Carebear Mode hid a personal rebuff title or exposed captured chat")
+                rebuff_runner.set_casual_mode(False)
+                rebuff_runner.set_config(casual_cfg)
+                if rebuff_runner.board.timers[0].label != "Rebuff":
+                    raise RuntimeError("Mode changes lost the personal rebuff title")
+                report["personal_rebuff_title"] = True
+            finally:
+                rebuff_runner._clock.stop()
+                rebuff_runner.audio.stop()
+                rebuff_runner.deleteLater()
 
             report["stage"] = "load bundled presets"
             store = TriggerStore()

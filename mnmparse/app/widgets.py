@@ -572,6 +572,10 @@ def _cell_tooltip(row: Any, key: str) -> str:
                   "Right-click to count them (a party member's pet, say).</i>")
     elif getattr(row, "is_enemy", False) and not getattr(row, "is_npc", False):
         title += "<br><i>Enemy (fought your group)</i>"
+    if key == "share":
+        caption = ("Remaining group damage, excluding you" if getattr(row, "average_counts", {})
+                   else "Share of group damage")
+        return f"<div style=\"{_TIP_STYLE}\">{title}<br>{caption}: {fmt_pct(g('share'))}</div>"
     role_metric = "damage" if key in ("damage", "dps", "hit_pct", "max", "share") else key
     if not metric_available(row, role_metric):
         return f"<div style=\"{_TIP_STYLE}\">{title}<br>{AVERAGE_UNAVAILABLE_TEXT}</div>"

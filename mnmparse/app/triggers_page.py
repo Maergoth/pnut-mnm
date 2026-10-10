@@ -43,7 +43,8 @@ from PySide6.QtWidgets import (
 from mnmparse.app.pages import _label, _page_qss, _panel
 from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, token
 from mnmparse.config import Config, project_path
-from mnmparse.privacy import casual_enabled, safe_trigger_definition, safe_trigger_label
+from mnmparse.privacy import (casual_enabled, safe_static_trigger_title,
+                             safe_trigger_definition, safe_trigger_label)
 from mnmparse.trigger_exchange import export_visible_trigger_file, external_sound_files, merge_triggers, read_trigger_file
 from mnmparse.triggers import BUILTIN_SOUNDS, MODES, MAX_LINE_CHARS, MAX_PATTERN_CHARS, Trigger, fill_placeholders, match_trigger, regex_problem
 
@@ -632,7 +633,7 @@ class TriggersPage(QWidget):
             self.list.clear()
             select = None
             for trig in self._store_triggers():
-                title = safe_trigger_label(trig.name, self._cfg)
+                title = safe_static_trigger_title(trig, self._cfg)
                 pattern = "" if casual_enabled(self._cfg) else trig.pattern
                 if needle and needle not in title.lower() and needle not in pattern.lower():
                     continue
@@ -661,7 +662,7 @@ class TriggersPage(QWidget):
             m, s = divmod(int(trig.timer_seconds), 60)
             bits.append(f"timer {m}:{s:02d}")
         if casual_enabled(self._cfg):
-            item.setText(f"{safe_trigger_label(trig.name, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
+            item.setText(f"{safe_static_trigger_title(trig, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
             item.setToolTip("Carebear Mode hides custom definitions and captured chat.")
         else:
             item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
@@ -1114,7 +1115,7 @@ class TriggersPage(QWidget):
             if which == "sound":
                 audio.play_builtin(t.sound, t.volume)
             elif which != "file":
-                audio.speak(safe_trigger_label(t.name, self._cfg), t.volume)
+                audio.speak(safe_static_trigger_title(t, self._cfg), t.volume)
             return
         if which == "sound":
             audio.play_builtin(self.sound.currentText(), t.volume)
@@ -1185,7 +1186,8 @@ class TriggersPage(QWidget):
 
     def _on_fired(self, m: Any) -> None:
         stamp = time.strftime("%H:%M:%S")
-        title = safe_trigger_label(m.trigger.name, self._cfg)
+        title = (m.trigger.name if getattr(m, "privacy_mode", "") == "casual"
+                 else safe_trigger_label(m.trigger.name, self._cfg))
         line = "Captured chat hidden in Carebear Mode" if casual_enabled(self._cfg) else m.line
         item = QListWidgetItem(f"{stamp}  {title}  ·  {line}")
         item.setToolTip(line)

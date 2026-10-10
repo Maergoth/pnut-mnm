@@ -9,6 +9,7 @@ Run `Development/dist/publish/v1.0.1/PNUT M&M/PNUT M&M.exe`, or extract its port
 5. Import a log, cancel another import, browse previous sessions and page through older fights. In full mode, edit a selected archived fight's group/pet attribution and reload that session to verify it was saved. Resume a prior session only while stopped.
 6. Save/apply a named capture profile, back up preferences, then restore the backup. Restoring should return to Carebear Mode. Try the Help demo and confirm it stays clearly labeled and cannot export fictional data.
 7. Try mute, reduced animations, keyboard navigation, your DPI/monitor setup and a longer gameplay session. Record inaccurate totals, unexpected names, capture stalls or growing memory use with the steps that caused them.
+8. Check a personal rebuff timer in Carebear Mode: its static title should remain visible, including after switching modes. Captured names and values should stay hidden. In Damage, 25% of the actual group total should show 25% for you and 75% on the group row, independently of the displayed average.
 
 Carebear Mode protects combat views, OCR results and new PNUT exports. The local setup calibration image is a temporary exception. Existing raw local logs, prior external copies and full-mode exports remain available on disk. The assessment lists the remaining gameplay, clean Windows, accessibility and endurance checks before publication.
 
