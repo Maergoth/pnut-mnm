@@ -135,6 +135,34 @@ def _fights() -> list:
     return snaps + [live]
 
 
+def _hover_fights() -> tuple:
+    """A closed and live fight with distinct damage, healing and incoming sources."""
+    stats = Stats(encounter_timeout_s=5.0, player_name=PLAYER)
+    stats.add(parse_line("You have entered Night Harbor (West).", 0.0, PLAYER))
+    for ts, text in [
+        (10.0, "Your Crusader Strike hits a skeletal cleric for 11 points of damage."),
+        (11.0, "Your Lesser Healing Touch heals you for 17 Health."),
+        (12.0, "a skeletal cleric's Shock hits YOU for 13 points of Holy Damage!"),
+    ]:
+        stats.add(parse_line(text, ts, PLAYER))
+    stats.expire(30.0)
+    closed = build_snapshot(stats, stats.history[-1], PLAYER)
+    for ts, text in [
+        (50.0, "Your Holy Strike hits a skeletal knight for 19 points of damage."),
+        (51.0, "Your Healing Touch heals you for 29 Health."),
+        (52.0, "a skeletal knight's Fireball hits YOU for 23 points of Fire Damage!"),
+    ]:
+        stats.add(parse_line(text, ts, PLAYER))
+    live = build_snapshot(stats, stats.current(), PLAYER, now=54.0)
+    live = replace(live, rows=[
+        replace(row, utility=9, cc=2, cc_skills={"Shield Bash": 2},
+                debuffs={"armor": 3}, debuff_skills={"Expose Weakness": 3},
+                aggro=4, prevented=7, deaths=1) if row.is_you else row
+        for row in live.rows
+    ])
+    return closed, live
+
+
 @unittest.skipUnless(sys.platform == "win32", "Qt overlay is exercised on the Windows build")
 class OverlayExtrasTests(unittest.TestCase):
     @classmethod
@@ -163,6 +191,18 @@ class OverlayExtrasTests(unittest.TestCase):
     def flush(self) -> None:
         self.overlay._flush_snapshot()
 
+    def name_hover(self, name: str) -> str:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QTextDocument
+
+        model = self.overlay.meter._model
+        row = next(i for i, actor in enumerate(model._rows) if actor.name == name)
+        tip = model.data(model.index(row, model.column_index("name")), Qt.ItemDataRole.ToolTipRole)
+        self.assertIsInstance(tip, str)
+        document = QTextDocument()
+        document.setHtml(tip)
+        return " ".join(document.toPlainText().split())
+
     def test_tooltips_show_on_the_inactive_overlay(self) -> None:
         from PySide6.QtCore import Qt
 
@@ -186,13 +226,86 @@ class OverlayExtrasTests(unittest.TestCase):
         dps_tip = model.data(model.index(row, dps_col), Qt.ItemDataRole.ToolTipRole)
         self.assertIn("DPS", dps_tip)
         self.assertIn("crush", dps_tip)
-        name_tip = model.data(model.index(row, model.column_index("name")), Qt.ItemDataRole.ToolTipRole)
-        self.assertIn("Night Harbor (West)", name_tip)
-        self.assertIn("in 2 of 4 fights", name_tip, "the cleric fight and the open one: you were not in the first two")
+        name_tip = self.name_hover(PLAYER)
+        self.assertIn("Damage 3", name_tip)
+        self.assertNotIn("Damage 10", name_tip, "name hover must use the displayed live fight")
+        self.assertNotIn("in 2 of 4 fights", name_tip)
         summary = self.overlay.zone_summary()
         self.assertEqual(summary.encounters, 4)
         gozif = next(r for r in summary.rows if r.name == "Gozif")
         self.assertEqual(gozif.damage, 60, "Gozif across the whole zone visit")
+
+    def test_name_hover_follows_the_tab_and_selected_encounter(self) -> None:
+        closed, live = _hover_fights()
+        self.overlay.set_history([closed])
+        self.overlay.set_snapshot(live)
+        self.flush()
+        summary = self.overlay.zone_summary()
+        selections = [
+            ("live", None, (19, 29, 23),
+             ("Holy Strike", "Healing Touch", "a skeletal knight: Fireball"),
+             ("Crusader Strike", "Lesser Healing Touch", "a skeletal cleric: Shock")),
+            ("earlier", closed, (11, 17, 13),
+             ("Crusader Strike", "Lesser Healing Touch", "a skeletal cleric: Shock"),
+             ("Holy Strike", "a skeletal knight: Fireball")),
+            ("zonewide", summary, (30, 46, 36),
+             ("Holy Strike", "Healing Touch", "a skeletal knight: Fireball",
+              "Crusader Strike", "Lesser Healing Touch", "a skeletal cleric: Shock"), ()),
+        ]
+        for label, selected, totals, sources, absent in selections:
+            self.overlay.show_encounter(selected)
+            for tab, prefix, amount, source_names in [
+                ("damage", "Damage", totals[0], [s for s in sources if "Strike" in s]),
+                ("healing", "Healing done", totals[1], [s for s in sources if "Touch" in s]),
+                ("taken", "Damage taken", totals[2], [s for s in sources if ": " in s]),
+            ]:
+                with self.subTest(encounter=label, tab=tab):
+                    self.overlay.set_tab(tab)
+                    tip = self.name_hover(PLAYER)
+                    self.assertIn(f"{prefix} {amount}", tip)
+                    for source in source_names:
+                        self.assertIn(source, tip)
+                    for source in absent:
+                        self.assertNotIn(source, tip)
+                    for source in sources:
+                        if source not in source_names:
+                            self.assertNotIn(source, tip, "the name hover must match the active tab")
+            with self.subTest(encounter=label, tab="overview"):
+                self.overlay.set_tab("overview")
+                tip = self.name_hover(PLAYER)
+                for metric, amount in zip(("Damage", "Healing", "Taken"), totals):
+                    self.assertIn(f"{metric} {amount}", tip)
+                self.assertIn("HPS", tip)
+                self.assertIn("DTPS", tip)
+                self.assertIn("Utility 0" if label == "earlier" else "Utility 9", tip)
+                self.assertIn("Deaths 0" if label == "earlier" else "Deaths 1", tip)
+                if label != "earlier":
+                    self.assertIn("2 CC, 3 debuffs, 4 aggro", tip)
+                    self.assertIn("7 prevented", tip)
+
+    def test_self_name_hover_describes_the_ability_for_the_active_tab(self) -> None:
+        closed, live = _hover_fights()
+        self.overlay.set_history([closed])
+        self.overlay.set_snapshot(live)
+        self.flush()
+        self.overlay.set_view_mode("self")
+        for tab, name, amount_text, rate in [
+            ("damage", "Holy Strike", "Damage 19", "DPS"),
+            ("healing", "Healing Touch", "Healing done 29", "HPS"),
+            ("taken", "a skeletal knight: Fireball", "Damage taken 23", "per second"),
+        ]:
+            with self.subTest(tab=tab):
+                self.overlay.set_tab(tab)
+                tip = self.name_hover(name)
+                self.assertIn(name, tip)
+                self.assertIn(amount_text, tip)
+                self.assertIn(rate, tip)
+                self.assertNotIn("Crusader Strike", tip)
+                self.assertNotIn("Lesser Healing Touch", tip)
+        self.overlay.set_tab("overview")
+        utility_tip = self.name_hover("Shield Bash")
+        self.assertIn("Utility 2", utility_tip)
+        self.assertIn("2 CC", utility_tip)
 
     def test_browsing_an_earlier_fight_until_new_combat(self) -> None:
         *closed, live = _fights()

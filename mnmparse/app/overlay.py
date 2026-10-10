@@ -70,9 +70,9 @@ from mnmparse.app.widgets import (
     MeterTable,
     SliderRow,
     WarningLatch,
+    _cell_tooltip,
     capture_warning,
     fmt_int,
-    zone_tooltip,
     fmt_mmss,
     fmt_rate,
     make_font,
@@ -1132,21 +1132,10 @@ class OverlayWindow(QWidget):
             snaps[ref.key] = ref
         return list(snaps.values())
 
-    def _name_tooltip(self, row: Any) -> str | None:
-        if self._view_mode == "self":
-            return None  # the rows are your own abilities, not people
-        summary = self.zone_summary()
-        if summary is None:
-            return None
-        person = owner_row(summary, str(getattr(row, "name", "")))
-        if person is None:
-            return None
-        name = person.name
-        fought = [s for s in self._visit_snaps(self._snap) if owner_row(s, name) is not None] if self._snap else []
-        return zone_tooltip(
-            person, zone=summary.zone, fights=len(fought) or 1, of=summary.encounters,
-            combat_s=sum(float(s.duration) for s in fought) or summary.duration,
-        )
+    def _name_tooltip(self, row: Any) -> str:
+        """Break down the displayed row for the selected tab and encounter."""
+        key = "heals" if self._tab == "healing" else self._tab
+        return _cell_tooltip(row, key)
 
     def menu_qss(self) -> str:
         return (
