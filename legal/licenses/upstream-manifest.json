@@ -1,0 +1,47 @@
+{
+  "FFmpeg-7.1.5.txt": {
+    "notice_sha256": "1e92c0ce1fa77080c6a76c79293dbadad4fed8da8b46cfb60d52614ee99fefbd",
+    "source": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n7.1.5",
+    "source_sha256": "e3963a50831c985933e1a625ed566ec4c7adb5c012c34fa9f84438e1d61bdacc"
+  },
+  "OpenSSL-3.0.18.txt": {
+    "notice_sha256": "bcb21c47be179d129738b9bc869134e4607161976c82823ef776909f3991b2f9",
+    "source": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.0.18",
+    "source_sha256": "8037cdcb2a932d2db4f2fad79eda7e379c10bf17c5b3c8cb4ce9d084ad269a67"
+  },
+  "PyWinRT-3.2.1.txt": {
+    "notice_sha256": "6e898069e8b3c6d8d23dc70ac7067cc2b7c9db14c36df873026758db82c0891d",
+    "source": "https://raw.githubusercontent.com/pywinrt/pywinrt/v3.2.1/LICENSE",
+    "source_sha256": "6e898069e8b3c6d8d23dc70ac7067cc2b7c9db14c36df873026758db82c0891d"
+  },
+  "Qt-6.11.2-pyside-setup.txt": {
+    "notice_sha256": "5b358f716cae4f160b8c0ee274778d858a5dd3e46438ce0f7f39fc284a795c8b",
+    "source": "https://codeload.github.com/pyside/pyside-setup/tar.gz/refs/tags/v6.11.2",
+    "source_sha256": "7a2a395498b738b715e70a4c1c4f60f9f422c4b40065d31fd66a9bc99c6200d1"
+  },
+  "Qt-6.11.2-qtbase.txt": {
+    "notice_sha256": "e8c2a9132991dfbbff458835b4af5e44f8e1a453cd9a1b8a7ee5311f627bfe0f",
+    "source": "https://codeload.github.com/qt/qtbase/tar.gz/refs/tags/v6.11.2",
+    "source_sha256": "06cd7aa6b3ab19cb5a1664a2891ef0df960f78c97fa31b80b1d6d7ee70688414"
+  },
+  "Qt-6.11.2-qtmultimedia.txt": {
+    "notice_sha256": "27f2a7f4f0f02131c4b468a4c729d2b1ec13ac6fae635dbdd64bfeba8c4a0a5a",
+    "source": "https://codeload.github.com/qt/qtmultimedia/tar.gz/refs/tags/v6.11.2",
+    "source_sha256": "86dab3128cbe1b00cf2343a303d0df675c442ab0df2bf44afa35508673146cc0"
+  },
+  "Qt-6.11.2-qtspeech.txt": {
+    "notice_sha256": "f13cf424337e26a291d12c231366551cf41c7ccf28779b5f743245d7ed811bfe",
+    "source": "https://codeload.github.com/qt/qtspeech/tar.gz/refs/tags/v6.11.2",
+    "source_sha256": "d08af6ae6d722cc3b155184be09687f4e70a081a82ac3df0af1d362adbe77580"
+  },
+  "Qt-6.11.2-qtsvg.txt": {
+    "notice_sha256": "afc399ef3a7f1beccc0e53198496ddab7a323d85b480043e4fdf83d45c203a4d",
+    "source": "https://codeload.github.com/qt/qtsvg/tar.gz/refs/tags/v6.11.2",
+    "source_sha256": "52a89c4efcb0cbe57bf85c71f5db50ef59184eeadf9972351202a9261a9bfa6e"
+  },
+  "windows-capture-2.0.1-Rust-dependencies.txt": {
+    "notice_sha256": "ffafd7f570cee0eea4b201ed494c9871b858f3ffb5bf51751e5defe285f8fb00",
+    "source": "https://files.pythonhosted.org/packages/85/00/326a51bc2b27bc53e2a3e6d0c8f320af7e65f8315fb0d1d149699ca45995/windows_capture-2.0.1.tar.gz",
+    "source_sha256": "2c2b394f4587b067cf520456f7f64c11b00380851b077a4d061fe5356a9a7645"
+  }
+}

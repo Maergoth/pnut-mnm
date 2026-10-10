@@ -1,0 +1,7 @@
+Qt's unmodified shared FFmpeg libraries
+Copyright (c) 2000-2023 the FFmpeg developers (as recorded by Qt's upstream attribution)
+Version: 7.1.5
+License reported by binary: LGPL version 2.1 or later
+Configuration: --prefix=/c/FFmpeg-n7.1.5/build/msvc/installed --disable-programs --disable-doc --disable-debug --enable-network --disable-lzma --enable-pic --disable-vulkan --disable-v4l2-m2m --disable-decoder=truemotion1 --disable-avdevice --disable-avfilter --enable-zlib --extra-cflags='-IC:/zlib-1.3.1/build/amd64' --extra-ldflags='-LIBPATH:C:/zlib-1.3.1/build/amd64' --toolchain=msvc --enable-shared --disable-static
+Corresponding upstream source: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
+Qt build scripts: https://code.qt.io/cgit/qt/qtmultimedia.git/tree/src/3rdparty/ffmpeg?h=v6.11.2

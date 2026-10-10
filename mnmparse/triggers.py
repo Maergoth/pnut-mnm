@@ -342,6 +342,7 @@ class ActiveTimer:
     warn_color: str = ""
     low_color: str = ""
     low_s: float = 5.0
+    keep_until_dismissed: bool = False
 
     def remaining(self, now: float) -> float:
         return max(0.0, self.start + self.duration - now)
@@ -352,15 +353,16 @@ class ActiveTimer:
 
 
 class TimerBoard:
-    """The running timers.  ``tick`` reports warnings and ends; ended timers linger briefly."""
+    """Countdowns with warnings and expiry; retained timers wait for dismissal."""
 
     LINGER_S = 3.0  #: an ended timer stays on screen this long (flashing 0:00)
-    MAX_TIMERS = 24
+    MAX_TIMERS = 24  #: ordinary timer limit; retained countdowns do not consume this capacity
 
     def __init__(self) -> None:
         self.timers: list[ActiveTimer] = []
 
-    def start(self, trigger: Trigger, label: str, now: float | None = None) -> ActiveTimer | None:
+    def start(self, trigger: Trigger, label: str, now: float | None = None, *,
+              keep_until_dismissed: bool = False) -> ActiveTimer | None:
         """Start a fresh timer; ``None`` means retain an unexpired timer and ignore the match."""
         now = time.time() if now is None else now
         running = [t for t in self.timers if t.trigger_id == trigger.id and not t.ended and t.remaining(now) > 0]
@@ -372,11 +374,12 @@ class TimerBoard:
         timer = ActiveTimer(uuid.uuid4().hex[:8], trigger.id, label, now, float(trigger.timer_seconds),
                             float(trigger.timer_warn_s), color=trigger.timer_color,
                             warn_color=trigger.timer_warn_color, low_color=trigger.timer_low_color,
-                            low_s=trigger.timer_low_s)
+                            low_s=trigger.timer_low_s, keep_until_dismissed=keep_until_dismissed)
         self.timers.append(timer)
-        if len(self.timers) > self.MAX_TIMERS:
-            self.timers.sort(key=lambda t: t.remaining(now))
-            del self.timers[self.MAX_TIMERS:]
+        ordinary = [t for t in self.timers if not t.keep_until_dismissed]
+        if len(ordinary) > self.MAX_TIMERS:
+            kept = {t.id for t in sorted(ordinary, key=lambda t: t.remaining(now))[:self.MAX_TIMERS]}
+            self.timers = [t for t in self.timers if t.keep_until_dismissed or t.id in kept]
         return timer
 
     def cancel(self, timer_id: str) -> None:
@@ -386,7 +389,7 @@ class TimerBoard:
         self.timers.clear()
 
     def tick(self, now: float | None = None) -> tuple[list[ActiveTimer], list[ActiveTimer]]:
-        """``(warned now, ended now)``; drops timers that ended more than ``LINGER_S`` ago."""
+        """``(warned now, ended now)``; ordinary ended timers disappear after ``LINGER_S``."""
         now = time.time() if now is None else now
         warned, ended = [], []
         for t in self.timers:
@@ -397,7 +400,8 @@ class TimerBoard:
             if not t.ended and left <= 0:
                 t.ended = True
                 ended.append(t)
-        self.timers = [t for t in self.timers if not (t.ended and now - (t.start + t.duration) > self.LINGER_S)]
+        self.timers = [t for t in self.timers if t.keep_until_dismissed
+                       or not (t.ended and now - (t.start + t.duration) > self.LINGER_S)]
         return warned, ended
 
     def ordered(self, now: float | None = None) -> list[ActiveTimer]:

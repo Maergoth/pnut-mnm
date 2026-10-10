@@ -90,6 +90,28 @@ class TimerBoardTests(unittest.TestCase):
         board.tick(10.0 + TimerBoard.LINGER_S + 0.5)
         self.assertEqual(board.timers, [])
 
+    def test_retained_timer_ends_once_and_remains_until_cancelled(self) -> None:
+        board = TimerBoard()
+        trigger = Trigger(timer=True, timer_seconds=10, timer_warn_s=3)
+        timer = board.start(trigger, "Respawn", now=0, keep_until_dismissed=True)
+        self.assertEqual(board.tick(7), ([timer], []))
+        self.assertEqual(board.tick(10), ([], [timer]))
+        self.assertEqual(board.tick(1000000), ([], []))
+        self.assertEqual(board.timers, [timer])
+        board.cancel(timer.id)
+        self.assertEqual(board.timers, [])
+
+    def test_ordinary_timer_capacity_preserves_all_retained_rows(self) -> None:
+        board = TimerBoard()
+        retained = [board.start(Trigger(timer_seconds=1000), f"Respawn {index}", 0,
+                                keep_until_dismissed=True) for index in range(board.MAX_TIMERS + 1)]
+        for index in range(board.MAX_TIMERS):
+            board.start(Trigger(timer_seconds=100 + index), f"Ordinary {index}", 0)
+        newest = board.start(Trigger(timer_seconds=1), "Automatic", 0)
+        self.assertIn(newest, board.timers)
+        self.assertTrue(all(timer in board.timers for timer in retained))
+        self.assertEqual(sum(not timer.keep_until_dismissed for timer in board.timers), board.MAX_TIMERS)
+
 
 class SwingBarTests(unittest.TestCase):
     def test_bar_waits_at_full_until_the_swing_is_read(self) -> None:

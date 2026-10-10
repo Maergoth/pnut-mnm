@@ -92,6 +92,7 @@ if ICON.is_file():
 example = ROOT / "config.example.json"
 if example.is_file():
     datas.append((str(example), "."))
+datas.append((str(ROOT / "legal"), "legal"))
 
 excludes = [
     # Optional OCR fallback (big): set "ocr_engine": "rapid" only in a source checkout.
@@ -201,6 +202,9 @@ _DROP = (
 
 def _keep(entry: tuple) -> bool:
     name = entry[0].replace("\\", "/").lower()
+    # PNUT uses OpenCV image transforms and PNG encoding, never its video backend.
+    if name.startswith("cv2/opencv_videoio_ffmpeg"):
+        return False
     if "pyside6" not in name and "/qt6/" not in name and not name.startswith("qt6"):
         return True
     return not any(tag in name for tag in _DROP)

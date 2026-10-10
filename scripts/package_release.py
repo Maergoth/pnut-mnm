@@ -1,6 +1,6 @@
 """Create a Windows release ZIP and prove that its extracted EXE initializes.
 
-Run after build_exe.ps1. Only the executable, its support folder, and public launch
+Run after build_exe.ps1. The executable, support folder, legal notices, and public launch
 instructions are shipped; settings, logs, and install-origin metadata stay local.
 """
 from __future__ import annotations

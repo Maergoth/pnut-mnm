@@ -1209,7 +1209,7 @@ class OverlayWindow(QWidget):
             dialog.deleteLater()
         if not 0 < seconds <= MAX_RESPAWN_SECONDS:
             return
-        runner.start_one_time_timer(f"{name} respawn", seconds)
+        runner.start_one_time_timer(f"{name} respawn", seconds, keep_until_dismissed=True)
         if not key:
             return  # An unknown zone must not share a default with unrelated encounters.
         durations = self._respawn_durations()
