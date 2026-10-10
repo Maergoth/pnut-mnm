@@ -355,7 +355,7 @@ class TriggerRunner(QObject):
         shown = Trigger(id=t.id, name=label, pattern="", action=t.action, sound=t.sound,
                         timer=t.timer, timer_seconds=t.timer_seconds, timer_label=label,
                         timer_mode=t.timer_mode, volume=t.volume)
-        return Match(shown, "Trigger matched · captured chat hidden in Casual Mode", "", {})
+        return Match(shown, "Trigger matched · captured chat hidden in Carebear Mode", "", {})
 
     def _apply_audio_settings(self) -> None:
         s = self.store

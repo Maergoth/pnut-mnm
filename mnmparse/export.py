@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from mnmparse.privacy import metric_available
+
 __all__ = [
     "ACTOR_FIELDS",
     "DEFAULT_PRESET",
@@ -160,7 +162,8 @@ def _people(snap: Any, fmt: ExportFormat) -> list[Any]:
         if not getattr(r, "is_npc", False) and not getattr(r, "is_enemy", False) and getattr(r, "in_group", True)
     ]
     shown = {sort} | {m for key, m in _OTHER_FIELDS.items() if re.search(rf"\{{{key}[}}:]", fmt.actor or "")}
-    rows = [r for r in rows if any(_measure(r, m) > 0 for m in shown)]
+    rows = [r for r in rows if any(_measure(r, m) > 0 or not metric_available(
+        r, "heals" if m == "healing" else m) for m in shown)]
     rows.sort(key=lambda r: (-_measure(r, sort), str(getattr(r, "name", ""))))
     return rows[: max(1, int(fmt.max_actors or 1))]
 
@@ -195,7 +198,7 @@ def format_snapshot(snap: Any, fmt: ExportFormat) -> str:
     people = _people(snap, fmt)
     entries = []
     for rank, row in enumerate(people, 1):
-        entries.append(render(fmt.actor, {
+        values = {
             "rank": rank,
             "name": actor_export_name(row),
             "dps": _rate(getattr(row, "damage", 0), active, getattr(row, "dps", 0.0)),
@@ -208,7 +211,11 @@ def format_snapshot(snap: Any, fmt: ExportFormat) -> str:
             "taken": int(getattr(row, "taken", 0) or 0),
             "utility": int(getattr(row, "utility", 0) or 0),
             "deaths": int(getattr(row, "deaths", 0) or 0),
-        }))
+        }
+        for key in ("damage", "dps", "heal", "hps"):
+            if not metric_available(row, key):
+                values[key] = "—"
+        entries.append(render(fmt.actor, values))
     killed = [str(k) for k in getattr(snap, "killed", []) or []]
     start = float(getattr(snap, "start", 0.0) or 0.0)
     line = render(fmt.line, {

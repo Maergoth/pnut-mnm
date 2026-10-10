@@ -23,8 +23,8 @@ class ModeButtonTests(unittest.TestCase):
         self.assertEqual(badge.text(), "🔥 Elitist Scumbag Mode 🔥")
         self.assertEqual(badge.accessibleName(), "Elitist Scumbag Mode")
         badge.set_config(dataclasses.replace(cfg, casual_mode=True, casual_mode_confirmed=False))
-        self.assertEqual(badge.text(), "🌼 Casual Mode 🌼")
-        self.assertEqual(badge.accessibleName(), "Casual Mode")
+        self.assertEqual(badge.text(), "🌼 Carebear Mode 🌼")
+        self.assertEqual(badge.accessibleName(), "Carebear Mode")
 
     def test_animation_only_runs_for_visible_full_mode_without_reduced_motion(self):
         cfg = Config(casual_mode=False, casual_mode_confirmed=True)

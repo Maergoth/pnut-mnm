@@ -24,7 +24,7 @@ from mnmparse.privacy import casual_enabled, safe_config_data
 
 
 def _technical(value: Any) -> Any:
-    """Unknown strings (including OCR evidence) have no place in a Casual report."""
+    """Unknown strings (including OCR evidence) have no place in a Carebear report."""
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, dict):
@@ -41,8 +41,8 @@ def _restrict_report(report: dict[str, Any]) -> dict[str, Any]:
         allowed[key] = safe_config_data(report.get(key, {}))
     for key in ("active_ocr", "pending_ocr_settings", "runtime", "tracker", "preview_metadata"):
         allowed[key] = _technical(report.get(key, {}))
-    allowed["privacy_mode"] = "casual"
-    allowed["capture"] = {"attempted": False, "available": False, "reason": "Screenshots and raw OCR evidence are hidden in Casual Mode."}
+    allowed["privacy_mode"] = "carebear"
+    allowed["capture"] = {"attempted": False, "available": False, "reason": "Screenshots and raw OCR evidence are hidden in Carebear Mode."}
     allowed["export_scope"] = "Technical counters and settings only. Raw source files remain local."
     allowed["limitations"] = ["This report cannot establish whether invisible chat lines were missed."]
     return allowed
@@ -173,7 +173,7 @@ def write_ocr_diagnosis(
             if png is not None:
                 archive.writestr("combat-crop.png", png)
         # Serialize publication with mode changes. A report prepared while full
-        # mode was active must not be published after Casual has taken effect.
+        # mode was active must not be published after Carebear has taken effect.
         guard = getattr(engine, "_lock", None)
         with guard if guard is not None else nullcontext():
             if casual_enabled(getattr(engine, "config", None)) and not restricted:

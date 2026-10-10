@@ -742,7 +742,7 @@ class CropPicker(QWidget):
             from mnmparse.parser import parse_line
             text = line.text
             if casual_enabled(self._cfg):
-                text = safe_event_text(parse_line(text, time.time(), self._cfg.player_name), self._cfg) or "Text hidden in Casual Mode"
+                text = safe_event_text(parse_line(text, time.time(), self._cfg.player_name), self._cfg) or "Text hidden in Carebear Mode"
             width = min(int(len(line.text) * line.h * 0.55) or line.h, right - (left + line.x))
             boxes.append(OcrBox(left + int(line.x), top + int(line.y), max(width, 4), int(line.h), text))
             self._lines.addItem(text)

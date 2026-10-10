@@ -94,7 +94,7 @@ class ProfileTools(QWidget):
         layout.addWidget(profiles)
         preferences = QGroupBox("Backup and restore preferences", self)
         backup_layout = QVBoxLayout(preferences)
-        scope = QLabel("Casual backup: technical settings and capture profiles with generic names. Logs and screenshots are excluded. Restored preferences always start in Casual Mode; the current log folder is kept.", preferences)
+        scope = QLabel("Carebear backup: technical settings and capture profiles with generic names. Logs and screenshots are excluded. Restored preferences always start in Carebear Mode; the current log folder is kept.", preferences)
         scope.setWordWrap(True)
         backup_layout.addWidget(scope)
         self.full_backup = QCheckBox("Include full preferences, triggers, ownership corrections, learned spellings and PvP reminder names", preferences)
@@ -276,7 +276,7 @@ class ProfileTools(QWidget):
         self.load(cfg)
         self.config_changed.emit(cfg)
         self.restored.emit(cfg)
-        self.status.setText("Restored preferences in Casual Mode. The current log folder was kept.")
+        self.status.setText("Restored preferences in Carebear Mode. The current log folder was kept.")
         return cfg
 
     def _choose_backup(self) -> None:

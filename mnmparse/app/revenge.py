@@ -400,7 +400,7 @@ def _hint(controller: RevengeController) -> str:
     if not controller.enabled:
         return "Revenge is a PvP-only feature, off by default. Enable it in Options."
     if not controller.available:
-        return "Casual Mode hides revenge names and attacker prompts. Change Morality Adjustment in Settings to use this PvP feature."
+        return "Carebear Mode hides revenge names and attacker prompts. Change Morality Adjustment in Settings to use this PvP feature."
     return ""
 
 

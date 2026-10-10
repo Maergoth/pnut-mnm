@@ -126,7 +126,7 @@ class TriggersPage(QWidget):
         outer.setContentsMargins(20, 18, 20, 18)
         outer.setSpacing(12)
         outer.addWidget(self._build_audio_bar())
-        self.privacy_notice = _label("Casual Mode hides captured chat, custom definitions and sharing. "
+        self.privacy_notice = _label("Carebear Mode hides captured chat, custom definitions and sharing. "
                                      "To edit or share a definition, change Morality Adjustment in Settings.", "Muted")
         self.privacy_notice.setWordWrap(True)
         outer.addWidget(self.privacy_notice)
@@ -662,7 +662,7 @@ class TriggersPage(QWidget):
             bits.append(f"timer {m}:{s:02d}")
         if casual_enabled(self._cfg):
             item.setText(f"{safe_trigger_label(trig.name, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
-            item.setToolTip("Casual Mode hides custom definitions and captured chat.")
+            item.setToolTip("Carebear Mode hides custom definitions and captured chat.")
         else:
             item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
             item.setToolTip(f"{trig.name}\n{MODE_TITLES.get(trig.mode, trig.mode)}: {trig.pattern}")
@@ -801,7 +801,7 @@ class TriggersPage(QWidget):
             self._sharing_feedback("Select a timer to export." if selected else "There are no timers to export.", error=True)
             return
         if any(safe_trigger_definition(trigger, self._cfg) is None for trigger in triggers):
-            self._sharing_feedback("Casual Mode hides custom timer definitions. Change Morality Adjustment in Settings before exporting.", error=True)
+            self._sharing_feedback("Carebear Mode hides custom timer definitions. Change Morality Adjustment in Settings before exporting.", error=True)
             return
         if not self.flush_pending_changes():
             return
@@ -821,7 +821,7 @@ class TriggersPage(QWidget):
             export_visible_trigger_file(destination, triggers, cfg=self._cfg)
         except (OSError, ValueError) as exc:
             log.warning("export failed: %s", exc)
-            self._sharing_feedback("Export unavailable in Casual Mode." if casual_enabled(self._cfg)
+            self._sharing_feedback("Export unavailable in Carebear Mode." if casual_enabled(self._cfg)
                                    else f"Export failed: {exc}", error=True)
             return
         message = f"Exported {len(triggers)} to {destination.name}."
@@ -834,7 +834,7 @@ class TriggersPage(QWidget):
             self._sharing_feedback("Select a timer to share in game chat.", error=True)
             return
         if safe_trigger_definition(self._current, self._cfg) is None:
-            self._sharing_feedback("Casual Mode hides custom timer definitions. Change Morality Adjustment in Settings before sharing.", error=True)
+            self._sharing_feedback("Carebear Mode hides custom timer definitions. Change Morality Adjustment in Settings before sharing.", error=True)
             return
         if not self.flush_pending_changes():
             return
@@ -1069,7 +1069,7 @@ class TriggersPage(QWidget):
         line = self.test_line.text()
         self.test_result.setToolTip("")
         if casual_enabled(self._cfg):
-            self.test_result.setText("Captured chat and regex groups are hidden in Casual Mode.")
+            self.test_result.setText("Captured chat and regex groups are hidden in Carebear Mode.")
             return
         if t is None:
             self.test_result.setText("")
@@ -1186,7 +1186,7 @@ class TriggersPage(QWidget):
     def _on_fired(self, m: Any) -> None:
         stamp = time.strftime("%H:%M:%S")
         title = safe_trigger_label(m.trigger.name, self._cfg)
-        line = "Captured chat hidden in Casual Mode" if casual_enabled(self._cfg) else m.line
+        line = "Captured chat hidden in Carebear Mode" if casual_enabled(self._cfg) else m.line
         item = QListWidgetItem(f"{stamp}  {title}  ·  {line}")
         item.setToolTip(line)
         self.recent.insertItem(0, item)

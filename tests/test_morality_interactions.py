@@ -135,7 +135,7 @@ class MoralityInteractionTests(unittest.TestCase):
         self.assertEqual(switch.position, 0)
         self.assertEqual(self.sirens, [])
         self.assertFalse(self.widget._pending)
-        self.assertEqual(switch.accessibleName(), "Casual Mode")
+        self.assertEqual(switch.accessibleName(), "Carebear Mode")
         self.widget.set_config(Config(casual_mode=False, casual_mode_confirmed=True, reduced_motion=True))
         self.assertEqual(switch.accessibleName(), "Elitist Scumbag Mode")
 

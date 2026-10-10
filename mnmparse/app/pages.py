@@ -91,7 +91,8 @@ from mnmparse.config import (
     save_config,
 )
 from mnmparse.export import actor_export_name
-from mnmparse.privacy import casual_enabled, project_encounter, project_session, safe_event_text
+from mnmparse.privacy import (AVERAGE_UNAVAILABLE_TEXT, casual_enabled, metric_available,
+                             project_encounter, project_session, safe_event_text)
 from mnmparse.app.morality import MoralityPanel
 
 if TYPE_CHECKING:
@@ -394,7 +395,7 @@ def exports_dir(cfg: Config) -> Path:
     """``<log_dir>/exports`` resolved against the project root (created on demand)."""
     path = project_path(cfg.log_dir) / "exports"
     if casual_enabled(cfg):
-        path = path / "casual"
+        path = path / "carebear"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -417,7 +418,8 @@ def export_csv(snap: EncounterSnapshot, path: Path, cfg: Any = None) -> Path:
         writer.writerow(header)
         for row in snap.rows:
             values: list[Any] = [snap.label, actor_export_name(row)]
-            values.extend(getattr(row, name) for name in _CSV_NUMERIC_FIELDS)
+            values.extend(getattr(row, name) if metric_available(row, name) else ""
+                          for name in _CSV_NUMERIC_FIELDS)
             values.extend(int(flag) for flag in (row.is_you, row.is_npc, row.is_pet))
             writer.writerow(values)
     log.info("Exported %d actor rows to %s", len(snap.rows), path)
@@ -430,7 +432,12 @@ def export_json(snap: EncounterSnapshot, path: Path, cfg: Any = None) -> Path:
     Returns:
         The written path.
     """
-    data = dataclasses.asdict(project_encounter(snap, cfg))
+    snap = project_encounter(snap, cfg)
+    data = dataclasses.asdict(snap)
+    for row, encoded in zip(snap.rows, data["rows"]):
+        for key in ("damage", "dps", "heals", "hps"):
+            if not metric_available(row, key):
+                encoded[key] = None
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     log.info("Exported encounter %s to %s", snap.key, path)
     return path
@@ -806,10 +813,13 @@ class _DetailsPanel(QFrame):
             "taken": "Damage taken after mitigation; prevented = blocked plus absorbed",
             "utility": "Crowd control landed + debuffs landed + aggro gained",
         }
+        for key in ("damage", "dps", "heals"):
+            if not metric_available(row, key):
+                values[key] = "—"
+                tips[key] = AVERAGE_UNAVAILABLE_TEXT
         for key, text in values.items():
             self._cells[key].setText(text)
-            if key in tips:
-                self._chip_widgets[key].setToolTip(tips[key])
+            self._chip_widgets[key].setToolTip(tips.get(key, ""))
         if last is None or last.name != row.name or last.skills != row.skills:
             self._fill_skills(row.skills, misses_shown=bool(getattr(row, "misses_shown", True)))
 
@@ -1525,7 +1535,7 @@ class LivePage(QWidget):
         """Adopt a saved configuration (whether other groups' fights are listed)."""
         self._cfg = cfg
         if casual_enabled(cfg):
-            self._open_export.setVisible(getattr(self, "_last_export", Path()).parent.name == "casual")
+            self._open_export.setVisible(getattr(self, "_last_export", Path()).parent.name in {"carebear", "casual"})
         self._show_others = bool(getattr(cfg, "show_other_groups", False)) and not casual_enabled(cfg)
         self._snaps = {key: project_encounter(snap, cfg) for key, snap in self._raw_snaps.items()}
         self._summary_cache.clear()
@@ -2093,7 +2103,7 @@ class FeedPage(QWidget):
         self._lines.clear()
         self.view.clear()
         self._search.clear()
-        self._status.setText("Casual Mode: own actions only." if casual_enabled(cfg) else "No messages yet.")
+        self._status.setText("Carebear Mode: own actions only." if casual_enabled(cfg) else "No messages yet.")
 
     def _update_status(self) -> None:
         if self._lines:
@@ -2641,7 +2651,7 @@ class SettingsPage(QWidget):
         self._row(form, "Minimize to tray on close", self.minimize_to_tray)
         self.revenge_enabled = ToggleSwitch()
         self._row(form, "Revenge List", self.revenge_enabled,
-                  "PvP prompts last 30 seconds. Hidden in Casual Mode.")
+                  "PvP prompts last 30 seconds. Hidden in Carebear Mode.")
         self.revenge_days = QSpinBox()
         self.revenge_days.setRange(0, 3650)
         self.revenge_days.setSpecialValueText("All")
@@ -3178,7 +3188,7 @@ class SettingsPage(QWidget):
                 self._status.setText(f"Mode not changed: could not save preferences ({type(exc).__name__}).")
                 self.morality.set_config(self._cfg)
                 return
-            self._status.setText("Casual Mode is active; preferences could not be saved.")
+            self._status.setText("Carebear Mode is active; preferences could not be saved.")
         self._cfg = cfg
         self.morality.set_config(cfg)
         self.profile_tools.load(cfg)
@@ -3291,7 +3301,7 @@ class AboutPage(QWidget):
 
         def _open(_href: str) -> None:
             if is_dir and casual_enabled(self._cfg):
-                label.setText("Raw logs are hidden in Casual Mode. Open Morality Adjustment to change modes.")
+                label.setText("Raw logs are hidden in Carebear Mode. Open Morality Adjustment to change modes.")
                 return
             target = path
             if is_dir:

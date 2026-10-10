@@ -687,7 +687,7 @@ class Engine(QObject):
             return False
 
     def archived_sessions(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
-        """Raw local metadata; Casual UI must use date, own character and zone labels."""
+        """Raw local metadata; Carebear UI must use date, own character and zone labels."""
         with self._lock:
             self._ensure_archive()
             return self._archive.sessions(limit=limit, offset=offset) if self._archive is not None else []

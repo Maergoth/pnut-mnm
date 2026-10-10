@@ -1,4 +1,4 @@
-"""Actual CLI output/export boundaries default to Casual Mode."""
+"""Actual CLI output/export boundaries default to Carebear Mode."""
 from __future__ import annotations
 
 import contextlib

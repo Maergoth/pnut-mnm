@@ -1,7 +1,7 @@
-"""One allowlisted presentation policy for Casual Mode.
+"""One allowlisted presentation policy for Carebear Mode.
 
 Capture and correction keep their original data. Only this restricted projection may
-reach Casual views, clipboard, files, speech or support exports. Unknown source text
+reach Carebear views, clipboard, files, speech or support exports. Unknown source text
 is withheld rather than attempting to recognize and replace every possible name.
 """
 from __future__ import annotations
@@ -11,11 +11,12 @@ import math
 import re
 from typing import Any
 
-CASUAL_LABEL = "🌼 Casual Mode 🌼"
+CASUAL_LABEL = "🌼 Carebear Mode 🌼"
 ELITIST_LABEL = "Elitist Scumbag Mode"
 PROMISE = ("will not use it to shit on their teammates because video games are not "
            "difficult enough to be an asshole.")
 MIN_AVERAGE_GROUP = 3
+AVERAGE_UNAVAILABLE_TEXT = "At least three active group members are needed for this average."
 
 
 def casual_enabled(cfg: Any = None) -> bool:
@@ -33,6 +34,13 @@ def rounded_average(total: float, count: int) -> float:
     return round(value, 1 - int(math.floor(math.log10(value)))) if value else 0.0
 
 
+def metric_available(row: Any, key: str) -> bool:
+    """A protected role average can be absent without changing numeric model fields."""
+    metric = {"dps": "damage", "hps": "heals", "heal": "heals"}.get(key, key)
+    counts = getattr(row, "average_counts", {}) or {}
+    return metric not in counts or counts[metric] >= MIN_AVERAGE_GROUP
+
+
 def _safe_skill(text: str, peers: set[str]) -> bool:
     folded = str(text).casefold()
     return not any(name and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", folded) for name in peers)
@@ -46,7 +54,12 @@ def project_encounter(snap: Any, cfg: Any = None) -> Any:
     player = str(getattr(cfg, "player_name", "") or "").strip()
     peers = {str(r.name).casefold() for r in snap.rows if not _own(r.name, player)}
     peers.update(str(n).casefold() for n in snap.group_members if not _own(n, player))
-    own = owner_row(snap, player, you_name=player) if player else None
+    # Roster spelling can differ in case from the captured actor's stable name.
+    names = {str(r.name).casefold(): str(r.name) for r in snap.rows}
+    for row in snap.rows:
+        if row.pet_owner:
+            names.setdefault(row.pet_owner.casefold(), row.pet_owner)
+    own = owner_row(snap, names.get(player.casefold(), player), you_name=player) if player else None
     if own is not None:
         peers.difference_update(name.casefold() for name in own.attributed_pets)
     rows = []
@@ -62,17 +75,29 @@ def project_encounter(snap: Any, cfg: Any = None) -> Any:
     members = {str(n).casefold(): str(n) for n in snap.group_members if n}
     count = len(members) if player and player.casefold() in members else 0
     if count >= MIN_AVERAGE_GROUP:
-        people = [owner_row(snap, n) for n in members.values()]
+        people = [owner_row(snap, names.get(n.casefold(), n)) for n in members.values()]
         people = [r for r in people if r is not None and not r.is_enemy and not r.is_npc and not r.is_pet]
+        damage_people = [r for r in people if r.damage > 0 and r.damage >= r.heals]
+        healing_people = [r for r in people if r.heals > 0 and r.heals >= r.damage]
+        damage_count = len(damage_people)
+        healing_count = len(healing_people)
+        # Each role needs its own privacy cohort; idle roster slots cannot make an
+        # individual healer or damage dealer's result safe to disclose.
+        damage = (rounded_average(sum(r.damage for r in damage_people), damage_count)
+                  if damage_count >= MIN_AVERAGE_GROUP else 0.0)
+        heals = (rounded_average(sum(r.heals for r in healing_people), healing_count)
+                 if healing_count >= MIN_AVERAGE_GROUP else 0.0)
         avg = lambda key: rounded_average(sum(float(getattr(r, key, 0)) for r in people), count)
         duration = max(1.0, float(snap.duration))
         rows.append(ActorRow(
-            name=f"Group average ({count})", damage=avg("damage"), dps=avg("damage") / duration,
-            taken=avg("taken"), dtps=avg("taken") / duration, heals=avg("heals"),
-            hps=avg("heals") / duration, healed=avg("healed"), swings=0, hits=0, misses=0,
+            name=f"Group average ({count})", damage=damage, dps=damage / duration,
+            taken=avg("taken"), dtps=avg("taken") / duration, heals=heals,
+            hps=heals / duration, healed=avg("healed"), swings=0, hits=0, misses=0,
             hit_pct=0.0, max_hit=0, avg_hit=0.0, share=0.0, color="#86b998",
             is_you=False, is_npc=False, is_pet=False, misses_shown=False,
             utility=avg("utility"), cc=avg("cc"), deaths=avg("deaths"),
+            average_counts={"damage": damage_count if damage_count >= MIN_AVERAGE_GROUP else 0,
+                            "heals": healing_count if healing_count >= MIN_AVERAGE_GROUP else 0},
         ))
     return dataclasses.replace(
         snap, label="Your encounter", rows=rows, group_members=[player] if player else [],

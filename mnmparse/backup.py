@@ -1,4 +1,4 @@
-"""Validated portable preference backups; restored profiles always start Casual."""
+"""Validated portable preference backups; restored profiles always start Carebear."""
 from __future__ import annotations
 
 import dataclasses
@@ -92,7 +92,7 @@ def backup_profile(destination: Path, config_path: Path, triggers_path: Path,
         for key in ("export_line", "export_actor", "export_separator"):
             config.pop(key, None)
         # Profile labels are arbitrary user text; keep their technical settings
-        # under generic labels in a Casual archive.
+        # under generic labels in a Carebear archive.
         profiles = config.get("capture_profiles", {})
         if isinstance(profiles, dict):
             labels = {name: f"Profile {i + 1}" for i, name in enumerate(profiles)}
@@ -259,7 +259,7 @@ def restore_profile(archive_path: Path, config_path: Path, triggers_path: Path,
         if any(hashlib.sha256(data).hexdigest() != manifest["files"][name] for name, data in files.items()):
             raise BackupError("Backup checksum validation failed.")
         if not manifest["sensitive"] and set(files) != {"config.json"}:
-            raise BackupError("Casual backup contains sensitive preferences.")
+            raise BackupError("Carebear backup contains sensitive preferences.")
         config_data = json.loads(files["config.json"])
         # The interactive restore can keep its active profile's local data root.
         # Imported paths never choose destinations for correction/spelling files.

@@ -2000,7 +2000,7 @@ class App(QApplication):
             page = self.window.page("triggers")
             if page is not None:
                 page.set_runner(self.triggers)
-        self.window.show_message("Preferences restored in Casual Mode. Restart PNUT to apply restored window positions.")
+        self.window.show_message("Preferences restored in Carebear Mode. Restart PNUT to apply restored window positions.")
 
     def toggle_mute(self) -> None:
         if self.triggers is not None:

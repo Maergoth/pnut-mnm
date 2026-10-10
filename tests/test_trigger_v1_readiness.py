@@ -250,7 +250,7 @@ class TriggerPresentationTests(unittest.TestCase):
         with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=AssertionError("Export chooser opened")):
             page._on_export()
         page._on_export_chat()
-        self.assertIn("Casual Mode", page.sharing_status.text())
+        self.assertIn("Carebear Mode", page.sharing_status.text())
         self.assertIsNone(page._chat_export_dialog)
 
     def test_export_rechecks_policy_after_nested_chooser(self):
@@ -264,7 +264,7 @@ class TriggerPresentationTests(unittest.TestCase):
         with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=choose):
             page._on_export()
         self.assertFalse(destination.exists())
-        self.assertIn("Casual Mode", page.sharing_status.text())
+        self.assertIn("Carebear Mode", page.sharing_status.text())
         self.assertNotIn("Peer99", page.sharing_status.text())
 
     def test_presentation_sharing_helpers_fail_closed_without_confirmed_policy(self):
@@ -274,9 +274,9 @@ class TriggerPresentationTests(unittest.TestCase):
         destination = Path(self.tmp.name) / "shared.json"
         for cfg in (None, Config(), Config(casual_mode=False, casual_mode_confirmed=False)):
             with self.subTest(cfg=cfg):
-                with self.assertRaisesRegex(TriggerExchangeError, "Casual Mode"):
+                with self.assertRaisesRegex(TriggerExchangeError, "Carebear Mode"):
                     encode_visible_trigger(trigger, cfg=cfg)
-                with self.assertRaisesRegex(TriggerExchangeError, "Casual Mode"):
+                with self.assertRaisesRegex(TriggerExchangeError, "Carebear Mode"):
                     export_visible_trigger_file(destination, [trigger], cfg=cfg)
                 self.assertFalse(destination.exists())
         full = Config(casual_mode=False, casual_mode_confirmed=True)

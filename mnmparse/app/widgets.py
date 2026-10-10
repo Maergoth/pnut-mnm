@@ -25,6 +25,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from mnmparse.privacy import AVERAGE_UNAVAILABLE_TEXT, metric_available
+
 from PySide6.QtCore import (
     QAbstractTableModel,
     QEasingCurve,
@@ -493,6 +495,8 @@ class _MeterModel(QAbstractTableModel):
                 value = self.name_label(row)
             if role == SORT_ROLE:
                 return value.casefold() if isinstance(value, str) else value
+            if not metric_available(row, col.key):
+                return "—"
             return col.text(value)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(col.align)
@@ -549,6 +553,10 @@ def _tip_table(headers: list[str], rows: list[list[Any]]) -> str:
     return f"<table cellspacing='0'><tr>{head}</tr>{body}</table>"
 
 
+def _metric_text(row: Any, key: str, text: str) -> str:
+    return text if metric_available(row, key) else "—"
+
+
 def _cell_tooltip(row: Any, key: str) -> str:
     """Hover breakdown for a meter cell: skills under damage columns, heal detail under
     heal columns, crowd-control detail under the CC column, the general summary elsewhere."""
@@ -564,10 +572,15 @@ def _cell_tooltip(row: Any, key: str) -> str:
                   "Right-click to count them (a party member's pet, say).</i>")
     elif getattr(row, "is_enemy", False) and not getattr(row, "is_npc", False):
         title += "<br><i>Enemy (fought your group)</i>"
+    role_metric = "damage" if key in ("damage", "dps", "hit_pct", "max", "share") else key
+    if not metric_available(row, role_metric):
+        return f"<div style=\"{_TIP_STYLE}\">{title}<br>{AVERAGE_UNAVAILABLE_TEXT}</div>"
     if key == "overview":
         lines = [
-            ["Damage", f"{int(g('damage')):,}", f"{float(g('dps')):,.1f} DPS"],
-            ["Healing", f"{int(g('heals')):,}", f"{float(g('hps')):,.1f} HPS"],
+            ["Damage", _metric_text(row, "damage", f"{int(g('damage')):,}"),
+             _metric_text(row, "dps", f"{float(g('dps')):,.1f} DPS")],
+            ["Healing", _metric_text(row, "heals", f"{int(g('heals')):,}"),
+             _metric_text(row, "hps", f"{float(g('hps')):,.1f} HPS")],
             ["Utility", f"{int(g('utility')):,}",
              f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro"],
             ["Taken", f"{int(g('taken')):,}",
@@ -575,7 +588,9 @@ def _cell_tooltip(row: Any, key: str) -> str:
             ["Deaths", f"{int(g('deaths'))}", ""],
         ]
         table = _tip_table(["", "Total", ""], lines)
-        return f"<div style=\"{_TIP_STYLE}\">{title}<br>{table}</div>"
+        note = (f"<br>{AVERAGE_UNAVAILABLE_TEXT}" if any(
+            not metric_available(row, metric) for metric in ("damage", "heals")) else "")
+        return f"<div style=\"{_TIP_STYLE}\">{title}<br>{table}{note}</div>"
     if key in ("damage", "dps", "hit_pct", "max", "share"):
         skills = list(g("skills", []) or [])
         lines = [
@@ -661,8 +676,10 @@ def zone_tooltip(row: Any, *, zone: str, fights: int, combat_s: float, of: int |
         f"in {fights}{total} fight{'s' if (of or fights) != 1 else ''}, {fmt_mmss(combat_s)} in combat"
     )
     lines = [
-        ["Damage", f"{int(g('damage')):,}", f"{float(g('dps')):,.1f} DPS"],
-        ["Healing", f"{int(g('heals')):,}", f"{float(g('hps')):,.1f} HPS"],
+        ["Damage", _metric_text(row, "damage", f"{int(g('damage')):,}"),
+         _metric_text(row, "dps", f"{float(g('dps')):,.1f} DPS")],
+        ["Healing", _metric_text(row, "heals", f"{int(g('heals')):,}"),
+         _metric_text(row, "hps", f"{float(g('hps')):,.1f} HPS")],
         ["Taken", f"{int(g('taken')):,}", f"{int(g('prevented')):,} prevented"],
         ["Utility", f"{int(g('utility'))}", f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro"],
         ["Melee", f"{int(g('hits'))}/{int(g('swings'))}",
@@ -673,6 +690,8 @@ def zone_tooltip(row: Any, *, zone: str, fights: int, combat_s: float, of: int |
     parts = [_tip_table(["", "Total", ""], lines)]
     if skills:
         parts.append(_tip_table(["Top abilities", "Hits", "Total", "Max"], skills))
+    if any(not metric_available(row, metric) for metric in ("damage", "heals")):
+        parts.append(AVERAGE_UNAVAILABLE_TEXT)
     return f"<div style=\"{_TIP_STYLE}\">{head}<br>{'<br>'.join(parts)}</div>"
 
 
@@ -680,9 +699,13 @@ def _row_tooltip(row: Any) -> str:
     g = lambda k, d=0: getattr(row, k, d)  # noqa: E731
     return (
         f"{actor_display_name(row)}\n"
-        f"Damage {fmt_int(g('damage'))}  ({fmt_rate(g('dps'))} dps)\n"
-        f"Taken {fmt_int(g('taken'))}  Heals {fmt_int(g('heals'))}  Healed {fmt_int(g('healed'))}\n"
+        f"Damage {_metric_text(row, 'damage', fmt_int(g('damage')))}  "
+        f"({_metric_text(row, 'dps', fmt_rate(g('dps')))} dps)\n"
+        f"Taken {fmt_int(g('taken'))}  Heals {_metric_text(row, 'heals', fmt_int(g('heals')))}  "
+        f"Healed {fmt_int(g('healed'))}\n"
         f"Swings {g('swings')}  Hits {g('hits')}  Misses {g('misses')}  Max {fmt_int(g('max_hit'))}"
+        + (f"\n{AVERAGE_UNAVAILABLE_TEXT}" if any(
+            not metric_available(row, metric) for metric in ("damage", "heals")) else "")
     )
 
 

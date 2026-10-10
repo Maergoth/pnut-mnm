@@ -266,5 +266,5 @@ def export_visible_trigger_file(path: str | Path, triggers: Iterable[Trigger], *
     """Publish definitions only under an explicitly confirmed full-mode policy."""
     items = list(triggers)
     if any(safe_trigger_definition(trigger, cfg) is None for trigger in items):
-        raise TriggerExchangeError("Casual Mode hides timer definitions; exporting is unavailable.")
+        raise TriggerExchangeError("Carebear Mode hides timer definitions; exporting is unavailable.")
     export_trigger_file(path, items)

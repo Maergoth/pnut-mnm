@@ -209,6 +209,7 @@ class ActorRow:
     killed_by: dict[str, int] = field(default_factory=dict)  #: who killed them, and how often
     pet_owner: str = ""  #: named owner on a raw pet row before it is folded into its owner
     attributed_pets: list[str] = field(default_factory=list)  #: pets included in an owner summary
+    average_counts: dict[str, int] = field(default_factory=dict)  #: safe role cohorts; 0 withholds that metric
 
     @property
     def display_name(self) -> str:
@@ -1321,6 +1322,14 @@ def merge_snapshots(
         damage = sum(r.damage for r in parts)
         taken = sum(r.taken for r in parts)
         heals = sum(r.heals for r in parts)
+        average_counts = {
+            metric: min(r.average_counts.get(metric, 0) for r in parts)
+            for metric in {metric for r in parts for metric in r.average_counts}
+        }
+        if "damage" in average_counts and not average_counts["damage"]:
+            damage = 0
+        if "heals" in average_counts and not average_counts["heals"]:
+            heals = 0
         hits = sum(r.hits for r in parts)
         misses = sum(r.misses for r in parts)
         swings = sum(r.swings for r in parts)
@@ -1379,6 +1388,7 @@ def merge_snapshots(
                 killed_by=_sum_counts(getattr(r, "killed_by", {}) or {} for r in parts),
                 pet_owner=next((r.pet_owner for r in reversed(parts) if r.pet_owner), ""),
                 attributed_pets=sorted({pet for r in parts for pet in r.attributed_pets}, key=str.casefold),
+                average_counts=average_counts,
             )
         )
     rows.sort(key=lambda r: (-r.damage, r.name))
@@ -1466,13 +1476,13 @@ def snapshot_rows_for_tab(snap: EncounterSnapshot, tab: str) -> list[ActorRow]:
     if tab == "overview":
         active = [
             r for r in snap.rows
-            if r.damage > 0 or r.swings > 0 or r.heals > 0 or r.taken > 0 or r.utility > 0 or r.cc_attempts > 0
+            if r.damage > 0 or r.swings > 0 or r.heals > 0 or r.taken > 0 or r.utility > 0 or r.cc_attempts > 0 or r.average_counts
         ]
         return sorted(active, key=lambda r: (-r.dps, -r.hps, -r.utility, r.name))
     if tab == "damage":
-        return [r for r in snap.rows if r.damage > 0 or r.swings > 0]
+        return [r for r in snap.rows if r.damage > 0 or r.swings > 0 or "damage" in r.average_counts]
     if tab == "healing":
-        return sorted((r for r in snap.rows if r.heals > 0), key=lambda r: (-r.heals, r.name))
+        return sorted((r for r in snap.rows if r.heals > 0 or "heals" in r.average_counts), key=lambda r: (-r.heals, r.name))
     if tab == "taken":
         return sorted((r for r in snap.rows if r.taken > 0), key=lambda r: (-r.taken, r.name))
     log.debug("snapshot_rows_for_tab: unknown tab %r; returning all rows", tab)

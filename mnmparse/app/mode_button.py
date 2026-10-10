@@ -26,7 +26,7 @@ class ModeButton(QPushButton):
         self._casual = casual_enabled(cfg)
         self._animate = not self._casual and not reduced_motion(cfg)
         self.setText(CASUAL_LABEL if self._casual else f"🔥 {ELITIST_LABEL} 🔥")
-        self.setAccessibleName("Casual Mode" if self._casual else ELITIST_LABEL)
+        self.setAccessibleName("Carebear Mode" if self._casual else ELITIST_LABEL)
         self.setStyleSheet(
             "QPushButton { padding: 6px 12px; border-radius: 8px; "
             + ("background: #203029; color: #e1f5dd; border: 1px solid #4e7455; }"

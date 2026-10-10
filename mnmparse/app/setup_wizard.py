@@ -213,7 +213,7 @@ class _OptionsPage(QWizardPage):
             setattr(self, key, switch)
             form.addRow(caption, switch)
             switch.toggled.connect(self._stage_options)
-        self.revenge_enabled.setToolTip("PvP only. Names are hidden in Casual Mode.")
+        self.revenge_enabled.setToolTip("PvP only. Names are hidden in Carebear Mode.")
         self.attack_bar.setToolTip("Shown below the overlay.")
         self.export_auto.setToolTip("Copies finished fights involving your group.")
         layout.addLayout(form)
@@ -245,7 +245,7 @@ class _ReadyPage(QWizardPage):
         cfg = self.owner._draft
         self.summary.setText(f"Character: {cfg.player_name}\nCombat crop: {cfg.crop}\n"
                              f"OCR: {self.owner._ocr_count} readable lines\n"
-                             f"Mode: {'Casual Mode' if casual_enabled(cfg) else 'Elitist Scumbag Mode'}")
+                             f"Mode: {'Carebear Mode' if casual_enabled(cfg) else 'Elitist Scumbag Mode'}")
         self.next_step.setText("Save setup to start capture." if cfg.start_capture_on_launch
                                else "Save setup, then choose Start capture.")
 

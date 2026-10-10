@@ -53,7 +53,7 @@ class TriggerChatExportDialog(QDialog):
         self.line.setTabChangesFocus(True)
         self.line.setPlainText(self.code)
         layout.addWidget(self.line, 1)
-        self.character_count = QLabel("Definition hidden in Casual Mode" if blocked else f"{len(code)} characters · one chat message")
+        self.character_count = QLabel("Definition hidden in Carebear Mode" if blocked else f"{len(code)} characters · one chat message")
         self.character_count.setWordWrap(True)
         layout.addWidget(self.character_count)
         self.status = QLabel()
@@ -75,9 +75,9 @@ class TriggerChatExportDialog(QDialog):
             self.line.clear()
             self.title.setText(safe_trigger_label(self._trigger.name, cfg))
             self.title.setToolTip("")
-            self.character_count.setText("Definition hidden in Casual Mode")
+            self.character_count.setText("Definition hidden in Carebear Mode")
             self.copy.setEnabled(False)
-            self.status.setText("Casual Mode hides timer definitions; copying is unavailable.")
+            self.status.setText("Carebear Mode hides timer definitions; copying is unavailable.")
 
     def _copy_line(self) -> None:
         if safe_trigger_definition(self._trigger, self._cfg) is None:
@@ -102,11 +102,11 @@ def _action(action: str, sound: str, speech: str, file: str = "") -> str:
 def _summary(trigger: Trigger, sender: str, cfg: object = None) -> str:
     if casual_enabled(cfg):
         return (f"Name: {safe_trigger_label(trigger.name, cfg)}\n"
-                "Sender, custom definition, captures and speech are hidden in Casual Mode.\n\n"
+                "Sender, custom definition, captures and speech are hidden in Carebear Mode.\n\n"
                 f"Enabled after import: {'Yes' if trigger.enabled else 'No'}\n"
                 f"Start a timer: {'Yes' if trigger.timer else 'No'}\n"
                 + (f"Length: {trigger.timer_seconds:g} seconds\n" if trigger.timer else "")
-                + "\nImport keeps the full definition locally. Casual Mode continues to hide custom text and plays only safe cues.")
+                + "\nImport keeps the full definition locally. Carebear Mode continues to hide custom text and plays only safe cues.")
     modes = {"contains": "Contains", "starts": "Starts with", "exact": "Whole line", "regex": "Regular expression"}
     overlaps = {"replace": "Replace", "retain": "Retain", "stack": "Add another timer"}
     lines = [
