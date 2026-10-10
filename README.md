@@ -6,11 +6,13 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
+Do not talk about this tool in-game or use it to disparage or displace any other player. 
+
 <img width="524" height="294" alt="image" src="https://github.com/user-attachments/assets/7b9c3047-102d-4bce-8bf0-192e6c72482d" />
 
 For maintainers: [development guide](docs/DEVELOPMENT.md) and [repository file audit](docs/FILE_AUDIT.md).
 
-If you have any questions, contact @Maergoth in discord. He doesn't use this.
+If you have any questions, or want to report people for being shitty with this tool, contact @Maergoth in discord. He doesn't use this, and has ways to deal with that.
 
 ## See PNUT in action
 
