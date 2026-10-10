@@ -3,7 +3,7 @@
 Each running timer is one row: a radial ring that empties as time runs out, the label and
 a minutes:seconds counter.  The ring turns amber in the warning period and red in the last
 five seconds; an ended trigger timer flashes "0:00" for a moment. Expired NPC timers stay
-until dismissed, with Restart and Dismiss buttons in place of the countdown. Right-click
+until dismissed, with restart and dismiss icons in place of the countdown. Right-click
 a timer to cancel it (or all of them). The panel shows while timers run or recent triggers
 are displayed (unless "always show" is on) and docks / undocks like the auto-attack bar
 (:mod:`mnmparse.app.docked_panel`).
@@ -16,11 +16,13 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QPointF, QRectF, QSettings, QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, QSettings, QSignalBlocker, QSize, Qt, QTimer
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent, QWheelEvent,
+    QColor, QFont, QFontMetricsF, QIcon, QPainter, QPainterPath, QPaintEvent, QPen, QPixmap,
+    QResizeEvent, QWheelEvent,
 )
 from PySide6.QtWidgets import QMenu, QPushButton, QScrollBar
 
@@ -70,6 +72,33 @@ def timer_color(timer: ActiveTimer, now: float) -> QColor:
     if timer.warn_s and left <= timer.warn_s:
         return qcolor(timer.warn_color or token("ACCENT"))
     return qcolor(timer.color or token("SUCCESS"))
+
+
+@lru_cache(maxsize=8)
+def _action_icon(action: str, color: str) -> QIcon:
+    """Draw font-independent action glyphs at several resolutions for scaled overlays."""
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 96, 128):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.scale(size / 24, size / 24)
+        painter.setPen(QPen(qcolor(color), 2.2, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if action == "Restart":
+            painter.drawArc(QRectF(5, 5, 14, 14), 345 * 16, -300 * 16)
+            arrow = QPainterPath(QPointF(15.5, 2.8))
+            arrow.lineTo(17, 7)
+            arrow.lineTo(12.7, 5.6)
+            painter.drawPath(arrow)
+        else:
+            painter.drawLine(QPointF(7, 7), QPointF(17, 17))
+            painter.drawLine(QPointF(7, 17), QPointF(17, 7))
+        painter.end()
+        icon.addPixmap(pixmap)
+    return icon
 
 
 class TimerPanel(DockedPanel):
@@ -204,10 +233,8 @@ class TimerPanel(DockedPanel):
         self.update()
 
     def _button_widths(self) -> tuple[int, int, int]:
-        metrics = QFontMetricsF(self._f_label)
-        padding = max(10, self._px)
-        return (math.ceil(metrics.horizontalAdvance("Restart") + padding),
-                math.ceil(metrics.horizontalAdvance("Dismiss") + padding), max(4, round(self._px * 0.35)))
+        side = min(self._row_h() - 4, max(18, round(self._px * 1.8)))
+        return side, side, max(4, round(self._px * 0.35))
 
     def _row_rect(self, index: int) -> QRectF:
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
@@ -224,19 +251,20 @@ class TimerPanel(DockedPanel):
                 button.deleteLater()
         for timer_id, timer in expired.items():
             if timer_id not in self._expired_buttons:
-                restart, dismiss = QPushButton("Restart", self), QPushButton("Dismiss", self)
+                restart, dismiss = QPushButton(self), QPushButton(self)
                 restart.clicked.connect(lambda _checked=False, tid=timer_id: self._restart_timer(tid))
                 dismiss.clicked.connect(lambda _checked=False, tid=timer_id: self._dismiss_timer(tid))
                 self._expired_buttons[timer_id] = (restart, dismiss)
             restart, dismiss = self._expired_buttons[timer_id]
             restart.setToolTip(f"Restart {timer.label} using the same duration")
             dismiss.setToolTip(f"Dismiss {timer.label}")
-            for button in (restart, dismiss):
+            for button, action in ((restart, "Restart"), (dismiss, "Dismiss")):
+                button.setIcon(_action_icon(action, token("TEXT")))
                 button.setFont(self._f_label)
                 button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 button.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
                 button.setCursor(Qt.CursorShape.PointingHandCursor)
-                button.setAccessibleName(f"{button.text()} {timer.label}")
+                button.setAccessibleName(f"{action} {timer.label}")
                 button.setStyleSheet(
                     f"QPushButton {{ color: {token('TEXT')}; background: rgba(255,255,255,0.06); "
                     f"border: 1px solid {token('LINE')}; border-radius: 4px; padding: 0; "
@@ -251,7 +279,8 @@ class TimerPanel(DockedPanel):
 
     def _position_controls(self) -> None:
         restart_w, dismiss_w, gap = self._button_widths()
-        button_h = min(self._row_h() - 4, max(18, round(self._px * 1.8)))
+        button_h = restart_w
+        icon_side = max(10, button_h - 4)
         for index, timer in enumerate(self._visible_timers()):
             buttons = self._expired_buttons.get(timer.id)
             if buttons is None:
@@ -261,6 +290,8 @@ class TimerPanel(DockedPanel):
             right = math.floor(row.right())
             buttons[0].setGeometry(right - dismiss_w - gap - restart_w, top, restart_w, button_h)
             buttons[1].setGeometry(right - dismiss_w, top, dismiss_w, button_h)
+            for button in buttons:
+                button.setIconSize(QSize(icon_side, icon_side))
         self._scroll.setGeometry(self.width() - 14, 5, 8,
                                  max(1, len(self._visible_timers()) * (self._row_h() + 4) - 4))
 
