@@ -439,8 +439,7 @@ class CropCanvas(QWidget):
             painter.drawText(
                 image_rect,
                 Qt.AlignmentFlag.AlignCenter,
-                "No frame yet. Press \"Capture frame\" with the game running.\n"
-                f"Canvas assumes {self._frame_size[0]}x{self._frame_size[1]} px.",
+                "Open the game, then choose Capture frame.",
             )
 
         # Dim everything outside the crop.
@@ -519,13 +518,17 @@ class CropPicker(QWidget):
     """
 
     crop_changed = Signal(tuple)
+    frame_captured = Signal(tuple)
+    ocr_test_completed = Signal(int)
 
-    def __init__(self, engine: Engine, cfg: Config, parent: QWidget | None = None) -> None:
+    def __init__(self, engine: Engine, cfg: Config, parent: QWidget | None = None,
+                 *, calibration_preview: bool = False) -> None:
         super().__init__(parent)
         self._engine = engine
         self._cfg = cfg
         self._frame: np.ndarray | None = None
         self._job: _Job | None = None
+        self._calibration_preview = bool(calibration_preview)
 
         self.setStyleSheet(button_qss())
         layout = QHBoxLayout(self)
@@ -542,6 +545,11 @@ class CropPicker(QWidget):
         preview_layout = QVBoxLayout(preview)
         preview_layout.setContentsMargins(4, 4, 4, 4)
         self.canvas = CropCanvas()
+        self.canvas.setAccessibleName("Combat chat crop")
+        self.canvas.setAccessibleDescription(
+            "Drag inside to move, drag a handle to resize, or drag outside to draw a new box. "
+            "Arrows nudge 1 pixel, Shift moves 10 pixels, and Ctrl+arrows resize."
+        )
         preview_layout.addWidget(self.canvas)
         layout.addWidget(preview, 1)
 
@@ -572,6 +580,8 @@ class CropPicker(QWidget):
             label = QLabel(caption)
             label.setStyleSheet(f"color: {theme.MUTED};")
             spin = QSpinBox()
+            spin.setAccessibleName(f"Crop {caption}")
+            label.setBuddy(spin)
             spin.setRange(0, 16384)
             spin.setFixedWidth(96)
             spin.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -588,8 +598,7 @@ class CropPicker(QWidget):
         self._status.setStyleSheet(f"color: {theme.MUTED};")
         side.addWidget(self._status)
 
-        hint = QLabel("Drag inside to move, drag a handle to resize, drag outside to draw a new box. "
-                      "Arrows nudge 1 px, Shift 10 px, Ctrl+arrows resize.")
+        hint = QLabel("Drag to move; use handles to resize. Drag outside to draw.")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {theme.MUTED}; font-size: 12px;")
         side.addWidget(hint)
@@ -630,11 +639,26 @@ class CropPicker(QWidget):
     def set_config(self, cfg: Config) -> None:
         """Use ``cfg`` (engine / scale / preprocess) for the next OCR test."""
         self._cfg = cfg
+        if self._frame is not None:
+            self.canvas.set_frame(self._display_frame())
+        self._lines.clear()
+        self.canvas.set_boxes([])
+
+    def set_calibration_preview(self, enabled: bool) -> None:
+        """Permit a local setup canvas preview; frame access and OCR stay protected."""
+        self._calibration_preview = bool(enabled)
+        self.canvas.set_frame(self._display_frame())
+
+    def _display_frame(self) -> np.ndarray | None:
+        from mnmparse.privacy import casual_enabled
+        if self._frame is not None and casual_enabled(self._cfg) and not self._calibration_preview:
+            return np.zeros_like(self._frame)
+        return self._frame
 
     def set_frame(self, frame: np.ndarray | None) -> None:
         """Show ``frame`` in the preview (used by Capture frame; also handy for tests)."""
         self._frame = frame
-        self.canvas.set_frame(frame)
+        self.canvas.set_frame(self._display_frame())
         self._lines.clear()
         self._test.setEnabled(frame is not None)
         w, h = self.canvas.frame_size()
@@ -646,11 +670,13 @@ class CropPicker(QWidget):
         if frame is None:
             self._status.setText("No frame yet.")
         else:
-            self._status.setText(f"Frame {w}x{h} captured at {time.strftime('%H:%M:%S')}.")
+            self._status.setText(f"Captured {w} × {h}.")
+            self.frame_captured.emit((w, h))
 
     def frame(self) -> np.ndarray | None:
         """The last captured frame, if any."""
-        return self._frame
+        from mnmparse.privacy import casual_enabled
+        return np.zeros_like(self._frame) if self._frame is not None and casual_enabled(self._cfg) else self._frame
 
     def capture_frame(self) -> None:
         """Grab one frame of the game window through the engine (background thread)."""
@@ -706,16 +732,23 @@ class CropPicker(QWidget):
         if error is not None:
             self._status.setText(f"OCR failed: {error}")
             self.canvas.set_boxes([])
+            self.ocr_test_completed.emit(0)
             return
         lines, elapsed_ms = result if isinstance(result, tuple) else ([], 0.0)
         left, top, right, _bottom = self.crop()
         boxes: list[OcrBox] = []
         for line in lines:
+            from mnmparse.privacy import casual_enabled, safe_event_text
+            from mnmparse.parser import parse_line
+            text = line.text
+            if casual_enabled(self._cfg):
+                text = safe_event_text(parse_line(text, time.time(), self._cfg.player_name), self._cfg) or "Text hidden in Casual Mode"
             width = min(int(len(line.text) * line.h * 0.55) or line.h, right - (left + line.x))
-            boxes.append(OcrBox(left + int(line.x), top + int(line.y), max(width, 4), int(line.h), line.text))
-            self._lines.addItem(f"y={line.y:<4d} h={line.h:<3d} {line.text}")
+            boxes.append(OcrBox(left + int(line.x), top + int(line.y), max(width, 4), int(line.h), text))
+            self._lines.addItem(text)
         self.canvas.set_boxes(boxes)
-        self._status.setText(f"OCR read {len(boxes)} lines in {elapsed_ms:.0f} ms.")
+        self._status.setText(f"{len(boxes)} lines found.")
+        self.ocr_test_completed.emit(len(boxes))
         log.info("Test OCR: %d lines in %.0f ms", len(boxes), elapsed_ms)
 
     def _sync_spins(self, crop: Crop) -> None:
@@ -744,7 +777,6 @@ class CropPicker(QWidget):
         right = self._spins["right"].value()
         bottom = self._spins["bottom"].value()
         width, height = self.canvas.frame_size()
-        proposed = {"left": left, "top": top, "right": right, "bottom": bottom}
         limits = {
             "left": left <= min(right, width) - _MIN_SIZE,
             "top": top <= min(bottom, height) - _MIN_SIZE,
@@ -753,10 +785,7 @@ class CropPicker(QWidget):
         }
         if not limits[key]:
             current = dict(zip(("left", "top", "right", "bottom"), self.canvas.crop(), strict=True))
-            self._status.setText(
-                f"{key.capitalize()} = {proposed[key]} rejected: the crop must stay at least "
-                f"{_MIN_SIZE} px wide and high inside the {width}x{height} frame."
-            )
+            self._status.setText(f"Crop rejected: keep it inside the frame and at least {_MIN_SIZE} × {_MIN_SIZE} pixels.")
             self._sync_spins(tuple(current[k] for k in ("left", "top", "right", "bottom")))  # type: ignore[arg-type]
             return
         self.canvas.set_crop((left, top, right, bottom))

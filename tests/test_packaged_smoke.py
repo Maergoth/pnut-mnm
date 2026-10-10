@@ -91,9 +91,24 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertGreater(report["chat_share_chars"], 0)
             self.assertLessEqual(report["chat_share_chars"], 255)
             self.assertGreaterEqual(len(report["window_titles"]), 8)
-            self.assertEqual(report["pet_rollup"], {"label": "SmokeOwner + SmokeOwner's Pet", "damage": 50})
+            self.assertEqual(report["pet_rollup"], {
+                "label": "SmokeOwner + SmokeOwner's Pet", "overlay_label": "SmokeOwner + Pet", "damage": 50,
+            })
             self.assertEqual(report["legal_documents"], ["open-source", "privacy", "terms"])
             self.assertTrue(report["image_processing"])
+            self.assertEqual(report["setup"]["style"], "Modern")
+            self.assertIn("PNUT setup", report["setup"]["heading"])
+            self.assertTrue(report["setup"]["casual"])
+            self.assertFalse(report["setup"]["capture_started"])
+            self.assertTrue(report["setup"]["local_calibration_preview"])
+            self.assertTrue(report["setup"]["frame_exports_protected"])
+            self.assertTrue(report["setup"]["calibration_cleared"])
+            self.assertTrue(report["setup"]["mode_slider"])
+            self.assertTrue(report["setup"]["crop_checkbox_removed"])
+            self.assertTrue(report["setup"]["common_options"])
+            self.assertTrue(all(report["revenge"].values()))
+            self.assertEqual(report["elitist_badge"], "flames")
+            self.assertTrue(all(max(rgb) < 70 for rgb in report["setup"]["background_rgb"]))
             for title in report["window_titles"]:
                 self.assertRegex(title, r"^[0-9a-f]{24}$")
 

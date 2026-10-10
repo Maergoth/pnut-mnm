@@ -16,7 +16,13 @@ PNUT saves configuration, raw recognized combat messages, parsed event logs, lea
 
 Files normally reside beside the application or in its configured log folder. Downloaded maps are cached locally; update packages are staged in a local application-data or temporary folder. These files are not encrypted by PNUT. Access by other users, software, backup tools, or cloud-synced folders depends on your computer and storage choices.
 
-Combat and event logs are not automatically deleted. The application log rotates, while saved state and caches remain until replaced or removed. You can stop capture, change the capture area or log folder, and remove saved files or native settings with PNUT closed.
+Combat and event logs are not automatically deleted. The application log rotates. Previous sessions are stored in a local database with a configurable retention period (30 days by default), and the recent editable window is bounded (100 fights by default). Update staging and owned old-install folders have bounded cleanup. You can stop capture, change the capture area or log folder, and remove saved files or native settings with PNUT closed.
+
+Casual Mode is on by default. App views and exports show your own information and rounded group averages when at least three group members are known. Switching into Elitist Scumbag Mode requires a deliberate switch gesture and confirmation. Casual Mode obscures presentation; original local logs and recovery data remain available on disk and are not encrypted. Turning it on cannot recall information already copied, exported, spoken, or shared outside PNUT.
+
+During setup, choosing Capture frame shows a local game image so you can position the Combat chat rectangle. This preview can show other players' chat even in Casual Mode. It is cleared when setup closes; OCR results and exports remain protected by the selected mode.
+
+Revenge List is an optional PvP feature, disabled by default. Eligible incoming attackers can prompt a manual save for 30 seconds, once per attacker per session. Automatic prompts use a letters-only name heuristic that excludes articles, spaces and symbols; manual entries accept any nonempty name or label. Only entries you explicitly add are saved, together with addition and latest observed attack times. The main list, overlay tab and optional pop-out show the newest activity first, filtered to 30 days and 100 entries by default; either display limit can be changed or set to All. Filtering does not delete saved entries. Older name-only lists retain unknown dates until new activity supplies one. Names are hidden in Casual Mode; valid-looking named NPCs can also match the automatic heuristic.
 
 ## External connections
 
@@ -28,9 +34,9 @@ These services receive your IP address and normal request metadata, and apply th
 
 ## Clipboard, exports, and audio
 
-PNUT can copy combat summaries to the system clipboard, including automatically after a completed group fight when automatic export is enabled; this option is on by default. Other applications and clipboard-history or sync features may access that text.
+PNUT can copy combat summaries to the system clipboard, including automatically after a completed group fight when automatic export is enabled; new profiles default this option to off. Other applications and clipboard-history or sync features may access that text.
 
-Diagnostic export creates a ZIP at a location you choose. It can include a cropped screenshot, recent recognized messages, player names, settings, file paths, application and operating-system details, and capture or display information. The command-line snapshot option can also save a crop locally. These exports are not uploaded by PNUT.
+Diagnostic export creates a ZIP at a location you choose. Casual reports include technical settings and counters, without OCR text or pixels. Confirmed full-information reports can include a cropped screenshot, recent recognized messages, player names, settings, file paths, application and operating-system details, and capture or display information. The command-line snapshot option also requires confirmed full mode before saving a crop locally. These exports are not uploaded by PNUT.
 
 Timer sharing copies a code to the clipboard or exports a JSON file. Definitions can contain names, patterns, speech text, and sound-file paths; the sound-file contents are not bundled. PNUT does not send the code to game chat for you. Review exports before sharing them.
 

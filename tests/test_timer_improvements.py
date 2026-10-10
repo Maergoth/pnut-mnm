@@ -77,6 +77,7 @@ class TimerRuntimeTests(unittest.TestCase):
         store = TriggerStore()
         store.triggers = [trigger]
         runner = TriggerRunner(store)
+        runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         self.addCleanup(lambda: runner._clock.stop())
         self.addCleanup(lambda: runner.audio.stop())
         return runner

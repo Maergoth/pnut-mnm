@@ -29,6 +29,8 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from mnmparse.app import APP_VERSION
 from mnmparse.app.launch_identity import EXECUTABLE, is_session_executable
+from mnmparse.provenance import validate_build_info
+from mnmparse.storage import atomic_json, atomic_write, mark_owned, prune_owned
 
 log = logging.getLogger(__name__)
 REPOSITORY = "Maergoth/pnut-mnm"
@@ -215,6 +217,20 @@ def _stage_root() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "PNUT" / "updates"
 
 
+def verify_package_version(package: Path, version: str) -> dict:
+    """Release metadata must identify the requested clean source build."""
+    try:
+        path = Path(package) / "_internal" / "build-info.json"
+        if _is_link(path) or path.stat().st_size > 16384:
+            raise ValueError("invalid provenance file")
+        info = validate_build_info(json.loads(path.read_text(encoding="utf-8-sig")), version=version)
+        if info["dirty"]:
+            raise ValueError("development builds cannot be installed as releases")
+        return info
+    except (OSError, ValueError, TypeError) as exc:
+        raise UpdateError("The update package version/build provenance does not match its release.") from exc
+
+
 def download_update(cancelled: threading.Event, progress: Callable[[str], None]) -> tuple[str, Path] | None:
     progress("Checking GitHub for application updates…")
     payload = json.loads(_fetch(LATEST_URL, 1024 * 1024, cancelled))
@@ -223,15 +239,24 @@ def download_update(cancelled: threading.Event, progress: Callable[[str], None])
         return None
     root = _stage_root()
     root.mkdir(parents=True, exist_ok=True)
+    prune_owned(root, "update-stage", keep=3, max_age_days=7)
     staging = Path(tempfile.mkdtemp(prefix=f"{release.version}-", dir=root))
-    archive = staging / release.name
-    checksum = _fetch(release.checksum_url, 4096, cancelled)
-    _fetch(release.archive_url, MAX_DOWNLOAD, cancelled, archive, progress)
-    progress("Verifying application update…")
-    verify_archive(archive, checksum, release.name)
-    payload_dir = staging / "package"
-    extract_archive(archive, payload_dir, cancelled)
-    return release.version, payload_dir
+    mark_owned(staging, "update-stage", pinned=True)
+    try:
+        archive = staging / release.name
+        checksum = _fetch(release.checksum_url, 4096, cancelled)
+        _fetch(release.archive_url, MAX_DOWNLOAD, cancelled, archive, progress)
+        progress("Verifying application update…")
+        verify_archive(archive, checksum, release.name)
+        payload_dir = staging / "package"
+        extract_archive(archive, payload_dir, cancelled)
+        verify_package_version(payload_dir, release.version)
+        return release.version, payload_dir
+    finally:
+        try:
+            mark_owned(staging, "update-stage")
+        except OSError:
+            log.warning("Could not unpin update staging directory %s", staging)
 
 
 def _quote_ps(value: str | Path) -> str:
@@ -259,25 +284,44 @@ def installed_directory() -> Path:
     return install.resolve()
 
 
-def make_restart_script(install: Path, package: Path, process_id: int, token: str) -> str:
+def make_restart_script(install: Path, package: Path, process_id: int, token: str,
+                        *, version: str = APP_VERSION, arguments: list[str] | None = None,
+                        health_required: bool = True, health_timeout: int = 90,
+                        result_directory: Path | None = None) -> str:
     """Paths are literal data; all moves are bounded to three application entries."""
-    if not install.is_absolute() or not package.is_absolute() or not re.fullmatch(r"[0-9a-f]{32}", token):
+    result_directory = package.parent if result_directory is None else Path(result_directory)
+    if not install.is_absolute() or not package.is_absolute() or not result_directory.is_absolute() or not re.fullmatch(r"[0-9a-f]{32}", token):
         raise UpdateError("The update helper paths are invalid.")
     if not isinstance(process_id, int) or process_id < 1:
         raise UpdateError("The update helper process is invalid.")
+    version_tuple(version)
+    if type(health_timeout) is not int or not 1 <= health_timeout <= 90:
+        raise UpdateError("The update startup deadline is invalid.")
+    argument_text = subprocess.list2cmdline(arguments or [])
     script = r'''$ErrorActionPreference = 'Stop'
 $install = __INSTALL__
 $package = __PACKAGE__
 $ownerPid = __PID__
 $token = __TOKEN__
+$version = __VERSION__
+$previousVersion = __PREVIOUS_VERSION__
+$restartArgs = __ARGUMENTS__
+$healthRequired = __HEALTH_REQUIRED__
 $names = @('PNUT M&M.exe', '_internal', 'START HERE.txt')
 $incoming = Join-Path $install ('.pnut-incoming-' + $token)
 $backup = Join-Path $install ('.pnut-backup-' + $token)
 $failed = Join-Path $install ('.pnut-failed-' + $token)
-$result = Join-Path (Split-Path -Parent $package) 'install-result.json'
+$resultDirectory = __RESULT_DIRECTORY__
+$result = Join-Path $resultDirectory 'install-result.json'
+$receipt = Join-Path $install '.pnut-update.json'
+$health = Join-Path $install ('.pnut-health-' + $token + '.json')
+$boot = Join-Path $install ('.pnut-boot-' + $token + '.json')
 $movedOld = @()
 $movedNew = @()
 $swapStarted = $false
+$rolledBack = $false
+$previousBackup = ''
+$previousBackupVersion = ''
 # The new executable is an independent PyInstaller application, not a worker of
 # the old frozen process (which passed its bootloader environment to this helper).
 $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
@@ -303,9 +347,36 @@ function Move-Owned([string]$source, [string]$destination) {
     Assert-PlainPath $destination $install
     Move-Item -LiteralPath $source -Destination $destination
 }
+function Write-Json([string]$path, $value) {
+    $temporary = $path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    } finally {
+        # Unique temporary files remain recoverable if a write/move fails.
+    }
+}
 try {
     Assert-PlainPath $install $install
     Assert-PlainPath $package $package
+    if (Test-Path -LiteralPath $receipt -PathType Leaf) {
+        try {
+            Assert-PlainPath $receipt $install
+            $prior = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+            $candidates = @($prior.backup, $prior.previous_backup)
+            foreach ($candidate in $candidates) {
+                if (-not $candidate) { continue }
+                Assert-PlainPath $candidate $install
+                if ((Split-Path -Parent $candidate) -eq $install -and (Split-Path -Leaf $candidate) -match '^\.pnut-backup-[0-9a-f]{32}$' -and
+                    (Test-Path -LiteralPath (Join-Path $candidate 'PNUT M&M.exe') -PathType Leaf) -and
+                    (Test-Path -LiteralPath (Join-Path $candidate '_internal') -PathType Container)) {
+                    $previousBackup = $candidate
+                    $previousBackupVersion = if ($candidate -eq $prior.backup) { $prior.previous_version } else { $prior.previous_backup_version }
+                    break
+                }
+            }
+        } catch {}
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $package 'PNUT M&M.exe') -PathType Leaf)) { throw 'Staged application is missing.' }
     if (-not (Test-Path -LiteralPath (Join-Path $package '_internal') -PathType Container)) { throw 'Staged support files are missing.' }
     foreach ($path in @($incoming, $backup, $failed)) {
@@ -314,6 +385,7 @@ try {
     }
     # Copy across volumes before stopping or touching the installed application.
     New-Item -ItemType Directory -Path $incoming | Out-Null
+    Write-Json (Join-Path $incoming '.pnut-owned.json') @{schema=1; kind='application-incoming'; created=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); pinned=$true; lease_until=[DateTimeOffset]::UtcNow.AddHours(1).ToUnixTimeSeconds()}
     foreach ($name in $names) {
         $source = Join-Path $package $name
         Assert-PlainPath $source $package
@@ -327,6 +399,7 @@ try {
     $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
     if ($owner -and -not $owner.WaitForExit(120000)) { throw 'PNUT did not exit in time; no application files were changed.' }
     New-Item -ItemType Directory -Path $backup | Out-Null
+    Write-Json (Join-Path $backup '.pnut-owned.json') @{schema=1; kind='application-backup'; created=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); pinned=$false}
     $swapStarted = $true
     foreach ($name in $names) {
         $live = Join-Path $install $name
@@ -340,29 +413,212 @@ try {
             $movedNew += $name
         }
     }
-    @{ok=$true; backup=$backup} | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
+    $record = @{schema=1; token=$token; status='pending'; version=$version; previous_version=$previousVersion; backup=$backup; previous_backup=$previousBackup; previous_backup_version=$previousBackupVersion; reported=$false}
+    Write-Json $receipt $record
+    Write-Json $result $record
     # The helper is hidden, but the restarted interactive application must be visible.
-    Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') -WorkingDirectory $install -WindowStyle Normal
+    $env:_PNUT_UPDATE_TOKEN = $token
+    if ($restartArgs) { $launchArguments = @{ArgumentList=$restartArgs} } else { $launchArguments = @{} }
+    $launcher = Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') @launchArguments -WorkingDirectory $install -WindowStyle Normal -PassThru
+    if ($healthRequired) {
+        $deadline = [DateTime]::UtcNow.AddSeconds(__HEALTH_TIMEOUT__)
+        $healthy = $false
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if (Test-Path -LiteralPath $health -PathType Leaf) {
+                try {
+                    $ack = Get-Content -LiteralPath $health -Raw | ConvertFrom-Json
+                    if ($ack.schema -eq 1 -and $ack.token -eq $token -and $ack.version -eq $version) { $healthy = $true; break }
+                } catch {}
+            }
+            if (Test-Path -LiteralPath $boot -PathType Leaf) {
+                try {
+                    $started = Get-Content -LiteralPath $boot -Raw | ConvertFrom-Json
+                    if ($started.token -eq $token -and -not (Get-Process -Id $started.pid -ErrorAction SilentlyContinue)) { break }
+                } catch {}
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $healthy) {
+            # Stop only the registered replacement child, whose image is an owned
+            # alias inside this installation and matches the replacement binary.
+            if (Test-Path -LiteralPath $boot -PathType Leaf) {
+                $started = Get-Content -LiteralPath $boot -Raw | ConvertFrom-Json
+                $running = Get-Process -Id $started.pid -ErrorAction SilentlyContinue
+                if ($running -and $started.token -eq $token) {
+                    $image = $running.MainModule.FileName
+                    Assert-PlainPath $image $install
+                    if ((Split-Path -Parent $image) -eq $install -and (Split-Path -Leaf $image) -match '^[0-9a-f]{24}\.exe$' -and
+                        (Get-FileHash -LiteralPath $image).Hash -eq (Get-FileHash -LiteralPath (Join-Path $install 'PNUT M&M.exe')).Hash) {
+                        Stop-Process -Id $started.pid -Force
+                        [void]$running.WaitForExit(5000)
+                    } else { throw 'Replacement process could not be verified for recovery.' }
+                }
+            }
+            if (-not $launcher.HasExited) {
+                $image = $launcher.MainModule.FileName
+                if ($image -ne (Join-Path $install 'PNUT M&M.exe')) { throw 'Replacement launcher could not be verified for recovery.' }
+                $launcher.Kill()
+                [void]$launcher.WaitForExit(5000)
+            }
+            throw 'The replacement did not acknowledge a healthy startup; restoring the previous application.'
+        }
+    }
+    $record.status = 'healthy'
+    Write-Json $receipt $record
+    Write-Json $result $record
 } catch {
     $failure = $_.Exception.Message
     try {
         if ($swapStarted) {
             New-Item -ItemType Directory -Path $failed | Out-Null
+            Write-Json (Join-Path $failed '.pnut-owned.json') @{schema=1; kind='application-failed'; created=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); pinned=$false}
             foreach ($name in $movedNew) { Move-Owned (Join-Path $install $name) (Join-Path $failed $name) }
             foreach ($name in $movedOld) { Move-Owned (Join-Path $backup $name) (Join-Path $install $name) }
+            $rolledBack = $true
         }
     } catch { $failure += ' Rollback needs attention: ' + $_.Exception.Message }
-    @{ok=$false; error=$failure; backup=$backup} | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
+    $status = if ($rolledBack -or -not $swapStarted) { 'rolled_back' } else { 'failed' }
+    $record = @{schema=1; token=$token; status=$status; version=$version; previous_version=$previousVersion; error=$failure; backup=$backup; previous_backup=$previousBackup; previous_backup_version=$previousBackupVersion; reported=$false}
+    Write-Json $receipt $record
+    Write-Json $result $record
+    $env:_PNUT_UPDATE_TOKEN = ''
     $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
     if (-not $owner -and (Test-Path -LiteralPath (Join-Path $install 'PNUT M&M.exe'))) {
-        Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') -WorkingDirectory $install -WindowStyle Normal
+        if ($restartArgs) { $launchArguments = @{ArgumentList=$restartArgs} } else { $launchArguments = @{} }
+        Start-Process -FilePath (Join-Path $install 'PNUT M&M.exe') @launchArguments -WorkingDirectory $install -WindowStyle Normal
     }
     exit 1
+} finally {
+    $incomingMarker = Join-Path $incoming '.pnut-owned.json'
+    if (Test-Path -LiteralPath $incomingMarker -PathType Leaf) {
+        try { $owned = Get-Content -LiteralPath $incomingMarker -Raw | ConvertFrom-Json; $owned.pinned=$false; Write-Json $incomingMarker $owned } catch {}
+    }
+    # Release the active staging lease on every normal helper exit.
+    $stageMarker = Join-Path $resultDirectory '.pnut-owned.json'
+    if (Test-Path -LiteralPath $stageMarker -PathType Leaf) {
+        try {
+            $stage = Get-Content -LiteralPath $stageMarker -Raw | ConvertFrom-Json
+            if ($stage.kind -eq 'update-stage') { $stage.pinned = $false; Write-Json $stageMarker $stage }
+        } catch {}
+    }
 }
 '''
     return (script.replace("__INSTALL__", _quote_ps(install))
             .replace("__PACKAGE__", _quote_ps(package))
-            .replace("__PID__", str(process_id)).replace("__TOKEN__", _quote_ps(token)))
+            .replace("__PID__", str(process_id)).replace("__TOKEN__", _quote_ps(token))
+            .replace("__VERSION__", _quote_ps(version)).replace("__ARGUMENTS__", _quote_ps(argument_text))
+            .replace("__RESULT_DIRECTORY__", _quote_ps(result_directory))
+            .replace("__PREVIOUS_VERSION__", _quote_ps(APP_VERSION)).replace("__HEALTH_TIMEOUT__", str(health_timeout))
+            .replace("__HEALTH_REQUIRED__", "$true" if health_required else "$false"))
+
+
+def _receipt(install: Path) -> dict | None:
+    try:
+        path = Path(install) / ".pnut-update.json"
+        if _is_link(path) or path.stat().st_size > 16384:
+            return None
+        record = json.loads(path.read_text(encoding="utf-8-sig"))
+        if (not isinstance(record, dict) or record.get("schema") != 1
+                or not isinstance(record.get("token"), str) or not re.fullmatch(r"[0-9a-f]{32}", record["token"])
+                or record.get("status") not in {"pending", "healthy", "rolled_back", "failed"}):
+            return None
+        return record
+    except (OSError, ValueError):
+        return None
+
+
+def acknowledge_startup() -> bool:
+    """Called after the replacement's window and controllers initialize."""
+    try:
+        install = installed_directory()
+        record = _receipt(install)
+        if record is None or record["status"] != "pending" or record.get("version") != APP_VERSION:
+            return False
+        if os.environ.get("_PNUT_UPDATE_TOKEN") != record["token"]:
+            return False
+        atomic_json(install / f'.pnut-health-{record["token"]}.json',
+                    {"schema": 1, "token": record["token"], "version": APP_VERSION, "pid": os.getpid()})
+        return True
+    except (OSError, UpdateError):
+        return False
+
+
+def recovery_package(install: Path | None = None) -> Path | None:
+    """Return only the retained application backup named by this install's receipt."""
+    try:
+        install = installed_directory() if install is None else Path(install)
+        record = _receipt(install)
+        if record is None:
+            return None
+        expected = install / (".pnut-backup-" + record["token"])
+        values = [record.get("backup") if record.get("backup") == str(expected) else None, record.get("previous_backup")]
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            candidate = Path(value)
+            if candidate.parent != install or not re.fullmatch(r"\.pnut-backup-[0-9a-f]{32}", candidate.name):
+                continue
+            if (not candidate.is_dir() or any(_is_link(p) for p in (candidate, *candidate.parents))
+                    or not (candidate / EXECUTABLE).is_file() or not (candidate / "_internal").is_dir()):
+                continue
+            marker = candidate / ".pnut-owned.json"
+            if _is_link(marker) or not marker.is_file() or marker.stat().st_size > 4096:
+                continue
+            ownership = json.loads(marker.read_text(encoding="utf-8-sig"))
+            if (not isinstance(ownership, dict) or ownership.get("schema") != 1 or ownership.get("kind") != "application-backup"
+                    or any(_is_link(p) for p in candidate.rglob("*"))):
+                continue
+            return candidate
+        return None
+    except (OSError, ValueError, AttributeError, UpdateError):
+        return None
+
+
+def consume_update_result() -> str:
+    """Surface a persisted result once, and prune only owned old update artifacts."""
+    try:
+        install = installed_directory()
+        record = _receipt(install)
+        protected = ()
+        if record:
+            candidate = recovery_package(install)
+            protected = (candidate,) if candidate is not None else ()
+        prune_owned(install, "application-backup", keep=1, max_age_days=3650, protected=protected)
+        prune_owned(install, "application-failed", keep=1, max_age_days=7)
+        prune_owned(install, "application-incoming", keep=0, max_age_days=1)
+        prune_owned(_stage_root(), "update-stage", keep=3, max_age_days=7)
+        _prune_receipts(install, record["token"] if record else "")
+        if not record or record.get("reported"):
+            return ""
+        if record["status"] == "pending" and os.environ.get("_PNUT_UPDATE_TOKEN") == record["token"]:
+            return ""  # The live helper is still waiting for this replacement's acknowledgement.
+        record["reported"] = True
+        atomic_json(install / ".pnut-update.json", record)
+        if record["status"] == "healthy":
+            return f'PNUT {record.get("version", APP_VERSION)} started successfully after updating. A previous application backup is retained.'
+        if record["status"] == "pending":
+            return 'The previous update did not finish recording its startup result. A retained application backup is available for recovery.'
+        if record["status"] == "failed":
+            return 'The application update needs recovery: ' + str(record.get("error", "The previous application backup is retained."))[:1000]
+        return 'The application update was recovered: ' + str(record.get("error", "The previous application was restored."))[:1000]
+    except (OSError, UpdateError):
+        return ""
+
+
+def _prune_receipts(install: Path, protected_token: str) -> None:
+    cutoff = time.time() - 7 * 86400
+    for path in install.glob(".pnut-*.json"):
+        match = re.fullmatch(r"\.pnut-(?:health|boot)-([0-9a-f]{32})\.json", path.name)
+        if match is None or match[1] == protected_token:
+            continue
+        try:
+            if _is_link(path) or path.stat().st_size > 16384 or path.stat().st_mtime >= cutoff:
+                continue
+            record = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(record, dict) and record.get("schema") == 1 and record.get("token") == match[1]:
+                path.unlink()
+        except (OSError, ValueError):
+            continue
 
 
 class _Signals(QObject):
@@ -450,7 +706,7 @@ class AppUpdateController(QObject):
         if result is not None:
             self.ready.emit(self._ready_version)
 
-    def prepare_restart(self) -> bool:
+    def prepare_restart(self, arguments: list[str] | None = None) -> bool:
         if self._closed or self._ready_package is None or self._restart_prepared:
             return False
         try:
@@ -458,13 +714,21 @@ class AppUpdateController(QObject):
             package = self._ready_package.resolve()
             if (not package.is_relative_to(_stage_root().resolve())
                     or not (package / EXECUTABLE).is_file() or not (package / "_internal").is_dir()):
+                self._ready_package, self._ready_version = None, ""
                 raise UpdateError("The staged update is unavailable. Download it again.")
+            try:
+                verify_package_version(package, self._ready_version)
+            except UpdateError:
+                self._ready_package, self._ready_version = None, ""
+                raise
             # Fail before quitting if this install cannot create its incoming files.
             with tempfile.NamedTemporaryFile(prefix=".pnut-write-check-", dir=install):
                 pass
             token = uuid.uuid4().hex
             script = package.parent / "install.ps1"
-            script.write_text(make_restart_script(install, package, os.getpid(), token), encoding="utf-8-sig")
+            atomic_write(script, make_restart_script(install, package, os.getpid(), token,
+                                                     version=self._ready_version, arguments=arguments).encode("utf-8-sig"))
+            mark_owned(package.parent, "update-stage", pinned=True)
             powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
             subprocess.Popen([str(powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                              cwd=package.parent, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -474,6 +738,46 @@ class AppUpdateController(QObject):
         except Exception as exc:
             log.exception("Could not prepare application update")
             self.finished.emit(f"Could not install the update: {exc}. Check that the application folder is writable.")
+            return False
+
+    def prepare_recovery(self, arguments: list[str] | None = None) -> bool:
+        """Restore the retained application using the same deferred swap mechanism."""
+        if self._closed or self._restart_prepared or self.is_running:
+            return False
+        try:
+            install = installed_directory()
+            package = recovery_package(install)
+            record = _receipt(install)
+            if package is None or record is None:
+                raise UpdateError("No verified previous application backup is available.")
+            version = record.get("previous_version", APP_VERSION) if str(package) == record.get("backup") else record.get("previous_backup_version", "")
+            metadata = package / "_internal" / "build-info.json"
+            modern = metadata.is_file()
+            if modern and metadata.stat().st_size <= 16384:
+                version = json.loads(metadata.read_text(encoding="utf-8-sig")).get("version", "")
+            version_tuple(version)
+            root = _stage_root()
+            root.mkdir(parents=True, exist_ok=True)
+            staging = Path(tempfile.mkdtemp(prefix="recovery-", dir=root))
+            mark_owned(staging, "update-stage", pinned=True)
+            token = uuid.uuid4().hex
+            script = staging / "install.ps1"
+            # Older known-good releases did not implement startup acknowledgement.
+            if modern:
+                verify_package_version(package, version)
+            atomic_write(script, make_restart_script(install, package, os.getpid(), token,
+                                                     version=version, arguments=arguments,
+                                                     health_required=modern,
+                                                     result_directory=staging).encode("utf-8-sig"))
+            powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            subprocess.Popen([str(powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                             cwd=staging, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            self._restart_prepared = True
+            return True
+        except Exception as exc:
+            log.exception("Could not prepare application recovery")
+            self.finished.emit(f"Could not restore the previous application: {exc}")
             return False
 
     def shutdown(self) -> None:

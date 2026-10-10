@@ -33,6 +33,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -155,9 +156,8 @@ def _seed_vocab(path: Path) -> None:
 
 def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
     """Write ``data`` to ``path`` through a temporary file, so a crash never leaves half a file."""
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, path)
+    from mnmparse.storage import atomic_json
+    atomic_json(path, data)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -239,7 +239,7 @@ __all__ = ["Engine", "STATES"]
 
 log = logging.getLogger(__name__)
 
-STATES: tuple[str, ...] = ("stopped", "starting", "no_window", "running", "paused")
+STATES: tuple[str, ...] = ("stopped", "starting", "no_window", "running", "paused", "stopping")
 """Values carried by :attr:`Engine.state_changed`."""
 
 SNAPSHOT_MIN_INTERVAL_S = 0.25
@@ -258,7 +258,7 @@ FRAME_LOSS_S = 5.0
 FIRST_FRAME_TIMEOUT_S = 5.0
 """How long :meth:`Engine.grab_frame` waits for a frame from a temporary source."""
 STOP_JOIN_TIMEOUT_S = 6.0
-"""How long :meth:`Engine.stop` waits for the worker thread.
+"""Default timeout for explicit non-GUI :meth:`Engine.wait_stopped` callers.
 
 Covers one loop iteration (``1/fps`` plus an OCR pass), the tracker flush and
 writer close, and ``WgcWindowSource.stop`` which itself joins the native
@@ -295,6 +295,7 @@ class Engine(QObject):
     state_changed = Signal(str)
     error = Signal(str)
     notice = Signal(str)
+    stopped = Signal()  #: cleanup completed; safe to start another worker or finish quitting
 
     def __init__(self, cfg: Config, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -314,6 +315,7 @@ class Engine(QObject):
         self._stopped_stats: Stats | None = None  #: last capture's source events for ownership corrections
         self._writer: LogWriter | None = None
         self._history: list[EncounterSnapshot] = []
+        self._history_sessions: dict[str, str] = {}
         self._session_encounter_keys: set[str] = set()  #: closes counted since the last session reset
         #: Carried over Stop/Start (``_finish`` drops ``_stats``): the party roster, the last
         #: zone, and the tracker with its key (_capture_key) and the time capture stopped.
@@ -356,6 +358,34 @@ class Engine(QObject):
         self._last_snapshot_at = 0.0
         self._crop_warned = False
 
+        self._archive: Any = None
+        self._archive_attached = False
+        self._archive_id = uuid.uuid4().hex
+        self._archive_error: str = ""
+        self._archive_saved_version: Any = None
+        self._quality_active: dict[str, float] = {}
+        self._timings: dict[str, deque[float]] = {}
+        self._last_frame_at = 0.0
+        self._frame_gap_ms = 0.0
+        self._source_frame_age_ms: float | None = None
+        self._source_frames_skipped = 0
+        self._source_frames_repeated = 0
+        self._source_frame_count: int | None = None
+        self._source_dimensions: tuple[int, int] | None = None
+        self._calibration_checked: Any = None
+        # Creating an empty engine does not create files. Existing active sessions
+        # recover automatically; explicit archive browsing is still available.
+        if (project_path(cfg.log_dir) / "sessions.sqlite3").is_file():
+            self._ensure_archive(recovering=True)
+            if self._archive is not None:
+                try:
+                    active = self._archive.latest_active()
+                    if active is not None:
+                        self._restore_archive(active["id"])
+                        self._last_zone = self._load_session_state(cfg)
+                except Exception:
+                    log.exception("recent session recovery failed")
+
         self._test_ocr: OcrEngine | None = None
         self._test_ocr_key: tuple[str, float] | None = None
 
@@ -382,7 +412,7 @@ class Engine(QObject):
 
     def start(self) -> None:
         """Spawn the worker thread; returns immediately (never blocks the GUI)."""
-        if self.is_running:
+        if self._thread is not None:
             log.debug("Engine.start: already running")
             return
         self._stop_event.clear()
@@ -401,30 +431,47 @@ class Engine(QObject):
             self._scrolled_shown = False
             self._row_frames = 0
             self._rows_warned = False
+            self._timings.clear()
+            self._source_frame_count = None
+            self._source_frames_skipped = self._source_frames_repeated = 0
+            self._source_frame_age_ms = None
+            self._source_dimensions = None
+            self._calibration_checked = None
+            self._last_frame_at = 0.0
         self._thread = threading.Thread(target=self._run, name="mnmparse-engine", daemon=True)
+        self._set_state("starting")
         self._thread.start()
         log.info("Engine worker started")
 
     def stop(self) -> None:
-        """Ask the worker to finish (flush tracker, close writer, stop source) and join it."""
+        """Request cleanup without blocking the GUI or relinquishing a live worker."""
         thread = self._thread
-        if thread is None or not thread.is_alive():
+        if thread is None:
             self._set_state("stopped")
+            return
+        if self._stop_event.is_set():
             return
         log.info("Engine stop requested")
         self._stop_event.set()
-        thread.join(timeout=STOP_JOIN_TIMEOUT_S)
-        if thread.is_alive():
-            log.warning(
-                "Engine worker did not stop within %.0f s; it is a daemon and ends with the process",
-                STOP_JOIN_TIMEOUT_S,
-            )
-            self._set_state("stopped")
-        self._thread = None
+        self._set_state("stopping")
+
+    def wait_stopped(self, timeout: float = STOP_JOIN_TIMEOUT_S) -> bool:
+        """Wait from a non-GUI caller; timed-out workers remain owned and cannot restart."""
+        thread = self._thread
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            return False
+        if thread.ident is None:
+            return False
+        thread.join(timeout=max(0.0, timeout))
+        return not thread.is_alive()
 
     def set_paused(self, paused: bool) -> None:
         """Pause (skip frames, keep the encounter timeout ticking) or resume."""
         self._paused = bool(paused)
+        with self._lock:
+            self._quality_tick("capture_paused", self._paused, time.time())
         if self._state in ("running", "paused"):
             self._set_state("paused" if self._paused else "running")
 
@@ -481,10 +528,17 @@ class Engine(QObject):
         with self._lock:
             return list(self._history)
 
-    def session_snapshot(self) -> SessionSnapshot:
+    def current_snapshot(self) -> EncounterSnapshot | None:
+        """Read the open fight when switching from archived history back to live."""
+        with self._lock:
+            stats = self._stats
+            enc = stats.current() if stats is not None else None
+            return build_snapshot(stats, enc, self._cfg.player_name, now=time.time()) if enc is not None else None
+
+    def session_snapshot(self, *, full: bool = False) -> SessionSnapshot:
         """The current session (loot / coin / kills / deaths / CC) snapshot."""
         with self._lock:
-            return self._session_stats.snapshot()
+            return self._timed_session_snapshot(detail_limit=None if full else 200)
 
     def ocr_diagnosis(self) -> dict[str, Any]:
         """Copy recent capture evidence without grabbing a frame or emitting signals.
@@ -545,18 +599,31 @@ class Engine(QObject):
             }
             return copy.deepcopy(result)
 
-    def reset_session(self) -> None:
+    def reset_session(self) -> bool:
         """Start the session counters over (keeps the encounter history)."""
         with self._lock:
+            self._close_open_encounter("session reset")
+            if not self._save_session_archive(ended=time.time(), force=True):
+                self.notice.emit("Session reset could not save the old session. Check the log folder and try again.")
+                return False
+            self._archive_id = uuid.uuid4().hex
+            self._archive_saved_version = None
+            self._archive_attached = False
             cfg = self._cfg
             self._session_encounter_keys.clear()
             self._session_stats = SessionStats(
                 cfg.player_name, include_personal=bool(getattr(cfg, "include_personal", False)), vocab=VOCAB,
                 roster=self._roster,
             )
-            snap = self._session_stats.snapshot()
+            self._quality_active.clear()
+            self._ensure_archive()
+            self._save_session_archive(force=True)
+            self._refresh_ongoing_quality(time.time())
+            snap = self._timed_session_snapshot(detail_limit=200)
+        snap.emitted_at = time.monotonic()
         self.session.emit(snap)
         log.info("session counters reset")
+        return True
 
     def _maybe_emit_session(self, now_mono: float) -> None:
         """Emit the session snapshot: <= 2 Hz when new entries arrived, and every 5 s regardless."""
@@ -564,15 +631,317 @@ class Engine(QObject):
             elapsed = now_mono - self._last_session_at
             if not ((self._session_dirty and elapsed >= SESSION_MIN_INTERVAL_S) or elapsed >= SESSION_TICK_S):
                 return
-            snap = self._session_stats.snapshot()
+            self._refresh_ongoing_quality(time.time())
+            snap = self._timed_session_snapshot(detail_limit=200)
             self._session_dirty = False
             self._last_session_at = now_mono
+            self._save_session_archive()
+        snap.emitted_at = time.monotonic()
         self.session.emit(snap)
         with self._lock:
             self._maybe_save_roster(now_mono)
         if now_mono - self._last_vocab_save >= VOCAB_SAVE_S:
             self._last_vocab_save = now_mono
             self._save_vocab()
+
+    def _ensure_archive(self, *, recovering: bool = False) -> None:
+        if self._archive_error:
+            return
+        from mnmparse.session_archive import SessionArchive
+        original_details = None
+        try:
+            if self._archive is None:
+                self._archive = SessionArchive(project_path(self._cfg.log_dir) / "sessions.sqlite3")
+            if not self._archive_attached and not recovering:
+                from mnmparse.session_archive import DETAIL_FIELDS
+                original_details = {field: getattr(self._session_stats, field) for field in DETAIL_FIELDS}
+                with self._archive.transaction():
+                    self._archive.attach_details(self._session_stats, self._archive_id)
+                    self._archive.save_session(self._archive_id, self._session_stats)
+                self._archive_attached = True
+        except Exception as exc:
+            if original_details is not None:
+                for field, values in original_details.items():
+                    setattr(self._session_stats, field, values)
+            self._archive = None
+            self._archive_error = str(exc)
+            log.exception("session archive unavailable; keeping history in memory")
+            self.notice.emit("Session recovery is unavailable; history will stay in memory. Check the log folder.")
+
+    def _save_session_archive(self, *, ended: float | None = None, force: bool = False) -> bool:
+        self._refresh_ongoing_quality(ended if ended is not None else time.time())
+        self._ensure_archive()
+        if self._archive is None:
+            return False
+        roster = self._session_stats.roster
+        dependency = (self._session_stats.version, getattr(roster, "version", 0), ended)
+        if not force and self._archive_saved_version == dependency:
+            return True
+        try:
+            self._archive.save_session(self._archive_id, self._session_stats, ended=ended)
+            self._archive_saved_version = dependency
+            return True
+        except Exception as exc:
+            self._archive_error = str(exc)
+            log.exception("session recovery checkpoint failed")
+            return False
+
+    def archived_sessions(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        """Raw local metadata; Casual UI must use date, own character and zone labels."""
+        with self._lock:
+            self._ensure_archive()
+            return self._archive.sessions(limit=limit, offset=offset) if self._archive is not None else []
+
+    def archive_import(self, result: Any, *, cancelled: Any = None) -> str:
+        """Archive a parsed import in its background worker, preserving correction evidence."""
+        session = getattr(result, "session_stats", None)
+        if session is None:
+            raise ValueError("import does not include raw session state")
+        with self._lock:
+            self._ensure_archive()
+            archive = self._archive
+        if archive is None:
+            raise OSError("local session archive is unavailable")
+        session_id = uuid.uuid4().hex
+        stored = copy.copy(session)  # original raw import remains intact if archiving fails
+        try:
+            archive.attach_details(stored, session_id, cancelled=cancelled)
+            snapshots = {snap.key: snap for snap in result.encounters}
+            for enc in result.stats.history:
+                if cancelled is not None and cancelled():
+                    raise InterruptedError("import archive cancelled")
+                key = f"{enc.start:.3f}"
+                if key in snapshots:
+                    archive.save_encounter(session_id, result.stats, enc, snapshots[key])
+            ended = result.ended if result.ended is not None else session.started
+            # The browser sees the import only after all raw evidence was saved.
+            if cancelled is not None and cancelled():
+                raise InterruptedError("import archive cancelled")
+            archive.save_session(session_id, stored, ended=ended)
+        except Exception:
+            archive.discard(session_id)
+            log.exception("import archive incomplete; keeping original import data")
+            raise
+        return session_id
+
+    def flush_preferences(self) -> bool:
+        """Flush capture preferences and the recovery checkpoint before a local backup."""
+        with self._lock:
+            if self.is_running:
+                return False
+            try:
+                if self._roster is None:
+                    from mnmparse.party import PartyRoster
+                    self._roster = PartyRoster(self._cfg.player_name)
+                    self._roster.load(self._party_path(self._cfg))
+                    self._session_stats.set_roster(self._roster)
+                if not self._roster.save(self._party_path(self._cfg)):
+                    return False
+                VOCAB.save(project_path(self._cfg.log_dir) / VOCAB_FILE)
+                return self._save_session_archive(force=True)
+            except OSError:
+                log.exception("flushing preferences failed")
+                return False
+
+    def reload_preferences(self) -> bool:
+        """Replace restored preferences while stopped; retained old counts are not merged."""
+        from mnmparse.party import PartyRoster
+        with self._lock:
+            if self.is_running:
+                return False
+            data = _read_json(project_path(self._cfg.log_dir) / VOCAB_FILE)
+            roster = PartyRoster(self._cfg.player_name)
+            if data is None or not roster.load(self._party_path(self._cfg)):
+                return False
+            VOCAB.replace_dict(data)
+            self._roster = roster
+            if self._stopped_stats is not None:
+                self._stopped_stats.roster = roster
+            self._session_stats.set_roster(roster)
+            self._session_dirty = True
+            return True
+
+    def archived_session(self, session_id: str, *, detail_limit: int | None = 200, full: bool = False) -> SessionSnapshot:
+        with self._lock:
+            self._ensure_archive()
+            if self._archive is None:
+                raise KeyError(session_id)
+            if not full and detail_limit is not None and detail_limit <= 200:
+                preview = self._archive.preview(session_id, detail_limit=detail_limit)
+                if preview is not None:
+                    return preview
+            stats = self._archive.restore(session_id, vocab=VOCAB)
+            meta = self._archive.metadata(session_id)
+            ended = meta["ended"] if meta["ended"] is not None else meta["updated"]
+            return stats.snapshot(now=ended, detail_limit=None if full else detail_limit)
+
+    def archived_encounter(self, key: str, *, session_id: str | None = None) -> tuple[Stats, Encounter]:
+        with self._lock:
+            self._ensure_archive()
+            if self._archive is None:
+                raise KeyError(key)
+            return self._archive.encounter(key, session_id=session_id, vocab=VOCAB)
+
+    def archived_encounters(self, session_id: str, *, limit: int | None = None, offset: int = 0,
+                            full: bool = False) -> list[EncounterSnapshot]:
+        with self._lock:
+            self._ensure_archive()
+            if self._archive is None:
+                return []
+            count = None if full else max(1, int(limit if limit is not None else getattr(self._cfg, "history_recent_fights", 100)))
+            keys = self._archive.encounter_keys(session_id, limit=count, offset=offset, newest=not full)
+            if not full:
+                keys.reverse()
+            return [build_snapshot(stats, enc, stats.player_name)
+                    for stats, enc in (self._archive.encounter(key, session_id=session_id, vocab=VOCAB)
+                                       for key in keys)]
+
+    def _restore_archive(self, session_id: str) -> None:
+        restored = self._archive.restore(session_id, vocab=VOCAB)
+        quality = restored.capture_quality
+        observed = quality.pop("ongoing_intervals", [])
+        if observed:
+            quality["intervals"] = (quality.get("intervals", []) + observed)[-200:]
+            quality["interruption_count"] = quality.get("interruption_count", 0) + len(observed)
+            quality["interruption_seconds"] = quality.get("interruption_seconds", 0.0) + sum(
+                max(0.0, item["end"] - item["start"]) for item in observed)
+            restored._version += 1
+        self._archive_id = session_id
+        self._session_stats = restored
+        self._archive_attached = True
+        self._roster = restored.roster
+        keys = self._archive.encounter_keys(session_id, limit=max(1, int(getattr(self._cfg, "history_recent_fights", 100))), newest=True)
+        keys.reverse()
+        self._session_encounter_keys = set(keys)
+        self._history = []
+        self._history_sessions = {}
+        raw = None
+        for key in keys[-max(1, int(getattr(self._cfg, "history_recent_fights", 100))) :]:
+            stats, enc = self._archive.encounter(key, session_id=session_id, vocab=VOCAB)
+            self._history.append(build_snapshot(stats, enc, stats.player_name))
+            self._history_sessions[key] = session_id
+            if raw is None:
+                raw = stats
+                raw.history = []
+            raw.history.append(enc)
+        self._stopped_stats = raw
+        if raw is not None:
+            raw._restored_archive = True
+        if restored._zones:
+            self._last_zone = restored._zones[-1]
+        self._archive_saved_version = None
+        self._session_dirty = True
+
+    def restore_session(self, session_id: str) -> bool:
+        """Recover a local session while capture is stopped; a live worker is never replaced."""
+        with self._lock:
+            if self.is_running:
+                return False
+            self._ensure_archive()
+            if self._archive is None:
+                return False
+            try:
+                if not self._save_session_archive(ended=time.time(), force=True):
+                    return False
+                self._restore_archive(session_id)
+                self._save_session_archive(force=True)
+            except (KeyError, ValueError, OSError):
+                log.exception("session restore failed")
+                return False
+            snap = self._session_stats.snapshot(detail_limit=200)
+            snap.emitted_at = time.monotonic()
+        self.session.emit(snap)
+        return True
+
+    def correct_archived_encounter(self, key: str, *, session_id: str | None = None,
+                                   name: str | None = None, in_group: bool | None = None,
+                                   pet: str | None = None, owner: str | None = None) -> EncounterSnapshot:
+        """Rebuild an older raw fight on demand, without loading the entire history."""
+        notify_history = False
+        session_snap = None
+        with self._lock:
+            session_id = session_id or self._archive_id
+            stats, enc = self.archived_encounter(key, session_id=session_id)
+            old = build_snapshot(stats, enc, stats.player_name)
+            if name is not None:
+                stats.roster.set_manual(name, in_group)
+            if pet is not None:
+                stats.roster.set_pet_owner(pet, owner)
+            new = build_snapshot(stats, enc, stats.player_name)
+            self._archive.save_encounter(session_id, stats, enc, new)
+            if session_id == self._archive_id:
+                self._revise_session_encounter(old, new)
+                self._save_session_archive(force=True)
+                session_snap = self._timed_session_snapshot(detail_limit=200)
+            else:
+                session = self._archive.restore(session_id, vocab=VOCAB)
+                session.revise_encounter(old.duration if old.ours else None, new.duration if new.ours else None)
+                meta = self._archive.metadata(session_id)
+                self._archive.save_session(session_id, session, ended=meta["ended"])
+            for index, snap in enumerate(self._history):
+                if snap.key == key and self._history_sessions.get(key) == session_id:
+                    self._history[index] = new
+                    notify_history = True
+        new.emitted_at = time.monotonic()
+        if notify_history or session_id == self._archive_id:
+            self.encounter_updated.emit(new)
+        if session_snap is not None:
+            session_snap.emitted_at = time.monotonic()
+            self.session.emit(session_snap)
+        return new
+
+    def _record_timing(self, stage: str, started: float) -> None:
+        self._timings.setdefault(stage, deque(maxlen=256)).append((time.perf_counter() - started) * 1000.0)
+
+    def note_ui_delivery(self, milliseconds: float) -> None:
+        """GUI integration may report signal-to-render latency without holding raw frames."""
+        with self._lock:
+            self._timings.setdefault("ui_delivery", deque(maxlen=256)).append(max(0.0, float(milliseconds)))
+
+    def _timed_session_snapshot(self, *, detail_limit: int | None = None) -> SessionSnapshot:
+        started = time.perf_counter()
+        snap = self._session_stats.snapshot(detail_limit=detail_limit)
+        self._record_timing("session_snapshot", started)
+        return snap
+
+    def _quality_tick(self, kind: str, active: bool, now: float) -> None:
+        if active:
+            self._quality_active.setdefault(kind, now)
+            return
+        start = self._quality_active.pop(kind, None)
+        if start is None:
+            return
+        quality = self._session_stats.capture_quality
+        ongoing = [item for item in quality.get("ongoing_intervals", []) if item["kind"] != kind]
+        if ongoing:
+            quality["ongoing_intervals"] = ongoing
+        else:
+            quality.pop("ongoing_intervals", None)
+        quality.setdefault("intervals", []).append(dict(kind=kind, start=start, end=max(start, now)))
+        quality["intervals"] = quality["intervals"][-200:]
+        quality["interruption_count"] = quality.get("interruption_count", 0) + 1
+        quality["interruption_seconds"] = quality.get("interruption_seconds", 0.0) + max(0.0, now - start)
+        self._session_stats._version += 1
+        self._session_dirty = True
+
+    def _refresh_ongoing_quality(self, now: float) -> None:
+        """Persist only the period actually observed, including an interrupted shutdown."""
+        quality = self._session_stats.capture_quality
+        intervals = [dict(kind=kind, start=start, end=max(start, float(int(now))))
+                     for kind, start in self._quality_active.items()]
+        if intervals != quality.get("ongoing_intervals", []):
+            if intervals:
+                quality["ongoing_intervals"] = intervals
+            else:
+                quality.pop("ongoing_intervals", None)
+            self._session_stats._version += 1
+            self._session_dirty = True
+
+    def _quality_for(self, start: float, end: float) -> list[dict[str, Any]]:
+        intervals = list(self._session_stats.capture_quality.get("intervals", []))
+        intervals.extend(dict(kind=kind, start=since, end=end) for kind, since in self._quality_active.items())
+        return [dict(kind=item["kind"], start=max(start, item["start"]), end=min(end, item["end"]))
+                for item in intervals if item["end"] >= start and item["start"] <= end]
 
     @staticmethod
     def _party_path(cfg: Config) -> Path:
@@ -590,9 +959,9 @@ class Engine(QObject):
             return
         if not force and now_mono - getattr(self, "_roster_saved_at", 0.0) < ROSTER_SAVE_S:
             return
-        self._roster_saved = roster.version
         self._roster_saved_at = now_mono
-        roster.save(self._party_path(self.config))
+        if roster.save(self._party_path(self.config)):
+            self._roster_saved = roster.version
 
     # -- restart: tracker state and last zone ------------------------------------------------
     def _start_tracker(self, cfg: Config) -> tuple[Tracker, bool]:
@@ -755,16 +1124,25 @@ class Engine(QObject):
                     if index is None or pet not in stats.canonical_map(enc).values():
                         continue
                     old = self._history[index]
-                    snap = build_snapshot(stats, enc, self._cfg.player_name)
-                    if snap != old:
+                    context = stats
+                    source = enc
+                    if getattr(stats, "_restored_archive", False) and self._archive is not None:
+                        context, source = self._archive.encounter(old.key, session_id=self._history_sessions.get(old.key), vocab=VOCAB)
+                        context.roster.set_pet_owner(pet, owner)
+                    snap = build_snapshot(context, source, self._cfg.player_name)
+                    if dataclasses.replace(snap, emitted_at=0.0) != dataclasses.replace(old, emitted_at=0.0):
                         self._history[index] = snap
                         self._revise_session_encounter(old, snap)
+                        if self._archive is not None:
+                            self._archive.save_encounter(self._history_sessions.get(snap.key, self._archive_id), context, source, snap)
                         updated.append(snap)
             current = self._stats.current() if self._stats is not None else None
             live = build_snapshot(self._stats, current, self._cfg.player_name, now=time.time()) if current is not None else None
         for snap in updated:
+            snap.emitted_at = time.monotonic()
             self.encounter_updated.emit(snap)
         if live is not None:
+            live.emitted_at = time.monotonic()
             self.snapshot.emit(live)
 
     def pet_owners(self) -> dict[str, str]:
@@ -876,7 +1254,15 @@ class Engine(QObject):
             log.exception("Engine worker crashed")
             self.error.emit(f"Capture stopped: {exc}")
         finally:
-            self._finish()
+            try:
+                self._finish()
+            finally:
+                # Nothing after this handoff touches pipeline state. Keep ownership
+                # throughout cleanup, including a recognizer/source that stops slowly.
+                with self._lock:
+                    if self._thread is threading.current_thread():
+                        self._thread = None
+                self.stopped.emit()
 
     def _prepare_run(self, cfg: Config, ocr: OcrEngine) -> None:
         """Build the pipeline of a run: tracker, restart check, Stats, log writer."""
@@ -898,6 +1284,9 @@ class Engine(QObject):
             self._diagnostic_run_started = time.time()
             self._restart = _RestartTail(tail) if tail else None
             self._install_stats(cfg, saved_zone)
+            self._ensure_archive()
+            if self._archive is not None:
+                self._archive.prune(int(getattr(cfg, "history_retention_days", 30)), protected=self._archive_id)
             self._writer = LogWriter(
                 cfg.log_dir,
                 max_bytes=int(float(getattr(cfg, "log_max_mb", 5.0)) * 1_000_000),
@@ -939,12 +1328,19 @@ class Engine(QObject):
         if source is not None:
             try:
                 source.stop()
+                wait = getattr(source, "wait_stopped", None)
+                if callable(wait):
+                    while not wait(.5):
+                        # Cleanup happens only in the capture worker. Keep ownership
+                        # so another source cannot overlap a slow native shutdown.
+                        pass
             except Exception:  # noqa: BLE001
                 log.debug("source.stop() raised", exc_info=True)
 
     def _capture_loop(self, source: FrameSource) -> None:
         """Frame loop; returns when stopped or when the game window disappears."""
         self._set_state("paused" if self._paused else "running")
+        self._source_frame_count = None
         now = time.monotonic()
         last_frame_at = now
         last_lookup = now
@@ -965,13 +1361,27 @@ class Engine(QObject):
                     frame = None
                     last_frame_at = t0
                     self._warn_crop(cfg, exc)
+                with self._lock:
+                    self._check_source_dimensions(source, cfg, frame if not callable(region) else None)
                 if frame is not None:
                     last_frame_at = t0
+                    with self._lock:
+                        stamp = getattr(source, "latest_frame_time", None)
+                        self._source_frame_age_ms = max(0.0, (time.monotonic() - stamp) * 1000.0) if stamp else None
+                        count = getattr(source, "frame_count", None)
+                        if isinstance(count, int):
+                            if self._source_frame_count is not None:
+                                self._source_frames_skipped += max(0, count - self._source_frame_count - 1)
+                                self._source_frames_repeated += int(count == self._source_frame_count)
+                            self._source_frame_count = count
+                        self._quality_tick("capture_unavailable", False, time.time())
                     self._process_frame(frame, cfg, cropped=callable(region))
                 elif self._window_lost(source, t0 - last_frame_at, t0 - last_lookup, cfg):
                     return
                 elif t0 - last_frame_at > FRAME_LOSS_S:
                     last_lookup = t0
+                    with self._lock:
+                        self._quality_tick("capture_unavailable", True, time.time() - (t0 - last_frame_at))
 
             now = time.monotonic()
             if now >= next_expire:
@@ -1003,6 +1413,21 @@ class Engine(QObject):
                 return True
         return False
 
+    def _check_source_dimensions(self, source: FrameSource, cfg: Config, frame: Any = None) -> None:
+        dimensions = getattr(source, "full_frame_dimensions", None)
+        if dimensions is None and frame is not None:
+            dimensions = (int(frame.shape[1]), int(frame.shape[0]))
+        if not dimensions:
+            return
+        self._source_dimensions = tuple(dimensions)
+        calibration = cfg.capture_profiles.get(cfg.active_profile, {}).get("calibration")
+        checked = (cfg.active_profile, self._source_dimensions, tuple(sorted(calibration.items())) if calibration else None)
+        if checked == self._calibration_checked:
+            return
+        self._calibration_checked = checked
+        if calibration and self._source_dimensions != (calibration["width"], calibration["height"]):
+            self.notice.emit("Game dimensions changed; check the crop and capture profile.")
+
     def _warn_crop(self, cfg: Config, exc: Exception) -> None:
         if not self._crop_warned:
             self._crop_warned = True
@@ -1021,17 +1446,26 @@ class Engine(QObject):
         if ocr is None or tracker is None:
             return
         cfg = self._capture_config(cfg)
+        preprocess_started = time.perf_counter()
         try:
             img = preprocess(frame if cropped else crop_frame(frame, tuple(cfg.crop)), cfg.preprocess, cfg.ocr_scale)
         except ValueError as exc:
             self._warn_crop(cfg, exc)
             return
         t1 = time.perf_counter()
+        with self._lock:
+            self._record_timing("preprocess", preprocess_started)
         lines = ocr.read(img)
         ocr_ms = (time.perf_counter() - t1) * 1000.0
         now = time.time()
         with self._lock:
+            self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
+            tracking_started = time.perf_counter()
             new_messages = tracker.update(lines, now)
+            self._record_timing("tracking", tracking_started)
+            if self._last_frame_at:
+                self._frame_gap_ms = max(0.0, (time.monotonic() - self._last_frame_at) * 1000.0)
+            self._last_frame_at = time.monotonic()
             self._diagnostic_frames.append({
                 "read_at": now,
                 "crop": list(cfg.crop),
@@ -1119,6 +1553,8 @@ class Engine(QObject):
 
     def _note_window_state(self, tracker: Tracker, now: float) -> None:
         """Follow the tracker's scrolled-back state; log when it shows or clears (lock held)."""
+        self._quality_tick("chat_occluded", getattr(tracker, "_state", "") == "occluded", now)
+        self._quality_tick("chat_scrolled_back", bool(getattr(tracker, "scrolled_back", False)), now)
         if getattr(tracker, "scrolled_back", False):
             if self._scrolled_since is None:
                 self._scrolled_since = now
@@ -1196,6 +1632,7 @@ class Engine(QObject):
         writer, stats = self._writer, self._stats
         if writer is None or stats is None:
             return
+        parsing_started = time.perf_counter()
         ev: Event = parse_line(msg.text, msg.first_seen, cfg.player_name)
         if ev.kind == "unknown":
             # A clipped first glyph ("bepulifif pierces ...") is repaired from names seen so far.
@@ -1209,6 +1646,8 @@ class Engine(QObject):
             if guess is not None and stats.estimate_amount(guess):
                 ev = guess
         self._names.observe(ev)
+        ev.estimated_ts = bool(getattr(msg, "estimated_ts", False))
+        self._record_timing("parsing", parsing_started)
         unreadable = ev.kind in UNREADABLE_KINDS or ev.estimated
         self._recent_kinds.append("unreadable" if unreadable else ev.kind)
         reason = ("estimated_amount" if ev.estimated else
@@ -1227,14 +1666,40 @@ class Engine(QObject):
             "unreadable": bool(unreadable), "unreadable_reason": reason,
         })
         if not NOT_LOGGED_RX.match(msg.text):
+            writing_started = time.perf_counter()
             writer.write_event(ev)
+            self._record_timing("writing", writing_started)
         before = len(stats.history)
         stats.add(ev)
         try:
-            self._session_stats.add(ev)
+            if self._archive is not None:
+                with self._archive.transaction():
+                    previous_version = self._session_stats.version
+                    self._session_stats.add(ev)
+                    if self._session_stats.version != previous_version:
+                        self._archive.checkpoint(self._archive_id, self._session_stats)
+            else:
+                self._session_stats.add(ev)
             self._session_dirty = True
         except Exception:  # noqa: BLE001 - session bookkeeping must never stop the pipeline
             log.exception("session stats failed on %r", ev.text)
+            archive, self._archive = self._archive, None
+            self._archive_error = "session detail write failed"
+            if archive is not None:
+                try:
+                    from mnmparse.session_archive import DETAIL_FIELDS
+                    # The event transaction rolled back. Recover its last complete
+                    # checkpoint, retain all durable detail in memory, then retry
+                    # the event once without relying on the failed disk writer.
+                    recovered = archive.restore(self._archive_id, vocab=VOCAB)
+                    for field in DETAIL_FIELDS:
+                        setattr(recovered, field, list(getattr(recovered, field)))
+                    recovered.add(ev)
+                    self._session_stats = recovered
+                    self._session_dirty = True
+                    self.notice.emit("Session recovery storage failed; current data is retained in memory. Check the log folder.")
+                except Exception:
+                    log.exception("session recovery fallback failed")
         self._messages += 1
         self.message.emit(msg, ev)
         for closed in stats.history[before:]:
@@ -1263,12 +1728,29 @@ class Engine(QObject):
         stats = self._stats
         if stats is None:
             return None
+        enc.capture_quality["intervals"] = self._quality_for(enc.start, max(enc.end, time.time()))
+        enc.revision += 1
         snap = build_snapshot(stats, enc, self._cfg.player_name)
         self._history.append(snap)
+        self._history_sessions[snap.key] = self._archive_id
         self._session_encounter_keys.add(snap.key)
         if snap.ours:
             self._session_stats.note_encounter(snap.duration)
             self._session_dirty = True
+        self._ensure_archive()
+        if self._archive is not None:
+            try:
+                self._archive.save_encounter(self._archive_id, stats, enc, snap)
+                limit = max(1, int(getattr(self._cfg, "history_recent_fights", 100)))
+                del self._history[:-limit]
+                del stats.history[:-limit]
+                self._history_sessions = {item.key: self._history_sessions[item.key] for item in self._history}
+                self._session_encounter_keys.intersection_update(item.key for item in self._history)
+                self._save_session_archive(force=True)
+            except Exception as exc:
+                self._archive_error = str(exc)
+                log.exception("raw encounter archive failed; retaining editable history in memory")
+        snap.emitted_at = time.monotonic()
         self.encounter_closed.emit(snap)
         self.snapshot.emit(snap)
         self._last_snapshot_at = time.monotonic()
@@ -1276,8 +1758,11 @@ class Engine(QObject):
         return snap
 
     def _revise_session_encounter(self, old: EncounterSnapshot, new: EncounterSnapshot) -> None:
+        if self._history_sessions.get(old.key, self._archive_id) != self._archive_id:
+            return
         if old.key not in self._session_encounter_keys:
-            return  # retained history from before Reset Session cannot change new counters
+            if self._archive is None or not self._archive.contains_encounter(self._archive_id, old.key):
+                return  # retained history from before Reset Session cannot change new counters
         previous = old.duration if old.ours else None
         replacement = new.duration if new.ours else None
         if previous != replacement:
@@ -1312,6 +1797,7 @@ class Engine(QObject):
                 return []
             updated = self._rebuild_recent(stats, now, only_growth=not by_hand)
             for snap in updated:
+                snap.emitted_at = time.monotonic()
                 self.encounter_updated.emit(snap)
         if updated:
             log.info("party changed: %d recent fight(s) counted again", len(updated))
@@ -1337,11 +1823,14 @@ class Engine(QObject):
             new = build_snapshot(stats, enc, self._cfg.player_name)
             old_group = {r.name for r in old.rows if r.in_group}
             new_group = {r.name for r in new.rows if r.in_group}
-            changed = new_group > old_group if only_growth else new != old
+            changed = new_group > old_group if only_growth else (
+                dataclasses.replace(new, emitted_at=0.0) != dataclasses.replace(old, emitted_at=0.0))
             if not changed:
                 continue
             self._history[index] = new
             self._revise_session_encounter(old, new)
+            if self._archive is not None:
+                self._archive.save_encounter(self._history_sessions.get(new.key, self._archive_id), stats, enc, new)
             updated.append(new)
         updated.reverse()
         return updated
@@ -1359,9 +1848,15 @@ class Engine(QObject):
                 return
             elapsed = now_mono - self._last_snapshot_at
             if (self._snapshot_dirty and elapsed >= SNAPSHOT_MIN_INTERVAL_S) or elapsed >= SNAPSHOT_TICK_S:
-                snap = build_snapshot(stats, enc, self._cfg.player_name, now=time.time())
+                started = time.perf_counter()
+                now = time.time()
+                snap = build_snapshot(stats, enc, self._cfg.player_name, now=now)
+                snap = dataclasses.replace(snap, capture_quality=dict(snap.capture_quality,
+                                           intervals=self._quality_for(enc.start, now)))
+                self._record_timing("encounter_snapshot", started)
                 self._last_snapshot_at = now_mono
                 self._snapshot_dirty = False
+                snap.emitted_at = time.monotonic()
                 self.snapshot.emit(snap)
 
     def _status_payload(self) -> dict[str, Any]:
@@ -1380,6 +1875,7 @@ class Engine(QObject):
             garbled = len(kinds) >= GARBLE_MIN_MESSAGES and unreadable >= GARBLE_SHARE * len(kinds)
             payload: dict[str, Any] = {
                 "state": self._state,
+                "emitted_at": now,
                 "fps": round(fps, 1),
                 "ocr_ms": round(self._last_ocr_ms, 1),
                 "frames": self._frames,
@@ -1393,6 +1889,20 @@ class Engine(QObject):
                 "lines": self._last_lines,
                 "scrolled_back": self._scrolled_shown and self._state in ("running", "paused"),
                 "backlog": self._backlog_dropped,
+                "pipeline_ms": {stage: {"samples": len(values), "p50": round(sorted(values)[len(values) // 2], 2),
+                                          "p95": round(sorted(values)[min(len(values) - 1, int(len(values) * .95))], 2)}
+                                for stage, values in self._timings.items() if values},
+                "frame_gap_ms": round(self._frame_gap_ms, 1),
+                "source_frame_age_ms": round(self._source_frame_age_ms, 1) if self._source_frame_age_ms is not None else None,
+                "source_frames_skipped": self._source_frames_skipped,
+                "source_frames_repeated": self._source_frames_repeated,
+                "source_dimensions": dict(width=self._source_dimensions[0], height=self._source_dimensions[1])
+                                     if self._source_dimensions else None,
+                "history_fights": len(self._history),
+                "raw_history_fights": len(self._stats.history) if self._stats is not None else
+                                      len(self._stopped_stats.history) if self._stopped_stats is not None else 0,
+                "archive_error": bool(self._archive_error),
+                "timing_sample_limit": 256,
             }
             return payload
 
@@ -1440,6 +1950,9 @@ class Engine(QObject):
                     self._roster = stats.roster
                     self._stopped_stats = stats
                     self._last_zone = self._current_zone()
+                for kind in tuple(self._quality_active):
+                    self._quality_tick(kind, False, time.time())
+                self._save_session_archive(force=True)
                 if tracker is not None:
                     try:
                         self._save_state(cfg, tracker, self._last_zone)
@@ -1478,6 +1991,8 @@ class Engine(QObject):
     def _set_state(self, state: str) -> None:
         if state not in STATES:
             raise ValueError(f"unknown engine state {state!r}")
+        if self._stop_event.is_set() and state not in {"stopping", "stopped"}:
+            return
         if state == self._state:
             return
         self._state = state

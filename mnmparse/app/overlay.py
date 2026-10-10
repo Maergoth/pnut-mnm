@@ -67,6 +67,7 @@ from mnmparse.app.timer_panel import TimerPanel
 from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, MAX_RESPAWN_SECONDS, RespawnTimerDialog
 from mnmparse.app.window_identity import window_title
 from mnmparse.app.session_view import SessionView
+from mnmparse.privacy import casual_enabled, project_encounter, project_session, safe_event_text
 from mnmparse.app.widgets import (
     ElidedLabel,
     FeedView,
@@ -74,6 +75,7 @@ from mnmparse.app.widgets import (
     SliderRow,
     WarningLatch,
     _cell_tooltip,
+    actor_display_name,
     capture_warning,
     fmt_int,
     fmt_mmss,
@@ -84,6 +86,13 @@ from mnmparse.app.widgets import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _overlay_actor_name(row: Any) -> str:
+    """Keep combined owner/pet labels short enough for the overlay's name column."""
+    if getattr(row, "attributed_pets", None):
+        return f"{row.name} + Pet"
+    return actor_display_name(row)
 
 try:  # models.py is written concurrently; the fallback mirrors APP_SPEC section 5
     from mnmparse.app.models import owner_row
@@ -112,6 +121,7 @@ TABS: tuple[tuple[str, str], ...] = (
     ("taken", "Taken"),
     ("session", "Session"),
     ("feed", "Feed"),
+    ("revenge", "Revenge"),
 )
 """``(key, title)`` of the tab strip, in order."""
 
@@ -679,6 +689,7 @@ class _TabStrip(QWidget):
 
     def __init__(self, owner: "OverlayWindow") -> None:
         super().__init__(owner)
+        self._owner = owner
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -688,6 +699,10 @@ class _TabStrip(QWidget):
         self.set_font_px(OVERLAY_BASE_PX)
 
     MIN_PAD = 4.0  #: smallest padding either side of a tab title (px)
+
+    def visible_tabs(self) -> tuple[tuple[str, str], ...]:
+        return tuple(item for item in TABS if item[0] != "revenge"
+                     or bool(getattr(self._owner._cfg, "revenge_enabled", False)))
 
     def set_font_px(self, px: float) -> None:
         self._px = px
@@ -702,17 +717,19 @@ class _TabStrip(QWidget):
     def needed_width(self) -> int:
         """Width at which every tab title still has :attr:`MIN_PAD` either side."""
         fm = QFontMetricsF(self._font)
-        text = sum(fm.horizontalAdvance(title) for _key, title in TABS)
-        return int(math.ceil(text + 2 * self.MIN_PAD * len(TABS)))
+        tabs = self.visible_tabs()
+        text = sum(fm.horizontalAdvance(title) for _key, title in tabs)
+        return int(math.ceil(text + 2 * self.MIN_PAD * len(tabs)))
 
     def _layout_tabs(self) -> None:
         """Tab rectangles; the padding shrinks (down to :attr:`MIN_PAD`) before anything clips."""
         fm = QFontMetricsF(self._font)
-        widths = [fm.horizontalAdvance(title) for _key, title in TABS]
+        tabs = self.visible_tabs()
+        widths = [fm.horizontalAdvance(title) for _key, title in tabs]
         pad = self._px * 0.95
         available = float(self.width())
-        if available > 0 and sum(widths) + 2 * pad * len(TABS) > available:
-            pad = max(self.MIN_PAD, (available - sum(widths)) / (2 * len(TABS)))
+        if available > 0 and sum(widths) + 2 * pad * len(tabs) > available:
+            pad = max(self.MIN_PAD, (available - sum(widths)) / (2 * len(tabs)))
         x = 0.0
         self._rects = []
         for w in widths:
@@ -739,9 +756,10 @@ class _TabStrip(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
+            self._layout_tabs()
             i = self._index_at(event.position())
             if i >= 0:
-                self.tab_clicked.emit(TABS[i][0])
+                self.tab_clicked.emit(self.visible_tabs()[i][0])
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -755,7 +773,7 @@ class _TabStrip(QWidget):
         muted = qcolor(token("MUTED"))
         accent = qcolor(token("ACCENT"))
         h = self.height()
-        for i, ((key, title), rc) in enumerate(zip(TABS, self._rects)):
+        for i, ((key, title), rc) in enumerate(zip(self.visible_tabs(), self._rects)):
             active = key == self._current
             if i == self._hover and not active:
                 p.setPen(Qt.PenStyle.NoPen)
@@ -852,6 +870,8 @@ class OverlayWindow(QWidget):
         self._stack.addWidget(self._table)
         self._stack.addWidget(self._feed)
         self._stack.addWidget(self._session)
+        self._revenge = QWidget(self._stack)
+        self._stack.addWidget(self._revenge)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 4, 10, 8)
@@ -887,6 +907,7 @@ class OverlayWindow(QWidget):
         self._geometry_timer.timeout.connect(self.persist_geometry)
 
         self._table.set_name_tooltip_provider(self._name_tooltip)
+        self._table.set_name_label_provider(_overlay_actor_name)
         for child in self.findChildren(QWidget):
             child.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self._timer_panel = TimerPanel(self, settings, OVERLAY_FLAGS)  # docked first: under the overlay
@@ -1004,7 +1025,14 @@ class OverlayWindow(QWidget):
         the dimmed *ended* state until the next encounter opens.  Another group's
         fight (``snap.ours`` false) is ignored unless that is switched on.
         """
+        self._raw_live = snap
         if snap is not None:
+            if not getattr(snap, "privacy_mode", ""):
+                if not hasattr(self, "_raw_history"):
+                    self._raw_history = {}
+                if snap.closed:
+                    self._raw_history[snap.key] = snap
+            snap = project_encounter(snap, self._cfg)
             self._live = snap
             if getattr(snap, "closed", False):
                 self._remember(snap)
@@ -1033,10 +1061,17 @@ class OverlayWindow(QWidget):
 
     # -- encounter history (dropdown + zone summaries) ---------------------------------
     def _remember(self, snap: Any) -> None:
+        if not hasattr(self, "_raw_history"):
+            self._raw_history = {}
+        if not getattr(snap, "privacy_mode", ""):
+            self._raw_history[snap.key] = snap
+        snap = project_encounter(snap, self._cfg)
         self._history.pop(snap.key, None)
         self._history[snap.key] = snap
         while len(self._history) > HISTORY_LIMIT:
-            self._history.pop(next(iter(self._history)))
+            old = next(iter(self._history))
+            self._history.pop(old)
+            self._raw_history.pop(old, None)
 
     def set_history(self, snaps: Sequence[Any] | None) -> None:
         """Prime the encounter list (oldest first, as ``Engine.history`` returns)."""
@@ -1049,6 +1084,10 @@ class OverlayWindow(QWidget):
         the live display is left alone."""
         if snap is None:
             return
+        if not hasattr(self, "_raw_history"):
+            self._raw_history = {}
+        self._raw_history[snap.key] = snap
+        snap = project_encounter(snap, self._cfg)
         key = snap.key
         if key in self._history:
             self._history[key] = snap  # same place in the list
@@ -1089,6 +1128,7 @@ class OverlayWindow(QWidget):
             snap = self._history.get(snap.key, snap)
             if self._live is not None and self._live.key == snap.key:
                 snap = self._live
+        snap = project_encounter(snap, self._cfg)
         if snap is None or not self._listed(snap):
             self._pinned = None
             self._pin_live_key = None
@@ -1107,6 +1147,16 @@ class OverlayWindow(QWidget):
     def pinned(self) -> Any | None:
         return self._pinned
 
+    def clear_history(self) -> None:
+        self._throttle.stop()
+        self._pending, self._pending_set = None, False
+        self._history.clear()
+        self._raw_history = {}
+        self._raw_live = self._live = self._snap = self._pinned = None
+        self._pin_live_key = None
+        self._refresh_header()
+        self._refresh_rows()
+
     def _visit_key(self, snap: Any) -> tuple[str, float]:
         return (str(getattr(snap, "zone", "") or ""), float(getattr(snap, "zone_since", 0.0) or 0.0))
 
@@ -1122,7 +1172,11 @@ class OverlayWindow(QWidget):
         if not snaps:
             return None
         title = visit[0] or "this zone"
-        return merge_snapshots(snaps, key=f"zone:{visit[0]}|{visit[1]:.0f}", label=title, zone=visit[0], zone_since=visit[1])
+        raw_history = getattr(self, "_raw_history", {})
+        raw_live = getattr(self, "_raw_live", None)
+        raw = [raw_live if raw_live is not None and s.key == raw_live.key else raw_history.get(s.key, s) for s in snaps]
+        return project_encounter(merge_snapshots(raw, key=f"zone:{visit[0]}|{visit[1]:.0f}", label=title,
+                                                zone=visit[0], zone_since=visit[1]), self._cfg)
 
     def _visit_snaps(self, ref: Any) -> list[Any]:
         visit = self._visit_key(ref)
@@ -1243,8 +1297,9 @@ class OverlayWindow(QWidget):
                     browse: lambda: self.open_encounter_menu(event.globalPos())}
         row = self._table.row_at(event.globalPos()) if self._tab not in ("feed", "session") and self._view_mode != "self" else None
         handlers.update(self._add_respawn_entries(menu, self._respawn_names_at(event.globalPos(), row)))
-        handlers.update(add_group_entries(menu, row, self.group_override_requested.emit))
-        handlers.update(add_pet_entries(menu, row, self._snap, self.pet_owner_requested.emit))
+        if not casual_enabled(self._cfg):
+            handlers.update(add_group_entries(menu, row, self.group_override_requested.emit))
+            handlers.update(add_pet_entries(menu, row, self._snap, self.pet_owner_requested.emit))
         chosen = menu.exec(event.globalPos())
         menu.deleteLater()
         action = handlers.get(chosen)
@@ -1323,6 +1378,25 @@ class OverlayWindow(QWidget):
 
     def set_config(self, cfg: Any) -> None:
         self._cfg = cfg
+        if self._tab == "revenge" and not bool(getattr(cfg, "revenge_enabled", False)):
+            self.set_tab("damage")
+        self._tabs.update()
+        QToolTip.hideText()
+        self._throttle.stop()
+        self._pending, self._pending_set = None, False
+        self._history = {key: project_encounter(snap, cfg) for key, snap in getattr(self, "_raw_history", {}).items()}
+        self._live = project_encounter(getattr(self, "_raw_live", None), cfg)
+        self._snap = self._live
+        self._pinned = None
+        self._pin_live_key = None
+        self._table.clear_selection()
+        self._feed.clear()
+        self._timer_panel._popups.clear()
+        self._timer_panel.sync()
+        self._session.set_config(cfg)
+        self._session.set_snapshot(project_session(getattr(self, "_raw_session", None), cfg))
+        self._refresh_header()
+        self._refresh_rows()
         self._attack_bar.set_player_name(str(getattr(cfg, "player_name", "") or ""))
         self.set_attack_bar_enabled(bool(getattr(cfg, "attack_bar", True)))
 
@@ -1341,6 +1415,8 @@ class OverlayWindow(QWidget):
         if tab not in {k for k, _ in TABS}:
             log.warning("overlay: unknown tab %r", tab)
             return
+        if tab == "revenge" and not bool(getattr(self._cfg, "revenge_enabled", False)):
+            tab = "damage"
         changed = tab != self._tab
         self._tab = tab
         self._tabs.set_current(tab)
@@ -1395,6 +1471,11 @@ class OverlayWindow(QWidget):
         DANGER even when the line names the player instead of YOU; ``None`` falls back
         to the feed's own YOU/YOUR word scan.
         """
+        if casual_enabled(self._cfg):
+            from mnmparse.parser import parse_line
+            text = safe_event_text(parse_line(text, time.time(), getattr(self._cfg, "player_name", "")), self._cfg)
+            if text is None:
+                return
         self._feed.append(text, kind, is_player_action, time.time(), is_player_target=is_player_target)
 
     def persist_geometry(self) -> None:
@@ -1422,6 +1503,8 @@ class OverlayWindow(QWidget):
         self._font_scale = _clamp(float(s.value(g + "font_scale", float(getattr(cfg, "overlay_font_scale", 1.0)), type=float)), *FONT_SCALE_RANGE)
         tab = str(s.value(g + "tab", str(getattr(cfg, "overlay_tab", "damage") or "damage")))
         self._tab = tab if tab in {k for k, _ in TABS} else "damage"
+        if self._tab == "revenge" and not bool(getattr(cfg, "revenge_enabled", False)):
+            self._tab = "damage"
         sort_key = str(s.value(g + "sort_key", "damage"))
         sort_desc = bool(s.value(g + "sort_desc", True, type=bool))
         self._table.set_sort(sort_key, sort_desc)
@@ -1438,11 +1521,24 @@ class OverlayWindow(QWidget):
             return self._feed
         if tab == "session":
             return self._session
+        if tab == "revenge":
+            return self._revenge
         return self._table
+
+    def set_revenge_controller(self, controller: Any) -> None:
+        from mnmparse.app.revenge import RevengeList
+        old = self._revenge
+        self._revenge = RevengeList(controller, compact=True)
+        self._stack.removeWidget(old)
+        old.deleteLater()
+        self._stack.addWidget(self._revenge)
+        self._stack.setCurrentWidget(self._widget_for_tab(self._tab))
 
     def set_session(self, snap: Any | None) -> None:
         """Replace the session (loot / kills / CC) data shown on the Session tab."""
-        self._session.set_snapshot(snap)
+        self._raw_session = snap
+        self._session.set_config(self._cfg)
+        self._session.set_snapshot(project_session(snap, self._cfg))
 
     def _on_sort_changed(self, key: str, descending: bool) -> None:
         self._settings.setValue(f"{SETTINGS_GROUP}/sort_key", key)
@@ -1579,7 +1675,7 @@ class OverlayWindow(QWidget):
         )
 
     def _refresh_rows(self) -> None:
-        if self._tab in ("feed", "session"):
+        if self._tab in ("feed", "session", "revenge"):
             return
         if self._snap is None:
             rows: Sequence[Any] = []

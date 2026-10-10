@@ -129,6 +129,12 @@ class SessionSnapshot:
     outsider_crafts: list[tuple[str, int]] = field(default_factory=list)
     #: quest hand-in rewards ("You receive X from <NPC>"): not corpse loot, not in ``items``
     rewards: list[LootEntry] = field(default_factory=list)
+    revision: int = 0
+    capture_quality: dict[str, Any] = field(default_factory=dict)
+    privacy_mode: str = ""
+    group_averages: dict[str, float] = field(default_factory=dict)
+    group_average_count: int = 0
+    emitted_at: float = 0.0
 
     @property
     def kills_per_hour(self) -> float:
@@ -170,22 +176,29 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         by_item[item] += n
     gross = sum(c for name, c in snap.coin_by_looter if name == player)
     deaths = [(name, n) for name, n in snap.deaths_by_player if name == player]
+    personal = getattr(snap, "_personal_totals", {})
+    complete = personal if personal.get("player") == player else {}
+    item_counts = complete.get("items_by_name", sorted(items.items(), key=lambda kv: (-kv[1], kv[0])))
+    item_total = complete.get("items", len(loot))
+    craft_counts = complete.get("crafts_by_item", sorted(by_item.items(), key=lambda kv: (-kv[1], kv[0])))
+    craft_total = complete.get("crafts", sum(by_item.values()))
+    kill_total = complete.get("kills", len(kills))
     return dataclasses.replace(
         snap,
-        items=len(loot),
-        items_by_name=sorted(items.items(), key=lambda kv: (-kv[1], kv[0])),
-        items_by_looter=[(player, len(loot))] if loot else [],
-        item_looters={item: [(player, n)] for item, n in items.items()},
+        items=item_total,
+        items_by_name=item_counts,
+        items_by_looter=[(player, item_total)] if item_total else [],
+        item_looters={item: [(player, n)] for item, n in item_counts},
         loot=loot,
         coin_total=snap.coin_received,
         coin_by_looter=[(LOOTED_BY_YOU, gross)] if gross else [],
         rewards=[e for e in snap.rewards if e.looter == player],
-        crafts=sum(by_item.values()),
-        crafts_by_crafter=[(player, sum(by_item.values()))] if crafts else [],
-        crafts_by_item=sorted(by_item.items(), key=lambda kv: (-kv[1], kv[0])),
-        kills=len(kills),
-        kills_by_killer=[(player, len(kills))] if kills else [],
-        kills_by_target=sorted(by_target.items(), key=lambda kv: (-kv[1], kv[0])),
+        crafts=craft_total,
+        crafts_by_crafter=[(player, craft_total)] if craft_total else [],
+        crafts_by_item=craft_counts,
+        kills=kill_total,
+        kills_by_killer=[(player, kill_total)] if kill_total else [],
+        kills_by_target=complete.get("kills_by_target", sorted(by_target.items(), key=lambda kv: (-kv[1], kv[0]))),
         deaths=sum(n for _n, n in deaths),
         deaths_by_player=deaths,
         kill_entries=kills,
@@ -253,6 +266,9 @@ class SessionStats:
         self._names: Counter[str] = Counter()
         self._recent: deque[SessionEntry] = deque(maxlen=RECENT_LIMIT)
         self._version = 0
+        self.capture_quality: dict[str, Any] = {}
+        self._snapshot_cache: dict[Any, SessionSnapshot] = {}
+        self._snapshot_revision = 0
 
     # ------------------------------------------------------------------
     @property
@@ -284,6 +300,11 @@ class SessionStats:
     def add(self, ev: Event) -> None:
         """Feed one parsed event; most kinds are ignored here."""
         self.last_ts = max(self.last_ts, float(ev.ts))
+        for name, observed in (("estimated_amounts", ev.estimated), ("delayed_timestamps", ev.estimated_ts),
+                               ("unrecognized_messages", ev.kind in {"unknown", "ability_partial"})):
+            if observed:
+                self.capture_quality[name] = self.capture_quality.get(name, 0) + 1
+                self._version += 1
         if self.roster is None:
             self._local_roster.observe(ev)
         kind = ev.kind
@@ -305,6 +326,7 @@ class SessionStats:
             self._coins.append(coin)
             if ev.split_copper is not None:
                 self._set_split(coin, int(ev.split_copper))
+                self._coins[-1] = coin
         elif kind == "coin_split":
             # "22 copper coins from X's corpse as your split.": the second row of a wrapped coin line
             if not self._join_split(ev):
@@ -380,13 +402,18 @@ class SessionStats:
         if ev.split_copper is None:
             return False
         split = int(ev.split_copper)
-        for coin in reversed(self._coins):
+        for index in range(len(self._coins) - 1, -1, -1):
+            coin = self._coins[index]
             if abs(float(ev.ts) - coin.ts) > COIN_SPLIT_JOIN_S:
                 break
             if coin.split is None:
                 if split > coin.copper:
                     break
                 self._set_split(coin, split)
+                self._coins[index] = coin
+                for entry in self._recent:
+                    if entry.ts == coin.entry.ts and entry.kind == "coin":
+                        entry.text = coin.entry.text
                 return True
         return False
 
@@ -400,7 +427,7 @@ class SessionStats:
         roster = self.roster if self.roster is not None else self._local_roster
         return {who(n) for n in roster.members()} | {you}, True
 
-    def _classify_slain(self, who: Any) -> tuple[list[tuple[float, str | None, str]], list[tuple[float, str]], list[tuple[float, str]], int]:
+    def _classify_slain(self, who: Any, detail_limit: int | None = None) -> tuple[Any, Any, Any, int, dict[str, Any]]:
         """Split the slain lines into party kills, party deaths, outsider deaths and outsider kills.
 
         ``who(name)`` maps a raw name to its displayed spelling.  Rules, in order: a line
@@ -416,16 +443,24 @@ class SessionStats:
         party, _known = self._party(who)
         # Anyone seen killing an "a/an/the" mob is a player (outside the party, too).
         players = party | {who(k) for _ts, k, v, _o in self._slain if k and is_npc_name(v)}
-        kills: list[tuple[float, str | None, str]] = []
-        deaths: list[tuple[float, str]] = []
-        outsiders: list[tuple[float, str]] = []
+        kills = deque(maxlen=detail_limit)
+        deaths = deque(maxlen=detail_limit)
+        outsiders = deque(maxlen=detail_limit)
+        totals = {name: Counter() for name in ("killers", "targets", "deaths", "outsiders", "own_targets")}
+        def killed(ts: float, killer: str | None, victim: str) -> None:
+            kills.append((ts, killer, victim))
+            if killer:
+                totals["killers"][killer] += 1
+            totals["targets"][victim] += 1
+            if killer == you:
+                totals["own_targets"][victim] += 1
         outsider_kills = 0
         last_death: dict[str, float] = {}
         for ts, killer_raw, victim_raw, ours in self._slain:
             killer = who(killer_raw) if killer_raw else None
             victim = who(victim_raw)
             if ours:
-                kills.append((ts, killer, victim))
+                killed(ts, killer, victim)
                 continue
             if victim == you:
                 is_death = True
@@ -441,7 +476,7 @@ class SessionStats:
                 is_death = victim in players and killer not in players
             if not is_death:
                 if killer in party:
-                    kills.append((ts, killer, victim))
+                    killed(ts, killer, victim)
                 else:
                     outsider_kills += 1
                 continue
@@ -450,9 +485,26 @@ class SessionStats:
                 continue
             last_death[victim] = ts
             (deaths if victim in party else outsiders).append((ts, victim))
-        return kills, deaths, outsiders, outsider_kills
+            totals["deaths" if victim in party else "outsiders"][victim] += 1
+        return list(kills), list(deaths), list(outsiders), outsider_kills, totals
 
-    def snapshot(self, now: float | None = None) -> SessionSnapshot:
+    def snapshot(self, now: float | None = None, *, detail_limit: int | None = None) -> SessionSnapshot:
+        """Reuse stable session content; only elapsed changes while idle."""
+        detail_limit = None if detail_limit is None else max(1, int(detail_limit))
+        roster = self.roster if self.roster is not None else self._local_roster
+        dependency = (self.version, self.player_name, self.include_personal, id(roster), getattr(roster, "version", 0),
+                      id(self.vocab), getattr(self.vocab, "_version", 0), self.encounters, self.combat_seconds, detail_limit)
+        content = self._snapshot_cache.get(dependency)
+        if content is None:
+            content = self._build_snapshot(self.started, detail_limit=detail_limit)
+            self._snapshot_revision += 1
+            content.revision = self._snapshot_revision
+            self._snapshot_cache = {dependency: content}
+        result = dataclasses.replace(content, elapsed=max(0.0, (time.time() if now is None else now) - self.started))
+        result._personal_totals = content._personal_totals
+        return result
+
+    def _build_snapshot(self, now: float | None = None, *, detail_limit: int | None = None) -> SessionSnapshot:
         """Build the display snapshot (names merged through the OCR-noise canonicaliser
         and, with a vocabulary, mapped to the spellings learned over the session)."""
         now = time.time() if now is None else now
@@ -477,11 +529,11 @@ class SessionStats:
 
         items_by_looter = fold(self._items_by_looter)
         coin_by_looter = fold(self._coin_by_looter)
-        kill_list, death_list, outsider_list, outsider_kills = self._classify_slain(who)
-        kills_by_killer: Counter[str] = Counter(k for _ts, k, _v in kill_list if k)
-        kills_by_target: Counter[str] = Counter(v for _ts, _k, v in kill_list)
-        deaths_by_player: Counter[str] = Counter(v for _ts, v in death_list)
-        outsider_deaths: Counter[str] = Counter(v for _ts, v in outsider_list)
+        kill_list, death_list, outsider_list, outsider_kills, slain = self._classify_slain(who, detail_limit)
+        kills_by_killer = slain["killers"]
+        kills_by_target = slain["targets"]
+        deaths_by_player = slain["deaths"]
+        outsider_deaths = slain["outsiders"]
         item_looters: dict[str, Counter[str]] = {}
         for item, counter in self._item_looters.items():
             merged = item_looters.setdefault(item_name(item), Counter())
@@ -495,9 +547,10 @@ class SessionStats:
         # Crafts count only for the viewer and identified party members.
         you = self._you()
         party, known = self._party(who)
-        crafts: list[tuple[float, str, str, int]] = []
+        crafts = deque(maxlen=detail_limit)
         crafts_by_crafter: Counter[str] = Counter()
         crafts_by_item: Counter[str] = Counter()
+        own_crafts: Counter[str] = Counter()
         outsider_crafts: Counter[str] = Counter()
         for ts, raw, item, n in self._craft_entries:
             crafter, item = who(raw), item_name(item)
@@ -507,13 +560,15 @@ class SessionStats:
             crafts.append((ts, crafter, item, n))
             crafts_by_crafter[crafter] += n
             crafts_by_item[item] += n
+            if crafter == you:
+                own_crafts[item] += n
         # What the viewer got: every split (theirs by definition), and their own loots without
         # one (solo, no "as your split").
         coin_received = sum(
             c.split if c.split is not None else (c.copper if who(c.looter) == you or is_you(c.looter) else 0)
             for c in self._coins
         )
-        return SessionSnapshot(
+        snap = SessionSnapshot(
             started=self.started,
             elapsed=max(0.0, now - self.started),
             encounters=self.encounters,
@@ -525,20 +580,21 @@ class SessionStats:
                 item: sorted(counter.items(), key=lambda kv: (-kv[1], kv[0])) for item, counter in item_looters.items()
             },
             zones=zones,
-            mez_breaks=[(ts, who(mob)) for ts, mob in self._mez_breaks],
+            mez_breaks=[(ts, who(mob)) for ts, mob in (self._mez_breaks if detail_limit is None else self._mez_breaks[-detail_limit:])],
             kill_entries=kill_list,
-            craft_entries=crafts,
-            loot=[dataclasses.replace(e, looter=who(e.looter), item=item_name(e.item)) for e in self._loot],
+            craft_entries=list(crafts),
+            loot=[dataclasses.replace(e, looter=who(e.looter), item=item_name(e.item))
+                  for e in (self._loot if detail_limit is None else self._loot[-detail_limit:])],
             coin_total=sum(self._coin_by_looter.values()),
             coin_by_looter=coin_by_looter,
             coin_split=sum(c.split for c in self._coins if c.split is not None),
             crafts=sum(crafts_by_crafter.values()),
             crafts_by_crafter=sorted(crafts_by_crafter.items(), key=lambda kv: (-kv[1], kv[0])),
             crafts_by_item=sorted(crafts_by_item.items(), key=lambda kv: (-kv[1], kv[0])),
-            kills=len(kill_list),
+            kills=sum(kills_by_target.values()),
             kills_by_killer=sorted(kills_by_killer.items(), key=lambda kv: (-kv[1], kv[0])),
             kills_by_target=sorted(kills_by_target.items(), key=lambda kv: (-kv[1], kv[0])),
-            deaths=len(death_list),
+            deaths=sum(deaths_by_player.values()),
             deaths_by_player=sorted(deaths_by_player.items(), key=lambda kv: (-kv[1], kv[0])),
             cc_total=sum(self._cc_by_type.values()),
             cc_by_type=[(cat, self._cc_by_type[cat]) for cat in CC_CATEGORIES if self._cc_by_type.get(cat)],
@@ -554,8 +610,18 @@ class SessionStats:
             party=sorted(party - {you}),
             coin_received=coin_received,
             outsider_crafts=sorted(outsider_crafts.items(), key=lambda kv: (-kv[1], kv[0])),
-            rewards=[dataclasses.replace(e, looter=who(e.looter), item=item_name(e.item)) for e in self._rewards],
+            rewards=[dataclasses.replace(e, looter=who(e.looter), item=item_name(e.item))
+                     for e in (self._rewards if detail_limit is None else self._rewards[-detail_limit:])],
+            capture_quality=dict(self.capture_quality),
         )
+        own_items = {item: counts.get(you, 0) for item, counts in item_looters.items() if counts.get(you, 0)}
+        own_kills = slain["own_targets"]
+        # Internal aggregation aid, excluded from dataclass/JSON export. Self filtering
+        # keeps full totals when the live view carries only recent detail rows.
+        snap._personal_totals = dict(player=you, items=sum(own_items.values()), items_by_name=fold(Counter(own_items), lambda n: n),
+                                    crafts=sum(own_crafts.values()), crafts_by_item=fold(own_crafts, lambda n: n),
+                                    kills=sum(own_kills.values()), kills_by_target=fold(own_kills, lambda n: n))
+        return snap
 
     # ------------------------------------------------------------------
     def _name(self, raw: str | None) -> str | None:

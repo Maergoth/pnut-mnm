@@ -43,6 +43,7 @@ class TrayIcon(QSystemTrayIcon):
     toggle_click_through_requested = Signal()
     reset_requested = Signal()
     quit_requested = Signal()
+    toggle_mute_requested = Signal()
 
     BALLOON_MS = 4000
 
@@ -70,6 +71,9 @@ class TrayIcon(QSystemTrayIcon):
         self._reset_action = QAction("Reset encounter", self._menu)
         self._reset_action.triggered.connect(self.reset_requested)
         self._quit_action = QAction("Quit", self._menu)
+        self._mute_action = QAction("Mute audio", self._menu)
+        self._mute_action.setCheckable(True)
+        self._mute_action.triggered.connect(self.toggle_mute_requested)
         self._quit_action.triggered.connect(self.quit_requested)
 
         self._menu.addAction(self._window_action)
@@ -81,6 +85,7 @@ class TrayIcon(QSystemTrayIcon):
         self._menu.addAction(self._lock_action)
         self._menu.addAction(self._click_through_action)
         self._menu.addSeparator()
+        self._menu.addAction(self._mute_action)
         self._menu.addAction(self._quit_action)
         self.setContextMenu(self._menu)
         self.activated.connect(self._on_activated)
@@ -123,6 +128,9 @@ class TrayIcon(QSystemTrayIcon):
     def set_status_text(self, text: str) -> None:
         """Set the hover tooltip (``APP_NAME - text``)."""
         self.setToolTip(f"{APP_NAME} - {text}" if text else APP_NAME)
+
+    def set_muted(self, muted: bool) -> None:
+        self._mute_action.setChecked(muted)
 
     # -- notifications --------------------------------------------------------------
 

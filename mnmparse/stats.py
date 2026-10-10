@@ -81,6 +81,8 @@ class Encounter:
     last_activity: float = 0.0
     closed: bool = False
     damage_events: int = 0  #: melee and ability hits so far (an encounter without any is dropped)
+    revision: int = 0  #: event and marker mutations, for stable-content snapshot caches
+    capture_quality: dict[str, Any] = field(default_factory=dict)
 
     @property
     def has_damage(self) -> bool:
@@ -242,6 +244,8 @@ class Stats:
         ):
             self.others_misses_seen = True
         enc = self._open
+        if enc is not None:
+            enc.revision += 1
         if enc is not None and ev.ts - enc.last_activity > self.encounter_timeout_s:
             self._close(enc, enc.last_activity, reason="timeout")
             enc = None
@@ -269,7 +273,7 @@ class Stats:
 
         if ev.kind in OPENING_KINDS:
             if enc is None:
-                enc = Encounter(start=ev.ts, end=ev.ts, last_activity=ev.ts)
+                enc = Encounter(start=ev.ts, end=ev.ts, last_activity=ev.ts, revision=1)
                 self._open = enc
                 enc.events.extend(e for e in self._prefight if ev.ts - e.ts <= PREFIGHT_S)
                 self._prefight.clear()
@@ -423,6 +427,7 @@ class Stats:
         """Close ``enc``; returns ``False`` when it was dropped for having no damage."""
         enc.end = max(enc.start, end)
         enc.closed = True
+        enc.revision += 1
         if self._open is enc:
             self._open = None
         if not enc.has_damage:

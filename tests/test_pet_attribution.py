@@ -127,7 +127,7 @@ class AttributionUiTests(unittest.TestCase):
     def test_reassign_refreshes_recent_closed_fight_even_same_group(self) -> None:
         from mnmparse.app.engine import Engine
         with tempfile.TemporaryDirectory() as directory:
-            engine = Engine(Config(player_name=PLAYER, log_dir=directory))
+            engine = Engine(Config(player_name=PLAYER, log_dir=directory, casual_mode=False, casual_mode_confirmed=True))
             stats = engine._install_stats(engine.config)
             now = time.time()
             for offset, line in enumerate([
@@ -156,7 +156,7 @@ class AttributionUiTests(unittest.TestCase):
         from mnmparse.app.engine import Engine
         from mnmparse.app.pages import LivePage
         with tempfile.TemporaryDirectory() as directory:
-            cfg = Config(player_name=PLAYER, log_dir=directory)
+            cfg = Config(player_name=PLAYER, log_dir=directory, casual_mode=False, casual_mode_confirmed=True)
             engine = Engine(cfg)
             engine.set_pet_owner("Kulepu", PLAYER)
             path = Path(directory) / "example.log"
@@ -186,6 +186,7 @@ class AttributionUiTests(unittest.TestCase):
             session.add(parse_line(f"--{looter} loots [{item}] from a rat's corpse.--", 100 + offset, PLAYER))
         for compact in (False, True):
             view = SessionView(compact=compact)
+            view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
             snap = session.snapshot(now=110)
             view.set_snapshot(snap)
             top = view._tree.topLevelItem(0)

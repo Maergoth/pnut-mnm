@@ -123,6 +123,9 @@ class _Load:
             selected = next((m for m in maps if m.url == self.preferred_url), maps[0] if maps else None)
             selected_url = selected.url if selected else ""
             data = self.repo.image(selected, refresh=self.refresh) if selected else b""
+            # QImage is reentrant; decode expensive originals in this worker.
+            # QPixmap creation and all scene changes remain in the GUI callback.
+            data = QImage.fromData(data) if data else QImage()
         except Exception as exc:
             log.info("Map load for %s: %s", self.zone, exc)
             error = str(exc)
@@ -434,7 +437,8 @@ class MapOverlay(QWidget):
             self._set_status(f"No map is published for {self._current_zone} yet.")
             self._loaded_zone = self._current_zone
             return
-        image = QImage.fromData(data)
+        # Accept bytes for callers predating worker-side decoding (and fixtures).
+        image = data if isinstance(data, QImage) else QImage.fromData(data)
         if image.isNull():
             self._set_status("The map image could not be read. Download maps in Settings to retry.")
             # An incomplete cached response should not poison later retries.

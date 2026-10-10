@@ -14,12 +14,13 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QFontMetricsF
 from PySide6.QtWidgets import QApplication, QMenu
 
 from mnmparse.app.models import build_snapshot, snapshot_rows_for_tab
 from mnmparse.app.overlay import OverlayWindow, add_pet_entries
 from mnmparse.app.pages import _MeterPane, export_csv, export_json
-from mnmparse.app.widgets import MeterTable, _cell_tooltip, _row_tooltip, actor_display_name, zone_tooltip
+from mnmparse.app.widgets import ROW_ROLE, MeterTable, _cell_tooltip, _row_tooltip, actor_display_name, zone_tooltip
 from mnmparse.config import Config
 from mnmparse.parser import parse_line
 from mnmparse.stats import Stats
@@ -140,20 +141,21 @@ class PetRollupUiTests(unittest.TestCase):
         self.assertIn("Maergoth + Maergoth&#x27;s Pets", _cell_tooltip(row, "damage"))
         self.assertIn("65", _cell_tooltip(row, "damage"))
         self.assertIn("Maergoth + Maergoth&#x27;s Pets", zone_tooltip(row, zone="Night Harbor", fights=1, combat_s=6))
-        csv_path = export_csv(snap, Path(self.tmp.name) / "parse.csv")
+        cfg = Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True)
+        csv_path = export_csv(snap, Path(self.tmp.name) / "parse.csv", cfg)
         with csv_path.open(newline="", encoding="utf-8") as fh:
             rows = list(csv.DictReader(fh))
         owner = next(item for item in rows if item["name"] == f"{PLAYER}+Pet")
         self.assertEqual(owner["damage"], "65")
         self.assertFalse(any(item["name"] in ("Kulepu", "Ralu") for item in rows))
-        json_path = export_json(snap, Path(self.tmp.name) / "parse.json")
+        json_path = export_json(snap, Path(self.tmp.name) / "parse.json", cfg)
         data = json.loads(json_path.read_text(encoding="utf-8"))
         owner = next(item for item in data["rows"] if item["name"] == PLAYER)
         self.assertEqual(owner["attributed_pets"], ["Kulepu", "Ralu"])
         self.assertEqual(owner["damage"], 65)
 
     def test_overlay_name_hover_uses_selected_fight_and_combined_pet_sources(self) -> None:
-        overlay = self.keep(OverlayWindow(self.settings, Config(player_name=PLAYER)))
+        overlay = self.keep(OverlayWindow(self.settings, Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True)))
         overlay.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         first = replace(attributed_fight(pet_only=True), key="one", closed=True, zone="Night Harbor", zone_since=90)
         second = replace(attributed_fight(), key="two", closed=True, zone="Night Harbor", zone_since=90)
@@ -175,6 +177,65 @@ class PetRollupUiTests(unittest.TestCase):
                 self.assertIn("Kulepu: slash", tooltip)
                 self.assertEqual("crush" in tooltip, has_owner_damage)
                 self.assertNotIn("in 2 fights", tooltip)
+
+    def test_overlay_combined_name_stays_short_across_metrics_without_changing_identity(self) -> None:
+        overlay = self.keep(OverlayWindow(self.settings, Config(
+            player_name="Mogmo", casual_mode=False, casual_mode_confirmed=True,
+        )))
+        overlay.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        for two_pets in (False, True):
+            original = attributed_fight(two_pets=two_pets)
+            snap = replace(original, rows=[
+                replace(row, name="Mogmo", taken=8, dtps=2, heals=12, hps=3)
+                if row.name == PLAYER else row for row in original.rows
+            ])
+            owner = next(row for row in snap.rows if row.name == "Mogmo")
+            overlay.set_snapshot(snap)
+            overlay._flush_snapshot()
+            for tab in ("overview", "damage", "healing", "taken"):
+                with self.subTest(two_pets=two_pets, tab=tab):
+                    overlay.set_tab(tab)
+                    model = overlay.meter._model
+                    row_index = next(i for i, row in enumerate(model._rows) if row.name == "Mogmo")
+                    name_index = model.index(row_index, model.column_index("name"))
+                    self.assertEqual(model.data(name_index), "Mogmo + Pet")
+                    self.assertIs(model.data(name_index, ROW_ROLE), owner)
+                    self.assertEqual(owner.attributed_pets, ["Kulepu", "Ralu"] if two_pets else ["Kulepu"])
+                    self.assertEqual(owner.display_name, f"Mogmo + Mogmo's {'Pets' if two_pets else 'Pet'}")
+                    for index, row in enumerate(model._rows):
+                        if row.name == "Tamsin":
+                            self.assertEqual(model.data(model.index(index, model.column_index("name"))), "Tamsin")
+
+            # Find the compact fit point using this environment's actual font. Windows
+            # and offscreen runners can have different fonts and column widths.
+            overlay.set_tab("overview")
+            overlay.show()
+            self.app.processEvents()
+            model = overlay.meter._model
+            name_column = model.column_index("name")
+            metrics = QFontMetricsF(overlay.meter._delegate._bold_font)
+            caption_width = metrics.horizontalAdvance("Mogmo + Pet")
+            original_width = metrics.horizontalAdvance(owner.display_name)
+            self.assertLess(caption_width, original_width)
+            minimum = overlay.minimumWidth()
+            for width in range(minimum, minimum + int(original_width) + 200, 4):
+                overlay.resize(width, 330)
+                self.app.processEvents()
+                name_width = overlay.meter.view.columnWidth(name_column) - 14
+                if name_width >= caption_width:
+                    break
+            self.assertEqual(metrics.elidedText("Mogmo + Pet", Qt.TextElideMode.ElideRight, name_width), "Mogmo + Pet")
+
+    def test_overlay_short_name_preserves_casual_peer_privacy(self) -> None:
+        overlay = self.keep(OverlayWindow(self.settings, Config(player_name=PLAYER)))
+        overlay.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        overlay.set_snapshot(attributed_fight("Tamsin", two_pets=True))
+        overlay._flush_snapshot()
+        overlay.set_tab("overview")
+        model = overlay.meter._model
+        labels = [model.data(model.index(i, model.column_index("name"))) for i in range(model.rowCount())]
+        self.assertIn(PLAYER, labels)
+        self.assertFalse(any("Tamsin" in str(label) or "Kulepu" in str(label) or "Ralu" in str(label) for label in labels))
 
 
 if __name__ == "__main__":

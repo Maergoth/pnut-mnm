@@ -52,7 +52,7 @@ class TriggerLabelEditorTests(unittest.TestCase):
         self.runner.save = Mock(side_effect=self.runner.store.save)
         self.runner.audio = SimpleNamespace(voices=lambda: [], devices=lambda: [])
         settings = QSettings(str(self.root / "settings.ini"), QSettings.Format.IniFormat)
-        self.page = TriggersPage(_MissingEngine(Config()), Config(), settings)
+        self.page = TriggersPage(_MissingEngine(Config()), Config(casual_mode=False, casual_mode_confirmed=True), settings)
         self.page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         self.page.set_runner(self.runner)
 

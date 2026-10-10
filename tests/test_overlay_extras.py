@@ -178,7 +178,8 @@ class OverlayExtrasTests(unittest.TestCase):
 
         self.tmp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.tmp.name) / "o.ini"), QSettings.Format.IniFormat)
-        self.overlay = OverlayWindow(self.settings, Config(player_name=PLAYER))
+        # These fixtures exercise named hover/detail behavior in confirmed full mode.
+        self.overlay = OverlayWindow(self.settings, Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
         self.overlay.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         self.overlay.attack_bar.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
 

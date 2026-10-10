@@ -29,7 +29,7 @@ VERSIONS = {
     "PySide6": "6.11.2", "PySide6-Essentials": "6.11.2",
     "PySide6-Addons": "6.11.2", "shiboken6": "6.11.2",
     "numpy": "2.5.3", "opencv-python": "5.0.0.93", "pillow": "12.3.0",
-    "mss": "10.2.0", "windows-capture": "2.0.1", "winrt-runtime": "3.2.1",
+    "mss": "10.2.0", "regex": "2026.9.29", "windows-capture": "2.0.1", "winrt-runtime": "3.2.1",
     "winrt-Windows.Foundation": "3.2.1",
     "winrt-Windows.Foundation.Collections": "3.2.1",
     "winrt-Windows.Globalization": "3.2.1", "winrt-Windows.Graphics.Imaging": "3.2.1",
@@ -231,7 +231,7 @@ def generated_notices() -> dict[str, bytes]:
     outputs[f"CPython-{PYTHON_VERSION}.txt"] = python_license.read_bytes()
     if b"Python Software Foundation" not in outputs[f"CPython-{PYTHON_VERSION}.txt"]:
         raise RuntimeError("CPython license file is incomplete")
-    for name in ("numpy", "opencv-python", "pillow", "mss", "windows-capture", "typing_extensions", "pyinstaller"):
+    for name in ("numpy", "opencv-python", "pillow", "mss", "regex", "windows-capture", "typing_extensions", "pyinstaller"):
         distribution = metadata.distribution(name)
         notices = {}
         for file in distribution.files or []:

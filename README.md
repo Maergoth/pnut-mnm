@@ -6,6 +6,10 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
+**v1.0 starts in Casual Mode:** your own information and rounded averages for known groups
+of at least three, with other individuals hidden. Guided setup, saved session history,
+capture profiles, preference backups and an optional PvP Revenge List are included.
+
 Do not talk about this tool in-game or use it to disparage or displace any other player. 
 
 <img width="524" height="294" alt="image" src="https://github.com/user-attachments/assets/7b9c3047-102d-4bce-8bf0-192e6c72482d" />
@@ -16,7 +20,8 @@ If you have any questions, or want to report people for being shitty with this t
 
 ## See PNUT in action
 
-Actual app views with sample combat and timer data.
+App views with sample combat and timer data. The individual-detail examples show Elitist
+Scumbag Mode; new installs start in Casual Mode.
 
 **Combat and session tracking.** Review encounters, damage, healing, crowd control, and loot.
 
@@ -92,26 +97,29 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-<version>-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.0-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
-**More info**, then **Run anyway**. Capture starts by itself when the app opens (Settings >
-"Start capture on launch" turns that off). Your settings (`config.json`), triggers
-(`triggers.json`), logs and learned spellings (`logs\`) are created next to the exe and are never
-part of a download.
+**More info**, then **Run anyway**. First launch opens setup; capture starts after you save
+it if **Start capture on launch** is enabled. Later launches use your saved setup. Your
+settings (`config.json`), triggers (`triggers.json`), Revenge List (`revenge.json`), logs,
+session history and learned spellings (`logs\`) are created locally and are never part
+of a download.
 
 **Names on each launch.** The Windows download starts the app under a freshly generated
 executable name each time. Its main window, overlays and timer dialogs also receive random
 window titles that stay consistent until you quit. Keep launching `PNUT M&M.exe`; shortcuts,
-settings and the Update button continue to work. Older temporary executable copies are
-cleaned up on later launches. Source runs randomize window titles but keep the Python process name.
+settings and the Update button continue to work. Temporary executable copies are cleaned
+up after exit; later launches retry verified copies that were still in use. Running copies
+and saved data are preserved. Source runs randomize window titles but keep the Python process name.
 This removes the usual fixed process/window labels; it does not make PNUT undetectable.
 The launcher appears briefly, and its files, icon and other identifying information remain.
 
 **App updates.** At the top of **Settings**, click **Update** to download the latest stable
 Windows release from GitHub. When it is ready, click **Restart to update**. PNUT verifies the
 download, replaces its application files, and keeps your configuration, triggers, logs and
-map cache. The previous application files are retained in a backup folder for recovery.
+map cache, session history and Revenge List. The previous application files are retained
+in a backup folder for recovery; **Restore previous app version** is in Settings.
 The main window reopens after the update, keeping its saved size and maximized state.
 **On startup** downloads updates automatically and offers a restart; it is unchecked by
 default. Source checkouts are updated through Git instead. You can also download a newer ZIP
@@ -164,10 +172,18 @@ The better the text looks, the better the OCR.
    while it is open; turn off "auto-open character sheet on loot" or move the Combat window. The
    tracker detects the overlap and skips those frames, but lines that scroll past meanwhile are
    lost.
-6. Open the app, go to **Settings > Crop**, press **Capture frame**, drag the rectangle over the
-   chat text only (exclude the tab header), press **Test OCR** to confirm the lines read
-   correctly, and **Save**. If you change OCR **Engine** or **Upscale**, stop and start capture
-   after saving; Test OCR previews the edited settings immediately.
+6. Open PNUT's setup, enter your character name, then **Capture frame**. Drag the rectangle
+   over the chat text only (exclude the tab header) and choose **Test OCR**. At least one
+   readable line enables Continue. On **Common options**, choose **Revenge List**, **Display
+   map**, **Auto attack bar**, and **Copy to clipboard after fight**, then **Save setup**.
+   Revenge List and automatic clipboard copy start off; the attack bar starts on. Map and
+   bar choices preserve existing preferences. Back keeps your choices; Cancel changes nothing.
+
+Reopen setup from **About > Run setup…** when chat moves. Its captured image is a local
+calibration preview, cleared when setup closes, including canceled captures. Casual Mode
+still protects combat views, OCR results and exports. Settings also provides crop coordinates
+and OCR options; its Casual preview hides chat pixels. Changes to capture/OCR settings take
+effect after applying them with capture stopped.
 
 Which chat window is read is decided by that rectangle alone: the app captures the whole game
 window as a picture and reads only the pixels inside the crop. Nothing is hooked. With two chat
@@ -187,7 +203,22 @@ the `mss` backend nothing is grabbed while the game window is gone.
 
 ### Using the app
 
-The top bar has **Start/Stop capture** and switches for **Overlay** and **Lock overlay**.
+**Casual Mode and Morality Adjustment.** The flower mode button between capture and Overlay
+opens **Settings > Morality Adjustment**. Casual Mode hides other individuals across meters,
+Session, Feed, history, overlays, tooltips, clipboard, file exports and support reports.
+Small or unknown groups show only your information. Unknown character identity hides details
+until your name is configured. Your assigned pets are folded into your own values.
+
+To request **Elitist Scumbag Mode**, drag the red handle most of the way right. A click or
+short drag keeps Casual Mode. The confirmation requires the promise that you
+"will not use it to shit on their teammates because video games are not difficult enough
+to be an asshole." Cancel, Escape or closing the dialog keeps Casual Mode. Returning to
+Casual applies immediately and clears stale details and queued speech. Mute and reduced
+animations apply to the brief switch cue. Existing raw local logs and earlier external
+copies are not erased. The individual breakdowns described below are available in confirmed
+Elitist mode.
+
+The top bar has **Start/Stop capture**, the mode button, **Overlay**, **Lock overlay**, and **Map**.
 Capture details (game window found, capture rate, OCR time, messages, covered frames,
 unreadable lines, re-read lines skipped) are in the Status section in Settings. A
 warning bar appears under the top bar, and a small one on the overlay, only when something
@@ -202,11 +233,10 @@ times spread over the gap, and the open fight does not time out meanwhile (for u
 minutes).
 
 For troubleshooting, use **Settings > Status > OCR Diagnosis** to save a ZIP report.
-It includes saved and edited settings, whether the crop is default or custom, the active
-OCR configuration and language, capture statistics, recent unrecognized or incomplete
-messages, and a fresh image of the Combat chat crop when the game is available. The report
-also records screen size and DPI. Saving it does not upload or send anything. It includes
-recent captured messages; lines that scrolled past without being captured cannot be recovered.
+It records capture/OCR settings, timing, crop dimensions, language, screen size and DPI.
+Casual reports omit images and raw chat; confirmed Elitist reports may include recent
+messages and a fresh crop image. Saving does not upload or send anything. Lines that scrolled
+past without being captured cannot be recovered.
 
 - **Live:** every encounter, grouped like Advanced Combat Tracker: one collapsible header per
   zone visit ("Night Harbor (West) · 61 encounters", time stamped with when you entered, the
@@ -242,13 +272,28 @@ recent captured messages; lines that scrolled past without being captured cannot
   gross amount you looted as a detail. Coin is shown as platinum/gold/silver/copper with
   100 copper to a silver, 100 silver to a gold and 100 gold to a platinum. Export writes
   JSON under `logs\exports\`.
-- **Feed:** every logged line, colored by kind, with filter chips and search.
+- **Feed:** readable captured events, colored by kind, with filter chips and search. Casual
+  Mode shows safe own-character text and withholds other source lines.
 - **Settings:** the Status section, player name, capture and OCR options, crop calibration,
   overlay defaults, encounter timeout ("Timeout without damage"), **Dummy Fix**, whether to
   count personal lines and whether to list other groups' fights.
-- **About:** version, safety posture, terms.
+- **About:** offline help, setup, shortcuts, version/build copy and a clearly labeled synthetic
+  demo. Demo data cannot be exported.
 
-The **overlay** has tabs Overview, Damage, Healing, Taken, Session and Feed. **Locked** means
+**Previous sessions and imports.** The Session source selector opens locally saved runs;
+**Resume selected session** requires capture stopped. Live pages through older encounters.
+Log imports run in the background and can be canceled; a canceled import is not added.
+Casual Mode also protects historical and imported views and exports.
+
+**Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
+log folder as named capture profiles. Stop capture before applying a profile or restoring
+a backup. Casual backups contain technical preferences with generic profile names; confirmed
+Elitist mode can include full preferences, triggers, corrections, learned spellings and
+Revenge List entries. Logs and images are excluded. Restore always returns to Casual Mode
+and keeps the current local log folder.
+
+The **overlay** has tabs Overview, Damage, Healing, Taken, Session and Feed, plus Revenge
+when Revenge List is enabled. **Locked** means
 it cannot be moved or resized; tabs, column sorting and hover breakdowns keep working. Unlocked
 (top-bar switch or tray menu), a hover toolbar appears: drag the header to move, use the grip
 to resize, set opacity and font size. **Click the header** to switch between the group table
@@ -357,8 +402,11 @@ Overlay turns it back on). It follows the overlay's lock and click-through, sits
 overlay when there is no room below, and "Reset position" brings it back too. The timing
 is only as good as the chat timestamps (about a sixth of a second).
 
-**Copy a fight to the clipboard.** When a fight your group took part in ends, a one-line
-summary goes to the clipboard and a soft "dink" plays, ready to paste into a chat:
+**Copy a fight to the clipboard.** Automatic copy is **off by default**. Enable **Copy to
+clipboard after fight** during setup, or **Settings > Export > Copy each finished fight**,
+to copy a summary when your group's fight ends. Casual copies contain only your values and
+eligible group averages, including with custom templates. A confirmed Elitist copy can show
+individual details, for example:
 
     a skeletal knight [0:48] 61.8 DPS - Maergoth 24.1, Brannoc 19.6, Tamsin 11.3, Wenna 6.8
 
@@ -377,7 +425,7 @@ between people, plus the order and how many people. Line fields: `{title}`, `{zo
 `{actors}`; person fields: `{rank}`, `{name}`, `{dps}`, `{damage}`, `{share}` (% of the group's
 damage), `{max}`, `{hit}` (hit %), `{hps}`, `{heal}`, `{taken}`, `{utility}`. A Python format spec
 works too (`{dps:.0f}`). Enemies are never listed, and the result is always one line. The sound
-uses the Triggers page's volume and output device.
+uses the Triggers page's volume and output device; master mute also applies.
 
 **Triggers** (the bell in the left rail) react to chat text. **Timer/trigger help** above the
 trigger list opens an offline, in-app walkthrough with a clickable table of contents,
@@ -390,7 +438,7 @@ Close it or press Escape to return to the editor. Each trigger has:
   to twelve); words of three letters or fewer must match exactly, so "bezins castinz
   Mesmerize" still matches. Paste
   a line into Test to check it.
-- **Then**: nothing, one of eight built-in sounds, a sound file (.wav, .mp3, .ogg) or spoken
+- **Then**: nothing, a built-in sound, a sound file (.wav, .mp3, .ogg) or spoken
   text (Windows voices). Speech and display labels can use `{line}`, `{match}` and the named
   groups of a regular expression: `(?P<mob>an? [a-z ]+) is mesmerized` with "{mob} mezzed" says
   "a skeletal knight mezzed". "Quiet for" ignores repeats for a few seconds.
@@ -417,8 +465,14 @@ Use `III` in both fields for a separate rank III trigger, or remove ` II` for th
 The named capture `(?P<damage>\d+)` supplies `{damage}`; matching only the spell name does
 not capture a number. **Start a timer** can stay off when you only want the fading popup.
 
+Casual Mode keeps matching internally, but displays generic timer labels, protects speech,
+silences custom sound files and hides custom definitions, captured suggestions and sharing.
+The editing and sharing walkthrough below applies to confirmed Elitist mode. Expensive
+regular expressions are stopped and disabled rather than freezing capture or the editor.
+
 The bar at the top sets the volume, voice, speech rate and audio output for all triggers.
-Triggers are saved as you edit them, in `triggers.json`. **Import timers…** accepts shared
+Triggers are saved as you edit them, in `triggers.json`, with saved/error status and **Retry
+save**. **Undo delete** restores the most recently removed trigger. **Import timers…** accepts shared
 JSON files and older `triggers.json` files, converting legacy overlap settings. Existing
 timers stay intact; duplicates are skipped and conflicting versions are added as separate
 copies. **Export timers…** lets you share the selected entry or all entries, including colors,
@@ -463,6 +517,21 @@ overlay, and with the overlay unlocked it can be dragged off and snapped back (d
 overlay's bottom edge, double-click it, or right-click > Snap to overlay); the auto-attack bar
 then docks under the overlay directly.
 
+**Revenge List.** This optional PvP reminder is **off by default**; enable **Revenge List**
+in setup or Settings. Confirmed Elitist mode shows its names; Casual Mode hides names and
+attacker prompts. Disabling the option hides its panel, overlay tab and pop-out window.
+
+An incoming attack on your character can show a **+** prompt once per attacker per session,
+for **30 seconds**. Use + to save a player you recognize; named NPCs can resemble players.
+Automatic detection accepts single ASCII-letter names and excludes articles and your own
+name. **Add** accepts any nonempty name or label, including spaces, symbols and Unicode;
+**Remove** deletes a saved entry. Names and activity dates persist between sessions.
+
+The main panel and overlay both offer **Pop out**, opening one synchronized passive window.
+All three lists show newest activity first. Settings limits the display to **30 days / 100
+entries** by default; choose **All** for either limit. Filters never delete saved entries.
+Older entries without dates remain visible until activity supplies a date.
+
 **Map overlay.** The separate always-on-top map opens by default on a fresh install. After
 that, PNUT remembers whether you left it open or closed. Click **Map** in the top bar to
 show or hide it. The selected zone and map, window size and position, fullscreen state,
@@ -479,7 +548,8 @@ messages in the cropped Combat chat. You can also choose a zone manually and sel
 map or floor when the wiki has several. Directional Night Harbor names use the same city map.
 
 Maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
-Maps download when opened and are cached in `map_cache/` for offline use. At the top of
+Maps are cached in `map_cache/` for offline use. Opening an unchanged cached map reuses its
+image; a valid remote file hash lets PNUT check for changes before downloading it. At the top of
 **Settings**, **Download latest maps** updates every known zone's maps in the background;
 check **On startup** to do this automatically at launch (unchecked by default). Updates compare
 the wiki's current file hashes with the cached images and download only missing or changed

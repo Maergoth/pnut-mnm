@@ -25,6 +25,7 @@ import logging
 import re
 import threading
 import time
+from contextlib import nullcontext
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import fields
 from pathlib import Path
@@ -90,6 +91,8 @@ from mnmparse.config import (
     save_config,
 )
 from mnmparse.export import actor_export_name
+from mnmparse.privacy import casual_enabled, project_encounter, project_session, safe_event_text
+from mnmparse.app.morality import MoralityPanel
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
@@ -120,6 +123,35 @@ class _OcrDiagnosisJob(QObject):
             self.done.emit(None, exc)
         else:
             self.done.emit(result, None)
+
+
+class _ImportJob(QObject):
+    done = Signal(object, object)
+    progress = Signal(int, int)
+
+    def __init__(self, paths: Sequence[str], options: dict[str, Any], archive: Callable | None = None) -> None:
+        super().__init__()
+        self.cancelled = threading.Event()
+        self._paths, self._options = list(paths), options
+        self._archive = archive
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, name="historical-log-import", daemon=True).start()
+
+    def _run(self) -> None:
+        from mnmparse.importer import import_files
+        try:
+            result = import_files(self._paths, **self._options,
+                                  cancelled=self.cancelled.is_set, progress=self.progress.emit)
+            if self.cancelled.is_set():
+                from mnmparse.importer import ImportCancelled
+                raise ImportCancelled("Import cancelled")
+            if callable(self._archive):
+                for item in result:
+                    item.archive_id = self._archive(item, cancelled=self.cancelled.is_set)
+            self.done.emit(result, None)
+        except Exception as exc:
+            self.done.emit(None, exc)
 
 
 __all__ = [
@@ -361,6 +393,8 @@ def _slug(text: str, limit: int = 40) -> str:
 def exports_dir(cfg: Config) -> Path:
     """``<log_dir>/exports`` resolved against the project root (created on demand)."""
     path = project_path(cfg.log_dir) / "exports"
+    if casual_enabled(cfg):
+        path = path / "casual"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -370,12 +404,13 @@ def _export_stem(snap: EncounterSnapshot) -> str:
     return f"encounter_{stamp}_{_slug(snap.label)}"
 
 
-def export_csv(snap: EncounterSnapshot, path: Path) -> Path:
+def export_csv(snap: EncounterSnapshot, path: Path, cfg: Any = None) -> Path:
     """Write one row per actor with every numeric :class:`ActorRow` field.
 
     Returns:
         The written path.
     """
+    snap = project_encounter(snap, cfg)
     header = ["encounter", "name", *_CSV_NUMERIC_FIELDS, "is_you", "is_npc", "is_pet"]
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
@@ -389,13 +424,13 @@ def export_csv(snap: EncounterSnapshot, path: Path) -> Path:
     return path
 
 
-def export_json(snap: EncounterSnapshot, path: Path) -> Path:
+def export_json(snap: EncounterSnapshot, path: Path, cfg: Any = None) -> Path:
     """Write ``dataclasses.asdict(snap)`` as pretty JSON.
 
     Returns:
         The written path.
     """
-    data = dataclasses.asdict(snap)
+    data = dataclasses.asdict(project_encounter(snap, cfg))
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     log.info("Exported encounter %s to %s", snap.key, path)
     return path
@@ -470,8 +505,13 @@ class _EncounterHeader(QWidget):
         self._title.setObjectName("Title")
         self._subtitle = ElidedLabel("Start capture and fight something.", min_width=80)
         self._subtitle.setObjectName("Muted")
+        self._quality = _label("", "Muted")
+        self._quality.setTextFormat(Qt.TextFormat.PlainText)
+        self._quality.setWordWrap(True)
+        self._quality.hide()
         title_col.addWidget(self._title)
         title_col.addWidget(self._subtitle)
+        title_col.addWidget(self._quality)
         self._row1.addLayout(title_col, 1)
 
         self._stats_box = QWidget(self)
@@ -553,6 +593,7 @@ class _EncounterHeader(QWidget):
     def set_snapshot(self, snap: EncounterSnapshot | None) -> None:
         """Render ``snap`` (``None`` clears the header)."""
         if snap is None:
+            self._quality.hide()
             self._title.setText("No encounter yet")
             self._subtitle.setText("Start capture and fight something.")
             for value in self._stats.values():
@@ -561,6 +602,22 @@ class _EncounterHeader(QWidget):
             self._update_mode()
             return
         self._title.setText(snap.label or "unknown")
+        quality = getattr(snap, "capture_quality", {}) or {}
+        notes = []
+        intervals = quality.get("intervals", [])
+        if intervals:
+            kinds = {str(item.get("kind", "")) for item in intervals}
+            labels = {"paused": "paused", "chat_occluded": "chat covered", "scrolled_back": "chat scrolled back",
+                      "window_lost": "game window unavailable"}
+            reason = ", ".join(labels.get(kind, kind.replace("_", " ")) for kind in sorted(kinds) if kind)
+            notes.append(f"Capture interrupted: {reason or 'some chat may be missing'}")
+        if quality.get("estimated_amounts"):
+            notes.append("Includes estimated amounts")
+        if quality.get("delayed_timestamps"):
+            notes.append("Includes delayed timestamps")
+        self._quality.setText(" · ".join(notes))
+        self._quality.setAccessibleName(self._quality.text())
+        self._quality.setVisible(bool(notes))
         killed = f"  ·  killed: {', '.join(snap.killed)}" if snap.killed else ""
         summary = getattr(snap, "encounters", 1) > 1 or str(snap.key).startswith("zone:")
         if summary:
@@ -1124,6 +1181,7 @@ class LivePage(QWidget):
     #: overlay.add_group_entries): ``(name, True | False | None)``.
     group_override_requested = Signal(str, object)
     pet_owner_requested = Signal(str, object)
+    archive_corrected = Signal(str)
 
     def __init__(
         self, engine: Engine, cfg: Config, settings: QSettings, parent: QWidget | None = None
@@ -1133,7 +1191,10 @@ class LivePage(QWidget):
         self._cfg = cfg
         self._settings = settings
         self._snaps: dict[str, EncounterSnapshot] = {}
+        self._raw_snaps: dict[str, EncounterSnapshot] = {}
         self._import_sources: dict[str, tuple[Any, Any]] = {}  #: key -> (Stats, Encounter), for ownership corrections
+        self._archive_sources: dict[str, str] = {}
+        self._browsing_archive = False
         self._sources: dict[str, str] = {}
         self._intervals: list[tuple[float, float, str]] = []  #: (start, end, key), sorted
         self._live_key: str | None = None
@@ -1146,6 +1207,7 @@ class LivePage(QWidget):
         self._batching = False
         self._stale = False  #: snapshots arrived while the page was off screen (see _on_screen)
         self._imported_count = 0
+        self._import_job: _ImportJob | None = None
         self._show_others = bool(getattr(cfg, "show_other_groups", False))
         self.setStyleSheet(_page_qss())
 
@@ -1209,6 +1271,10 @@ class LivePage(QWidget):
         self._json.clicked.connect(lambda: self._export("json"))
         export_row.addWidget(self._csv)
         export_row.addWidget(self._json)
+        self._open_export = QPushButton("Open exported file")
+        self._open_export.hide()
+        self._open_export.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_export))))
+        export_row.addWidget(self._open_export)
         export_row.addStretch(1)
         list_layout.addLayout(export_row)
         self._status = _label("", "Muted")
@@ -1249,6 +1315,8 @@ class LivePage(QWidget):
     # -- data in -----------------------------------------------------------------------
     def set_snapshot(self, snap: EncounterSnapshot | None) -> None:
         """Show the open encounter (or its final, closed snapshot); ``None`` is ignored."""
+        if self._browsing_archive:
+            return
         if snap is None:
             return
         key = snap.key
@@ -1279,13 +1347,15 @@ class LivePage(QWidget):
         """
         if snap is None:
             return False
+        if self._browsing_archive and source is None:
+            return False
         key = snap.key if source is None else f"{source}:{snap.key}"
         if source is not None and key not in self._snaps and self._duplicate_of(snap) is not None:
             return False
         is_new = key not in self._snaps
         flipped = not is_new and self._snaps[key].ours != snap.ours
         self._store(key, snap)
-        if source is not None:
+        if source is not None and key in self._snaps:
             self._sources[key] = source
         was_live = self._live_key == key
         if was_live:
@@ -1300,7 +1370,7 @@ class LivePage(QWidget):
         """Replace a listed fight's numbers with ``snap`` (same key): the engine counted it again
         because the party roster learned someone who fought in it.  A fight that was another
         group's and is now the group's appears in the list."""
-        if snap is None:
+        if snap is None or self._browsing_archive:
             return
         key = snap.key
         old = self._snaps.get(key)
@@ -1337,10 +1407,13 @@ class LivePage(QWidget):
 
     def set_history(self, history: Sequence[EncounterSnapshot] | None) -> None:
         """Replace the list with ``history`` (oldest first, as :meth:`Engine.history` returns)."""
+        self._browsing_archive = False
         self._batching = True
         try:
             self._snaps.clear()
+            self._raw_snaps.clear()
             self._import_sources.clear()
+            self._archive_sources.clear()
             self._sources.clear()
             self._intervals.clear()
             self._summary_cache.clear()
@@ -1353,6 +1426,37 @@ class LivePage(QWidget):
         self._rebuild()
 
     # -- public ------------------------------------------------------------------------
+    def set_archive_history(self, session_id: str, history: Sequence[EncounterSnapshot]) -> None:
+        self.set_history(history)
+        self._archive_sources = {key: session_id for key in self._raw_snaps} if session_id else {}
+        self._browsing_archive = bool(session_id)
+        if not session_id:
+            getter = getattr(self._engine, "current_snapshot", None)
+            if callable(getter):
+                self.set_snapshot(getter())
+
+    def correct_selected_archive(self, **correction: Any) -> bool:
+        """Apply a selected archived fight's correction to its durable source."""
+        if casual_enabled(self._cfg) or not self._selection or self._selection[0] != "enc":
+            return False
+        key = self._selection[1]
+        session_id = self._archive_sources.get(key)
+        raw = self._raw_snaps.get(key)
+        if not session_id or raw is None:
+            return False
+        try:
+            snap = self._engine.correct_archived_encounter(raw.key, session_id=session_id, **correction)
+        except Exception:  # noqa: BLE001
+            log.exception("archived fight correction failed")
+            self._set_status("Could not save this archived fight's correction.", ok=False)
+            return True  # Do not apply a failed archive edit to the current session.
+        self._store(key, snap)
+        self._summary_cache.clear()
+        self._rebuild()
+        self.archive_corrected.emit(session_id)
+        self._set_status("Archived fight correction saved.", ok=True)
+        return True
+
     def set_pet_owner(self, pet: str, owner: str | None) -> None:
         """Rebuild imported encounters from their events after a saved owner correction."""
         changed = False
@@ -1420,19 +1524,35 @@ class LivePage(QWidget):
     def set_config(self, cfg: Config) -> None:
         """Adopt a saved configuration (whether other groups' fights are listed)."""
         self._cfg = cfg
-        show = bool(getattr(cfg, "show_other_groups", False))
-        if show != self._show_others:
-            self._show_others = show
-            self._rebuild()
+        if casual_enabled(cfg):
+            self._open_export.setVisible(getattr(self, "_last_export", Path()).parent.name == "casual")
+        self._show_others = bool(getattr(cfg, "show_other_groups", False)) and not casual_enabled(cfg)
+        self._snaps = {key: project_encounter(snap, cfg) for key, snap in self._raw_snaps.items()}
+        self._summary_cache.clear()
+        self._pane.details.set_actor(None)
+        self._pane.table.clear_selection()
+        self._rebuild()
 
     def _listed(self, snap: EncounterSnapshot) -> bool:
-        return self._show_others or bool(getattr(snap, "ours", True))
+        return (self._show_others and not casual_enabled(self._cfg)) or bool(getattr(snap, "ours", True))
 
     # -- bookkeeping ---------------------------------------------------------------------
     def _store(self, key: str, snap: EncounterSnapshot) -> None:
         if key not in self._snaps:
             bisect.insort(self._intervals, (float(snap.start), float(snap.end), key))
-        self._snaps[key] = snap
+        self._raw_snaps[key] = snap
+        self._snaps[key] = project_encounter(snap, self._cfg)
+        limit = self._cfg.history_recent_fights
+        if len(self._snaps) > limit:
+            removed = set(sorted(self._raw_snaps, key=lambda name: self._raw_snaps[name].start)[:-limit])
+            for old in removed:
+                self._raw_snaps.pop(old, None)
+                self._snaps.pop(old, None)
+                self._sources.pop(old, None)
+                self._import_sources.pop(old, None)
+                self._archive_sources.pop(old, None)
+            self._intervals = [row for row in self._intervals if row[2] not in removed]
+            self._summary_cache.clear()
 
     def _duplicate_of(self, snap: EncounterSnapshot) -> str | None:
         """A listed encounter that is the same fight as ``snap`` (see IMPORT_OVERLAP_SHARE)."""
@@ -1441,7 +1561,7 @@ class LivePage(QWidget):
         for start, end, key in reversed(self._intervals[:hi]):
             if start < snap.start - IMPORT_LOOKBACK_S:
                 break
-            other = self._snaps.get(key)
+            other = self._raw_snaps.get(key)
             if other is None:
                 continue
             overlap = min(end, snap.end) - max(start, snap.start)
@@ -1589,6 +1709,8 @@ class LivePage(QWidget):
     def _fill_encounter(self, item: QTreeWidgetItem, key: str) -> None:
         snap = self._snaps[key]
         source = self._sources.get(key)
+        if casual_enabled(self._cfg) and source:
+            source = "Imported log"
         live = key == self._live_key
         you = owner_row(snap, self._cfg.player_name or "You")
         your_dps = f"you {you.dps:,.1f} DPS" if you is not None else "no own damage"
@@ -1661,10 +1783,11 @@ class LivePage(QWidget):
         zone = getattr(snap, "encounters", 1) > 1 or str(getattr(snap, "key", "")).startswith("zone:")
         copy = menu.addAction("Copy zone summary to clipboard" if zone else "Copy fight to clipboard")
         handlers = {copy: lambda: self.copy_requested.emit(snap)}
-        handlers.update(add_group_entries(menu, self._pane.table.row_at(event.globalPos()),
-                                          self.group_override_requested.emit))
-        handlers.update(add_pet_entries(menu, self._pane.table.row_at(event.globalPos()), snap,
-                                        self.pet_owner_requested.emit))
+        if not casual_enabled(self._cfg):
+            handlers.update(add_group_entries(menu, self._pane.table.row_at(event.globalPos()),
+                                              self.group_override_requested.emit))
+            handlers.update(add_pet_entries(menu, self._pane.table.row_at(event.globalPos()), snap,
+                                            self.pet_owner_requested.emit))
         chosen = menu.exec(event.globalPos())
         menu.deleteLater()
         action = handlers.get(chosen)
@@ -1680,25 +1803,25 @@ class LivePage(QWidget):
         title = zone_title(visit.zone)
         if cached is None or cached[0] != closed:
             base = merge_snapshots(
-                [self._snaps[k] for k in closed], key=f"zone:{visit.key}", label=title,
+                [self._raw_snaps[k] for k in closed], key=f"zone:{visit.key}", label=title,
                 zone=visit.zone, zone_since=visit.since,
             )
             self._summary_cache[visit.key] = (closed, base)
         else:
             base = cached[1]
-        live = self._snaps.get(self._live_key) if self._live_key in visit.keys else None
+        live = self._raw_snaps.get(self._live_key) if self._live_key in visit.keys else None
         if live is None:
-            return base if closed else None
+            return project_encounter(base, self._cfg) if closed else None
         if not closed:
-            return merge_snapshots([live], key=f"zone:{visit.key}", label=title, zone=visit.zone, zone_since=visit.since)
-        return merge_snapshots([base, live], key=f"zone:{visit.key}", label=title, zone=visit.zone, zone_since=visit.since)
+            return project_encounter(merge_snapshots([live], key=f"zone:{visit.key}", label=title, zone=visit.zone, zone_since=visit.since), self._cfg)
+        return project_encounter(merge_snapshots([base, live], key=f"zone:{visit.key}", label=title, zone=visit.zone, zone_since=visit.since), self._cfg)
 
     def _show(self, snap: EncounterSnapshot | None) -> None:
         self._header.set_snapshot(snap)
         self._pane.set_snapshot(snap)
         self._reset.setEnabled(self._live_key is not None and self._live_key in self._snaps)
-        self._csv.setEnabled(snap is not None)
-        self._json.setEnabled(snap is not None)
+        self._csv.setEnabled(snap is not None and not getattr(self, "_demo_active", False))
+        self._json.setEnabled(snap is not None and not getattr(self, "_demo_active", False))
 
     def _update_count(self) -> None:
         closed = sum(1 for snap in self._snaps.values() if snap.closed and self._listed(snap))
@@ -1726,8 +1849,11 @@ class LivePage(QWidget):
             log.exception("reset_encounter failed")
 
     def _on_import(self) -> None:
-        from mnmparse.importer import import_file
-        from mnmparse.vocab import GLOBAL
+        if self._import_job is not None:
+            self._import_job.cancelled.set()
+            self._import_btn.setText("Cancelling…")
+            self._import_btn.setEnabled(False)
+            return
 
         start_dir = str(project_path(self._cfg.log_dir))
         paths, _ = QFileDialog.getOpenFileNames(
@@ -1735,7 +1861,31 @@ class LivePage(QWidget):
         )
         if not paths:
             return
-        self.import_files(paths, vocab=GLOBAL)
+        ownership = getattr(self._engine, "pet_owners", None)
+        options = dict(player_name=self._cfg.player_name, encounter_timeout_s=self._cfg.encounter_timeout_s,
+                       include_personal=self._cfg.include_personal, dummy_fix=self._cfg.dummy_fix,
+                       pet_owners=ownership() if callable(ownership) else {})
+        # Worker owns a separate vocabulary; live capture never shares mutable parsing state.
+        job = self._import_job = _ImportJob(paths, options, getattr(self._engine, "archive_import", None))
+        job.progress.connect(lambda count, total: self._set_status(
+            f"Reading {count:,} lines…" if not total else f"Read {count}/{total} files; rebuilding encounters…", ok=True))
+        job.done.connect(self._on_import_done)
+        self._import_btn.setText("Cancel import")
+        self._set_status("Importing in the background…", ok=True)
+        job.start()
+
+    def _on_import_done(self, results: object, error: object) -> None:
+        job, self._import_job = self._import_job, None
+        self._import_btn.setEnabled(True)
+        self._import_btn.setText("Import log…")
+        if error is not None or (job is not None and job.cancelled.is_set()):
+            from mnmparse.importer import ImportCancelled
+            cancelled = isinstance(error, ImportCancelled) or (job is not None and job.cancelled.is_set())
+            self._set_status("Import cancelled." if cancelled else f"Import failed ({type(error).__name__}).", ok=cancelled)
+        else:
+            self._install_import_results(results or [], [])
+        if job is not None:
+            job.deleteLater()
 
     def import_files(self, paths: Sequence[str], *, vocab: Any = None) -> tuple[int, int]:
         """Import ``paths``; returns ``(encounters added, duplicates skipped)``.
@@ -1774,15 +1924,24 @@ class LivePage(QWidget):
                 except Exception as exc:  # noqa: BLE001 - a bad file must not take the page down
                     log.exception("import failed: %s", name)
                     failures.append(f"{Path(name).name}: {exc}")
+        return self._install_import_results(results, failures)
+
+    def _install_import_results(self, results: Sequence[Any], failures: Sequence[str]) -> tuple[int, int]:
+        added = skipped = 0
         self._batching = True
         try:
             for result in results:
                 sources = {f"{enc.start:.3f}": enc for enc in result.stats.history}
-                for snap in result.encounters:
+                snapshots = result.encounters[-self._cfg.history_recent_fights:]
+                for snap in snapshots:
                     if self.add_encounter(snap, source=result.name):
                         added += 1
-                        if snap.key in sources:
-                            self._import_sources[f"{result.name}:{snap.key}"] = (result.stats, sources[snap.key])
+                        key = f"{result.name}:{snap.key}"
+                        if key in self._raw_snaps:
+                            if getattr(result, "archive_id", None):
+                                self._archive_sources[key] = result.archive_id
+                            elif snap.key in sources:
+                                self._import_sources[key] = (result.stats, sources[snap.key])
                     else:
                         skipped += 1
                 self.imported.emit(result)
@@ -1794,7 +1953,9 @@ class LivePage(QWidget):
             self._set_status("; ".join(failures), ok=False)
         else:
             dup = f" ({skipped} already listed)" if skipped else ""
-            self._set_status(f"Imported {added} encounter{'s' if added != 1 else ''}{dup}.", ok=True)
+            bounded = any(len(r.encounters) > self._cfg.history_recent_fights for r in results)
+            suffix = " Earlier fights are available in Session history." if bounded else ""
+            self._set_status(f"Imported {added} encounter{'s' if added != 1 else ''}{dup}.{suffix}", ok=True)
         return added, skipped
 
     def _on_splitter_moved(self, _pos: int, _index: int) -> None:
@@ -1817,20 +1978,25 @@ class LivePage(QWidget):
         self._status.style().polish(self._status)
 
     def _export(self, fmt: str) -> None:
+        if getattr(self, "_demo_active", False):
+            self._set_status("Demo exports are disabled. Start capture to return to your real session.", ok=True)
+            return
         snap = self._pane.snapshot()
         if snap is None:
             return
         try:
             path = exports_dir(self._cfg) / f"{_export_stem(snap)}.{fmt}"
             if fmt == "csv":
-                export_csv(snap, path)
+                export_csv(snap, path, self._cfg)
             else:
-                export_json(snap, path)
+                export_json(snap, path, self._cfg)
         except OSError as exc:
             log.warning("Export failed: %s", exc)
             self._set_status(f"Export failed: {exc}", ok=False)
         else:
             self._set_status(f"Saved {path.name} in {path.parent}", ok=True)
+            self._last_export = path.resolve()
+            self._open_export.show()
 
 
 def current_since_key(visit: _Visit) -> float:
@@ -1908,12 +2074,26 @@ class FeedPage(QWidget):
         self, text: str, kind: str, is_player_action: bool, ts: float, is_player_target: bool | None = None
     ) -> None:
         """Add one logged message (same arguments as :meth:`FeedView.append`)."""
+        if casual_enabled(self._cfg):
+            from mnmparse.parser import parse_line
+            text = safe_event_text(parse_line(text, ts, self._cfg.player_name), self._cfg)
+            if text is None:
+                return
         self._lines.append((ts, kind, text))
         if len(self._lines) > self._max_lines:
             del self._lines[: len(self._lines) - self._max_lines]
         self.view.append(text, kind, is_player_action, ts, is_player_target=is_player_target)
         if self.isVisible():  # a hidden page re-lays itself out for nothing
             self._update_status()
+
+    def set_config(self, cfg: Config) -> None:
+        self._cfg = cfg
+        self._max_lines = cfg.feed_max_lines
+        self.view.set_max_lines(self._max_lines)
+        self._lines.clear()
+        self.view.clear()
+        self._search.clear()
+        self._status.setText("Casual Mode: own actions only." if casual_enabled(cfg) else "No messages yet.")
 
     def _update_status(self) -> None:
         if self._lines:
@@ -2001,6 +2181,8 @@ class SettingsPage(QWidget):
     app_update_requested = Signal()
     #: Restart to install an app update that is ready.
     app_restart_requested = Signal()
+    capture_restart_requested = Signal()
+    app_recovery_requested = Signal()
 
     def __init__(
         self, engine: Engine, cfg: Config, settings: QSettings, parent: QWidget | None = None
@@ -2009,6 +2191,7 @@ class SettingsPage(QWidget):
         self._engine = engine
         self._settings = settings
         self._cfg = cfg
+        self._config_path = Path(getattr(engine, "config_path", DEFAULT_CONFIG_PATH))
         self._loading = False
         self._ocr_diagnosis_busy = False
         self._ocr_diagnosis_job: _OcrDiagnosisJob | None = None
@@ -2020,6 +2203,7 @@ class SettingsPage(QWidget):
         outer.setSpacing(0)
 
         scroll = QScrollArea(self)
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2032,6 +2216,10 @@ class SettingsPage(QWidget):
 
         self._build_app_updates()
         self._build_map_downloads()
+        self.morality = MoralityPanel(cfg, self)
+        self.morality.mode_requested.connect(self._on_morality_mode)
+        self.morality.siren_requested.connect(lambda: self.sound_preview_requested.emit("Siren"))
+        self._content.addWidget(self.morality)
         self._build_status()
         self._build_general()
         self._build_capture()
@@ -2040,7 +2228,15 @@ class SettingsPage(QWidget):
         self._build_overlay()
         self._build_encounter()
         self._build_export()
-        contact = QLabel("If you have any questions, contact @Maergoth in discord")
+        from mnmparse.app.profile_tools import ProfileTools
+        self.profile_tools = ProfileTools(cfg, self._config_path, settings, engine, self)
+        self.profile_tools.set_config_getter(self.form_config)
+        self.profile_tools.set_dimensions_getter(
+            lambda: (self.crop_picker._frame.shape[1], self.crop_picker._frame.shape[0])
+                    if self.crop_picker._frame is not None else None)
+        self.profile_tools.config_changed.connect(self._on_profile_config)
+        self._content.addWidget(self.profile_tools)
+        contact = QLabel("Contact @Maergoth on Discord for help.")
         contact.setObjectName("Muted")
         contact.setWordWrap(True)
         contact.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -2069,6 +2265,10 @@ class SettingsPage(QWidget):
         self._save.setCursor(Qt.CursorShape.PointingHandCursor)
         self._save.clicked.connect(self.save)
         footer_layout.addWidget(self._save)
+        self._apply_restart = QPushButton("Apply and restart capture")
+        self._apply_restart.clicked.connect(self._save_and_restart)
+        self._apply_restart.hide()
+        footer_layout.addWidget(self._apply_restart)
         footer_wrap = QVBoxLayout()
         footer_wrap.setContentsMargins(20, 8, 20, 18)  # a gap so clipped scroll content never touches the footer
         footer_wrap.addWidget(footer)
@@ -2083,10 +2283,11 @@ class SettingsPage(QWidget):
             edit.textChanged.connect(self._on_form_changed)
         for combo in (self.capture_backend, self.overlay_tab):
             combo.currentIndexChanged.connect(self._on_form_changed)
-        for spin in (self.feed_max_lines, self.fps, self.encounter_timeout, self.log_break, self.log_max):
+        for spin in (self.feed_max_lines, self.fps, self.encounter_timeout, self.log_break, self.log_max,
+                     self.revenge_days, self.revenge_entries):
             spin.valueChanged.connect(self._on_form_changed)
         for toggle in (self.start_on_launch, self.minimize_to_tray, self.include_personal, self.show_other_groups,
-                       self.overlay_enabled, self.overlay_locked, self.overlay_click_through):
+                       self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled):
             toggle.toggled.connect(self._on_form_changed)
         # OCR engine/scale/preprocess and the crop picker are connected where they are built
         # (they also push the live config into the picker).
@@ -2106,6 +2307,11 @@ class SettingsPage(QWidget):
         self.app_update_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.app_update_button.clicked.connect(self._request_app_update)
         row.addWidget(self.app_update_button)
+        self.app_recovery_button = QPushButton("Restore previous app version")
+        self.app_recovery_button.setToolTip("Restart using the retained previous application. Personal settings and logs are preserved.")
+        self.app_recovery_button.clicked.connect(self.app_recovery_requested.emit)
+        self.app_recovery_button.hide()
+        row.addWidget(self.app_recovery_button)
         self.app_update_on_startup = QCheckBox("On startup")
         self.app_update_on_startup.setToolTip(
             "Download app updates from GitHub on startup and offer to restart when ready."
@@ -2224,6 +2430,15 @@ class SettingsPage(QWidget):
         box_layout.addStretch(1)  # centred by stretches: an aligned layout cut long hints short
         label = QLabel(caption)
         label.setWordWrap(True)
+        if isinstance(field, QWidget):
+            field.setAccessibleName(caption)
+            field.setAccessibleDescription(hint)
+            label.setBuddy(field)
+        else:
+            for index in range(field.count()):
+                widget = field.itemAt(index).widget()
+                if widget is not None and not widget.accessibleName():
+                    widget.setAccessibleName(caption)
         box_layout.addWidget(label)
         if hint:
             hint_label = QLabel(hint)
@@ -2424,6 +2639,25 @@ class SettingsPage(QWidget):
         self._row(form, "Player name", self.player_name)
         self._row(form, "Start capture on launch", self.start_on_launch, "Begin reading the game as soon as the app opens")
         self._row(form, "Minimize to tray on close", self.minimize_to_tray)
+        self.revenge_enabled = ToggleSwitch()
+        self._row(form, "Revenge List", self.revenge_enabled,
+                  "PvP prompts last 30 seconds. Hidden in Casual Mode.")
+        self.revenge_days = QSpinBox()
+        self.revenge_days.setRange(0, 3650)
+        self.revenge_days.setSpecialValueText("All")
+        self.revenge_days.setSuffix(" days")
+        self.revenge_days.setFixedWidth(140)
+        self._row(form, "Revenge history (days)", self.revenge_days,
+                  "Show recent additions or attacks. All includes every date.")
+        self.revenge_entries = QSpinBox()
+        self.revenge_entries.setRange(0, 1000)
+        self.revenge_entries.setSpecialValueText("All")
+        self.revenge_entries.setFixedWidth(140)
+        self._row(form, "Revenge entries shown", self.revenge_entries,
+                  "Newest first. Hidden entries stay saved. All removes the limit.")
+        self.revenge_enabled.toggled.connect(self._sync_revenge_controls)
+        self.reduced_motion = ToggleSwitch()
+        self._row(form, "Reduce animations", self.reduced_motion, "Also respects Windows animation settings.")
         self.include_personal = ToggleSwitch()
         self._row(form, "Count personal lines in Session", self.include_personal, "Skill-ups, faction, XP and consider lines, which only you see")
         self.show_other_groups = ToggleSwitch()
@@ -2436,6 +2670,10 @@ class SettingsPage(QWidget):
         self._row(form, "New log file after idle", self.log_break, "Minutes without a line before a new combat_*.log starts")
         self._row(form, "New log file at size", self.log_max, "A log file never grows past this")
         self._row(form, "Feed lines kept", self.feed_max_lines)
+
+    def _sync_revenge_controls(self, enabled: bool) -> None:
+        self.revenge_days.setEnabled(enabled)
+        self.revenge_entries.setEnabled(enabled)
 
     def _build_capture(self) -> None:
         form = self._section(
@@ -2739,9 +2977,16 @@ class SettingsPage(QWidget):
         self._cfg = cfg
         self._loading = True
         try:
+            self.morality.set_config(cfg)
+            self.profile_tools.load(cfg)
             self.player_name.setText(cfg.player_name)
             self.start_on_launch.setChecked(bool(_cfg_get(cfg, "start_capture_on_launch", False)))
             self.minimize_to_tray.setChecked(bool(_cfg_get(cfg, "minimize_to_tray", True)))
+            self.revenge_enabled.setChecked(cfg.revenge_enabled)
+            self.revenge_days.setValue(cfg.revenge_days)
+            self.revenge_entries.setValue(cfg.revenge_entries)
+            self._sync_revenge_controls(cfg.revenge_enabled)
+            self.reduced_motion.setChecked(cfg.reduced_motion)
             self.include_personal.setChecked(bool(_cfg_get(cfg, "include_personal", False)))
             self.show_other_groups.setChecked(bool(_cfg_get(cfg, "show_other_groups", False)))
             self.dummy_fix.setChecked(bool(_cfg_get(cfg, "dummy_fix", False)))
@@ -2770,7 +3015,7 @@ class SettingsPage(QWidget):
             from mnmparse.export import format_from_config, preset_for
 
             fmt = format_from_config(cfg)
-            self.export_auto.setChecked(bool(_cfg_get(cfg, "export_auto", True)))
+            self.export_auto.setChecked(bool(_cfg_get(cfg, "export_auto", False)))
             self._select(self.export_sound, str(_cfg_get(cfg, "export_sound", "Dink") or "None"))
             self._set_export_format(fmt)
             self._select(self.export_preset, preset_for(fmt))
@@ -2785,6 +3030,10 @@ class SettingsPage(QWidget):
             "player_name": self.player_name.text().strip(),
             "start_capture_on_launch": self.start_on_launch.isChecked(),
             "minimize_to_tray": self.minimize_to_tray.isChecked(),
+            "revenge_enabled": self.revenge_enabled.isChecked(),
+            "revenge_days": self.revenge_days.value(),
+            "revenge_entries": self.revenge_entries.value(),
+            "reduced_motion": self.reduced_motion.isChecked(),
             "include_personal": self.include_personal.isChecked(),
             "show_other_groups": self.show_other_groups.isChecked(),
             "dummy_fix": self.dummy_fix.isChecked(),
@@ -2845,10 +3094,10 @@ class SettingsPage(QWidget):
             self._status.setText("Not saved: fix the problems first.")
             return
         try:
-            save_config(cfg, DEFAULT_CONFIG_PATH)
+            save_config(cfg, str(self._config_path))
         except OSError as exc:
             log.warning("Could not save config: %s", exc)
-            self._show_problems([f"Could not write {DEFAULT_CONFIG_PATH}: {exc}"])
+            self._show_problems([f"Could not write {self._config_path}: {exc}"])
             return
         self._cfg = cfg
         self.crop_picker.set_config(cfg)
@@ -2856,7 +3105,10 @@ class SettingsPage(QWidget):
             self._engine.update_config(cfg)
         except Exception:  # noqa: BLE001 - keep the GUI alive whatever the engine does
             log.exception("engine.update_config failed")
-        self._status.setText(f"Saved {DEFAULT_CONFIG_PATH.name} at {time.strftime('%H:%M:%S')}")
+        self._status.setText(f"Saved {self._config_path.name} at {time.strftime('%H:%M:%S')}")
+        self.morality.set_config(cfg)
+        self.profile_tools.load(cfg)
+        self._on_form_changed()
         self.config_changed.emit(cfg)
 
     def revert(self) -> None:
@@ -2889,6 +3141,50 @@ class SettingsPage(QWidget):
     def _on_form_changed(self) -> None:
         if not self._loading:
             self._validate()
+            dirty = self.form_config() != self._cfg
+            self._status.setText("Unsaved changes" if dirty else "Saved")
+            restart_fields = ("capture_backend", "window_title", "ocr_engine", "ocr_scale", "preprocess", "log_dir")
+            edited = self.form_config()
+            needs_restart = any(getattr(edited, name) != getattr(self._cfg, name) for name in restart_fields)
+            diagnosis = getattr(self._engine, "ocr_diagnosis", None)
+            if bool(getattr(self._engine, "is_running", False)) and callable(diagnosis):
+                active = diagnosis().get("effective_settings", {})
+                needs_restart = any(getattr(edited, name) != active.get(name, getattr(self._cfg, name))
+                                    for name in restart_fields)
+            self._apply_restart.setVisible(needs_restart)
+            if needs_restart and not dirty:
+                self._status.setText("Saved. Restart capture to apply pending settings.")
+
+    def _save_and_restart(self) -> None:
+        self.save()
+        if self.form_config() == self._cfg:
+            self.capture_restart_requested.emit()
+
+    def focus_morality(self) -> None:
+        self._scroll.ensureWidgetVisible(self.morality)
+        self.morality.focus_switch()
+
+    def _on_profile_config(self, cfg: Config) -> None:
+        self.load(cfg)
+        self._engine.update_config(cfg)
+        self.config_changed.emit(cfg)
+
+    def _on_morality_mode(self, casual: bool) -> None:
+        cfg = dataclasses.replace(self._cfg, casual_mode=bool(casual), casual_mode_confirmed=not casual)
+        try:
+            save_config(cfg, str(self._config_path))
+        except OSError as exc:
+            if not casual:
+                self._status.setText(f"Mode not changed: could not save preferences ({type(exc).__name__}).")
+                self.morality.set_config(self._cfg)
+                return
+            self._status.setText("Casual Mode is active; preferences could not be saved.")
+        self._cfg = cfg
+        self.morality.set_config(cfg)
+        self.profile_tools.load(cfg)
+        self.crop_picker.set_config(cfg)
+        self._engine.update_config(cfg)
+        self.config_changed.emit(cfg)
 
     def _validate(self) -> list[str]:
         problems = self.problems_for(self.form_config())
@@ -2954,6 +3250,10 @@ class AboutPage(QWidget):
         )
         layout.addWidget(head)
 
+        from mnmparse.app.help_panel import HelpPanel
+        self.help = HelpPanel(self)
+        layout.addWidget(self.help)
+
         layout.addWidget(self._text_panel("Safety posture", _SAFETY_TEXT))
         layout.addWidget(self._text_panel("Terms of service", _TERMS_TEXT))
 
@@ -2964,7 +3264,7 @@ class AboutPage(QWidget):
         links_layout.addWidget(_label("Files", "Heading"))
         logs_path = project_path(cfg.log_dir)
         links_layout.addWidget(self._link("Open the logs folder", logs_path, is_dir=True))
-        links_layout.addWidget(self._link("Open config.json", DEFAULT_CONFIG_PATH))
+        links_layout.addWidget(self._link("Open configuration", Path(getattr(engine, "config_path", DEFAULT_CONFIG_PATH))))
         layout.addWidget(links)
         layout.addStretch(1)
 
@@ -2990,6 +3290,9 @@ class AboutPage(QWidget):
         label.setCursor(Qt.CursorShape.PointingHandCursor)
 
         def _open(_href: str) -> None:
+            if is_dir and casual_enabled(self._cfg):
+                label.setText("Raw logs are hidden in Casual Mode. Open Morality Adjustment to change modes.")
+                return
             target = path
             if is_dir:
                 target.mkdir(parents=True, exist_ok=True)
@@ -3016,6 +3319,10 @@ class SessionPage(QWidget):
     ``logs/exports/``.
     """
 
+    archived_encounters_loaded = Signal(object)
+    archive_selected = Signal(str, object)
+    new_session_requested = Signal()
+
     def __init__(
         self, engine: Engine, cfg: Config, settings: QSettings, parent: QWidget | None = None
     ) -> None:
@@ -3026,6 +3333,7 @@ class SessionPage(QWidget):
         self._cfg = cfg
         self._live: Any | None = None
         self._imported: dict[str, Any] = {}
+        self._archive_offset = 0
         self.setStyleSheet(_page_qss())
 
         layout = QVBoxLayout(self)
@@ -3040,6 +3348,7 @@ class SessionPage(QWidget):
         self._source.currentIndexChanged.connect(self._on_source_changed)
         top.addWidget(self._source)
         self._mine = ToggleSwitch()
+        self._mine.setAccessibleName("Mine only")
         self._mine.setToolTip("Only your own loot, coin, kills, deaths and crafts")
         self._mine.toggled.connect(self._on_mine_toggled)
         top.addSpacing(12)
@@ -3050,11 +3359,28 @@ class SessionPage(QWidget):
         top.addStretch(1)
         self._export = QPushButton("Export JSON")
         self._export.clicked.connect(self._on_export)
-        self._reset = QPushButton("Reset session")
+        self._reset = QPushButton("New session")
         self._reset.clicked.connect(self._on_reset)
+        self._resume = QPushButton("Resume selected session")
+        self._resume.clicked.connect(self._on_resume)
+        self._resume.hide()
+        top.addWidget(self._resume)
         top.addWidget(self._export)
         top.addWidget(self._reset)
         layout.addLayout(top)
+
+        history_row = QHBoxLayout()
+        self._newer = QPushButton("Newer fights")
+        self._older = QPushButton("Older fights")
+        self._history_hint = _label("", "Muted")
+        self._newer.clicked.connect(lambda: self._page_archive(-1))
+        self._older.clicked.connect(lambda: self._page_archive(1))
+        history_row.addWidget(self._newer)
+        history_row.addWidget(self._older)
+        history_row.addWidget(self._history_hint, 1)
+        layout.addLayout(history_row)
+        for widget in (self._newer, self._older, self._history_hint):
+            widget.hide()
 
         self._view = SessionView(compact=False, parent=self)
         layout.addWidget(self._view, 1)
@@ -3067,6 +3393,8 @@ class SessionPage(QWidget):
                 self.set_session(getter())
             except Exception:  # noqa: BLE001
                 log.debug("initial session snapshot unavailable", exc_info=True)
+        self.set_config(cfg)
+        self.refresh_archives()
 
     # -- data in -----------------------------------------------------------------------
     def set_session(self, snap: Any | None) -> None:
@@ -3082,58 +3410,164 @@ class SessionPage(QWidget):
         self._imported[name] = snap
         index = self._source.findData(name)
         if index < 0:
-            self._source.addItem(f"Imported: {name}", name)
+            self._source.addItem("Imported session" if casual_enabled(self._cfg) else f"Imported: {name}", name)
             index = self._source.count() - 1
         self._source.setCurrentIndex(index)
         self._display(snap)
 
     def shown(self) -> Any | None:
-        """The snapshot currently displayed."""
+        """The snapshot currently displayed, loaded lazily for archived sessions."""
         key = self._source.currentData()
-        return self._live if key is None else self._imported.get(str(key))
+        if key is not None and str(key).startswith("archive:") and str(key) not in self._imported:
+            loader = getattr(self._engine, "archived_session", None)
+            if callable(loader):
+                self._imported = {k: v for k, v in self._imported.items() if not k.startswith("archive:")}
+                self._imported[str(key)] = loader(str(key).split(":", 1)[1])
+        snap = self._live if key is None else self._imported.get(str(key))
+        return project_session(snap, self._cfg)
+
+    def add_imported_result(self, result: Any) -> None:
+        if getattr(result, "archive_id", None):
+            self.refresh_archives()
+            index = self._source.findData(f"archive:{result.archive_id}")
+            if index >= 0:
+                self._source.setCurrentIndex(index)
+        else:
+            self.add_imported_session(result.name, result.session)
+
+    def set_config(self, cfg: Config) -> None:
+        self._cfg = cfg
+        self._mine.setEnabled(not casual_enabled(cfg))
+        self._view.set_config(cfg)
+        for index in range(1, self._source.count()):
+            key = str(self._source.itemData(index))
+            if not key.startswith("archive:"):
+                self._source.setItemText(index, "Imported session" if casual_enabled(cfg) else f"Imported: {key}")
+        self._display(self.shown())
+
+    def refresh_archives(self) -> None:
+        getter = getattr(self._engine, "archived_sessions", None)
+        if not callable(getter):
+            return
+        for entry in getter():
+            key = f"archive:{entry['id']}"
+            if self._source.findData(key) >= 0:
+                continue
+            stamp = time.strftime("%b %d %H:%M", time.localtime(entry["started"]))
+            self._source.addItem(f"Previous session: {stamp}", key)
 
     # -- internals ---------------------------------------------------------------------
     def _display(self, snap: Any | None) -> None:
-        self._view.set_snapshot(snap)
+        self._view.set_snapshot(project_session(snap, self._cfg))
         if snap is not None:
             started = time.strftime("%b %d %H:%M:%S", time.localtime(float(getattr(snap, "started", 0.0) or 0.0)))
             self._since.setText(f"since {started}")
         else:
             self._since.setText("")
         self._reset.setEnabled(self._source.currentData() is None)
+        self._resume.setVisible(str(self._source.currentData()).startswith("archive:"))
+        self._resume.setEnabled(not bool(getattr(self._engine, "is_running", False)))
 
     def _on_source_changed(self, _index: int) -> None:
         self._display(self.shown())
+        self._archive_offset = 0
+        self._load_archive_page()
+
+    def _load_archive_page(self) -> None:
+        key = str(self._source.currentData())
+        loader = getattr(self._engine, "archived_encounters", None)
+        archived = key.startswith("archive:") and callable(loader)
+        for widget in (self._newer, self._older, self._history_hint):
+            widget.setVisible(archived)
+        if archived:
+            session_id = key.split(":", 1)[1]
+            limit = self._cfg.history_recent_fights
+            snaps = loader(session_id, limit=limit, offset=self._archive_offset)
+            self._newer.setEnabled(self._archive_offset > 0)
+            self._older.setEnabled(len(snaps) == limit)
+            first = self._archive_offset + 1 if snaps else 0
+            self._history_hint.setText(f"Fights {first}–{self._archive_offset + len(snaps)} from newest; shown in Encounters.")
+            self.archive_selected.emit(session_id, snaps)
+            self.archived_encounters_loaded.emit(snaps)
+        elif self._source.currentData() is None:
+            getter = getattr(self._engine, "history", None)
+            if callable(getter):
+                self.archive_selected.emit("", getter())
+
+    def _page_archive(self, direction: int) -> None:
+        self._archive_offset = max(0, self._archive_offset + direction * self._cfg.history_recent_fights)
+        self._load_archive_page()
+
+    def refresh_corrected_archive(self, session_id: str) -> None:
+        key = f"archive:{session_id}"
+        self._imported.pop(key, None)
+        if self._source.currentData() == key:
+            self._display(self.shown())
+
+    def _on_resume(self) -> None:
+        key = str(self._source.currentData())
+        if bool(getattr(self._engine, "is_running", False)):
+            self._status.setText("Stop capture before resuming a previous session.")
+            return
+        restore = getattr(self._engine, "restore_session", None)
+        if key.startswith("archive:") and callable(restore) and restore(key.split(":", 1)[1]):
+            self._source.setCurrentIndex(0)
+            self.set_session(self._engine.session_snapshot())
+            self._load_archive_page()
+            self._status.setText("Previous session resumed. Start capture when ready.")
 
     def _on_mine_toggled(self, checked: bool) -> None:
-        self._view.set_view_mode("self" if checked else "group", self._cfg.player_name or "You")
+        self._view.set_view_mode("self" if checked and not casual_enabled(self._cfg) else "group", self._cfg.player_name or "You")
 
     def _on_reset(self) -> None:
         reset = getattr(self._engine, "reset_session", None)
         if callable(reset):
-            reset()
-            self._status.setText("Session counters reset.")
+            if reset() is False:
+                self._status.setText("Could not archive the current session. It remains active.")
+                return
+            self.new_session_requested.emit()
+            self.refresh_archives()
+            self._status.setText("Previous session archived. New session started.")
 
     def _on_export(self) -> None:
+        if getattr(self, "_demo_active", False):
+            self._status.setText("Demo exports are disabled. Start capture to return to your real session.")
+            return
         snap = self.shown()
         if snap is None:
             self._status.setText("Nothing to export yet.")
             return
-        try:
-            out_dir = Path(project_path(self._cfg.log_dir)) / "exports"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            label = self._source.currentData() or "live"
-            safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(label))[:40]
-            path = out_dir / f"session_{safe}_{stamp}.json"
-            payload = dataclasses.asdict(snap)
-            payload["kills_per_hour"] = round(snap.kills_per_hour, 2)
-            payload["items_per_hour"] = round(snap.items_per_hour, 2)
-            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            self._status.setText(f"Exported {path}")
-        except Exception as exc:  # noqa: BLE001
-            log.exception("session export failed")
-            self._status.setText(f"Export failed: {exc}")
+        source = self._source.currentData()
+        engine = self._engine
+        def write() -> Path:
+            raw = snap
+            if source is None and callable(getattr(engine, "session_snapshot", None)):
+                raw = engine.session_snapshot(full=True)
+            elif str(source).startswith("archive:"):
+                raw = engine.archived_session(str(source).split(":", 1)[1], full=True)
+            guard = getattr(engine, "_lock", None)
+            with guard if guard is not None else nullcontext():
+                cfg = self._cfg  # Recheck mode at publication, after loading all detail.
+                safe_snap = project_session(raw, cfg)
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                path = exports_dir(cfg) / f"session_{stamp}.json"
+                payload = dataclasses.asdict(safe_snap)
+                payload.update(kills_per_hour=round(safe_snap.kills_per_hour, 2),
+                               items_per_hour=round(safe_snap.items_per_hour, 2))
+                from mnmparse.storage import atomic_json
+                atomic_json(path, payload)
+                return path
+        job = self._session_export_job = _OcrDiagnosisJob(write)
+        self._export.setEnabled(False)
+        self._status.setText("Exporting session in the background…")
+        job.done.connect(self._on_export_done)
+        job.done.connect(job.deleteLater)
+        job.start()
+
+    def _on_export_done(self, path: object, error: object) -> None:
+        self._session_export_job = None
+        self._export.setEnabled(not getattr(self, "_demo_active", False))
+        self._status.setText(f"Export failed ({type(error).__name__})." if error else f"Exported {path}")
 
 
 # The Triggers page lives in its own module (it imports the helpers above).

@@ -163,6 +163,7 @@ class InvisImmediateRuntimeTests(unittest.TestCase):
                 store.install_presets()
                 with patch("mnmparse.app.triggers_runtime.AudioOut") as audio_type:
                     runner = TriggerRunner(store)
+                    runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
                     audio = audio_type.return_value
                     self.addCleanup(runner._clock.stop)
                     fired = []

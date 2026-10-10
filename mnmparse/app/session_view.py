@@ -117,10 +117,18 @@ class SessionView(QWidget):
         self._player = player or self._player
         self.set_snapshot(self._snap)
 
+    def set_config(self, cfg: Any) -> None:
+        self._cfg = cfg
+        self.set_snapshot(getattr(self, "_raw_snap", self._snap))
+
     def set_snapshot(self, snap: SessionSnapshot | None) -> None:
         """Replace the displayed session data (expansion state is kept per category)."""
+        from mnmparse.privacy import project_session, casual_enabled
+        if snap is not None and not getattr(snap, "privacy_mode", ""):
+            self._raw_snap = snap
+        snap = project_session(snap, getattr(self, "_cfg", None))
         self._snap = snap
-        if snap is not None and self._view_mode == "self":
+        if snap is not None and self._view_mode == "self" and not casual_enabled(getattr(self, "_cfg", None)):
             snap = filter_session(snap, self._player or "You")
         self._tree.setUpdatesEnabled(False)
         try:
@@ -129,6 +137,12 @@ class SessionView(QWidget):
                 self._footer.setText("")
                 return
             self._add_items(snap)
+            averages = getattr(snap, "group_averages", {})
+            if averages:
+                self._add_category("group-averages", f"Group averages ({snap.group_average_count})", "rounded",
+                                   [(name.replace("_", " ").capitalize(), f"{value:g}", "per member")
+                                    for name, value in averages.items()],
+                                   tooltip="Known groups of three or more. Pets are counted with their owners.")
             coin_detail = [(name, "", format_coin(c)) for name, c in snap.coin_by_looter[:MAX_CHILDREN]]
             if snap.coin_split:
                 coin_detail.append(("Your splits", "", format_coin(snap.coin_split)))

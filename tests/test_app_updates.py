@@ -32,6 +32,8 @@ def write_package(path: Path, extras=()):
         archive.writestr(updates.EXECUTABLE, b"MZnot-an-executable")
         archive.writestr("_internal/python.dll", b"library")
         archive.writestr("START HERE.txt", b"readme")
+        archive.writestr("_internal/build-info.json", json.dumps({"schema": 1, "version": "9.8.7", "commit": "a" * 40,
+                                                                  "dirty": False, "built_at": "2026-10-10T12:00:00+00:00"}))
         for name, data in extras:
             if isinstance(name, str) and "\\" in name:
                 info = zipfile.ZipInfo("placeholder")
@@ -232,6 +234,8 @@ class ControllerTests(unittest.TestCase):
             package.mkdir(parents=True)
             (package / "_internal").mkdir()
             (package / updates.EXECUTABLE).write_bytes(b"MZnew")
+            (package / "_internal" / "build-info.json").write_text(json.dumps({"schema": 1, "version": "9.8.7",
+                "commit": "a" * 40, "dirty": False, "built_at": "2026-10-10T12:00:00+00:00"}))
             (install / "config.json").write_text("personal")
             controller = updates.AppUpdateController()
             controller._on_completed(("9.8.7", package), "ready")

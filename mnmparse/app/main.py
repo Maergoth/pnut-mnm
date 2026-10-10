@@ -20,11 +20,13 @@ with a fallback: when one is missing or broken the shell still starts and shows 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import logging.handlers
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -78,10 +80,12 @@ from mnmparse import grammar
 from mnmparse.app import APP_NAME, APP_TAGLINE, APP_VERSION, ORGANIZATION, SETTINGS_APP_NAME, theme
 from mnmparse.app import icon as app_icon
 from mnmparse.app.legal_dialog import LegalDialog
+from mnmparse.app.mode_button import ModeButton
 from mnmparse.app.tray import TrayIcon
 from mnmparse.app.widgets import WarningLatch, capture_warning
 from mnmparse.app.window_identity import window_title
-from mnmparse.config import Config, load_config, project_path
+from mnmparse.config import Config, DEFAULT_CONFIG_PATH, load_config, project_path
+from mnmparse.privacy import casual_enabled, project_encounter
 
 log = logging.getLogger(__name__)
 
@@ -141,6 +145,7 @@ RUNNING_STATES: frozenset[str] = frozenset({"starting", "no_window", "running", 
 
 STATE_TEXT: dict[str, str] = {
     "stopped": "Capture stopped",
+    "stopping": "Finishing capture and saving…",
     "starting": "Starting capture...",
     "no_window": "Game window not found - retrying every 2 s",
     "running": "Capturing",
@@ -495,7 +500,8 @@ class _NavButton(QToolButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(NAV_RAIL_WIDTH, NAV_RAIL_WIDTH)
         self.setToolTip(label)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(label)
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +533,7 @@ class MainWindow(QMainWindow):
     quit_requested = Signal()
     minimised_to_tray = Signal()
     visibility_changed = Signal(bool)
+    mute_requested = Signal()
 
     def __init__(
         self,
@@ -562,6 +569,10 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._build_top_bar())
         outer.addWidget(self._build_warning_banner())
         outer.addWidget(self._build_timer_share_banner())
+        self._demo_banner = QLabel("DEMO — synthetic data. Start capture to return to your real session.", self)
+        self._demo_banner.setStyleSheet(f"background: {theme.BG2}; color: {theme.ACCENT}; padding: 8px 16px;")
+        self._demo_banner.hide()
+        outer.addWidget(self._demo_banner)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -703,6 +714,12 @@ class MainWindow(QMainWindow):
 
         # Capture diagnostics (window found, rate, OCR time, messages, occlusion) live on the
         # Settings page; the top bar only warns when something needs the player's attention.
+        layout.addStretch(1)
+
+        self._mode_button = ModeButton(self._cfg, bar)
+        self._mode_button.setToolTip("Open Morality Adjustment settings")
+        self._mode_button.clicked.connect(self.open_morality)
+        layout.addWidget(self._mode_button)
         layout.addStretch(1)
 
         self._overlay_switch = _make_toggle()
@@ -888,10 +905,10 @@ class MainWindow(QMainWindow):
         # Live > Import log also hands the file's session to the Session page.
         live, session = self._pages.get("live"), self._pages.get("session")
         imported = getattr(live, "imported", None)
-        adder = getattr(session, "add_imported_session", None)
+        adder = getattr(session, "add_imported_result", None)
         if imported is not None and callable(adder):
             try:
-                imported.connect(lambda result: adder(result.name, result.session))
+                imported.connect(adder)
             except Exception:  # noqa: BLE001
                 log.debug("could not wire the import signal", exc_info=True)
 
@@ -914,6 +931,18 @@ class MainWindow(QMainWindow):
             shortcut.activated.connect(lambda k=key: self.show_page(k))
         QShortcut(QKeySequence("F5"), self).activated.connect(self.capture_toggled)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.request_quit)
+        QShortcut(QKeySequence("Ctrl+M"), self).activated.connect(self.mute_requested)
+        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(
+            lambda: self.overlay_toggled.emit(not self._overlay_switch.isChecked()))
+        QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(
+            lambda: self.map_toggled.emit(not self._map_button.isChecked()))
+
+    def open_morality(self) -> None:
+        self.show_page("settings")
+        page = self.page("settings")
+        focus = getattr(page, "focus_morality", None)
+        if callable(focus):
+            focus()
 
     # -- pages ---------------------------------------------------------------------------
 
@@ -942,7 +971,8 @@ class MainWindow(QMainWindow):
         """Reflect the engine state in the Start/Stop button, chips and status bar."""
         self._state = state
         running = state in RUNNING_STATES
-        self._start_button.setText("Stop capture" if running else "Start capture")
+        self._start_button.setText("Stopping capture…" if state == "stopping" else "Stop capture" if running else "Start capture")
+        self._start_button.setEnabled(state != "stopping")
         if state == "stopped":
             self._warning_latch.update(False)
             self._warning_banner.hide()
@@ -1023,6 +1053,8 @@ class MainWindow(QMainWindow):
     def set_config(self, cfg: Config) -> None:
         """Adopt a freshly saved configuration (minimise-to-tray, player name, fps target)."""
         self._cfg = cfg
+        self._mode_button.set_config(cfg)
+        self._status_bar.clearMessage()
         for key, page in self._pages.items():
             if key == "settings":
                 continue
@@ -1111,8 +1143,7 @@ class MainWindow(QMainWindow):
 
     def request_quit(self) -> None:
         """Quit the application (Ctrl+Q)."""
-        self.prepare_quit()
-        self.close()
+        self.quit_requested.emit()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         self.save_state()
@@ -1122,10 +1153,11 @@ class MainWindow(QMainWindow):
             self.hide()
             self.minimised_to_tray.emit()
             return
-        event.accept()
         if not self._quitting:
-            self._quitting = True
+            event.ignore()
             self.quit_requested.emit()
+        else:
+            event.accept()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
@@ -1241,11 +1273,15 @@ class App(QApplication):
         self._last_status: dict[str, Any] = {}
         self._selftest = False
         self._shut_down = False
+        self._quit_pending = False
+        self._restart_capture_pending = False
+        self.config_path = DEFAULT_CONFIG_PATH
+        self.instance_coordinator = None
         self.aboutToQuit.connect(self.shutdown)
 
     # -- startup -----------------------------------------------------------------------
 
-    def bootstrap(self, cfg: Config, *, selftest_seconds: float | None = None) -> None:
+    def bootstrap(self, cfg: Config, *, selftest_seconds: float | None = None, config_path: str | Path | None = None) -> None:
         """Create the engine, windows and tray for ``cfg`` and show the main window.
 
         Args:
@@ -1254,10 +1290,12 @@ class App(QApplication):
                 that many seconds (the integrator's smoke test).
         """
         self.cfg = cfg
+        self.config_path = Path(config_path or DEFAULT_CONFIG_PATH).resolve()
         from mnmparse.trigger_chat import ChatShareAssembler
         self._chat_shares = ChatShareAssembler()
         app_icon.ensure_icon_file(project_path("assets") / "icon.ico")
         self.engine = self._make_engine(cfg)
+        self.engine.config_path = self.config_path
         self.overlay = self._make_overlay(cfg)
         from mnmparse.app.map_overlay import MapOverlay
         from mnmparse.app.map_downloads import MapDownloadController
@@ -1266,9 +1304,14 @@ class App(QApplication):
         self.map_downloads = MapDownloadController(self.map_overlay.repo, self)
         self.app_updates = AppUpdateController(self)
         self.triggers = self._make_trigger_runner()
+        from mnmparse.app.revenge import RevengeController, RevengePopoutWindow
+        self.revenge = RevengeController(cfg, self.config_path.parent / "revenge.json", self if isinstance(self, QObject) else None)
         self.window = MainWindow(self.engine, self.overlay, cfg, self.settings)
+        self.revenge_popout = RevengePopoutWindow(self.revenge, self.settings)
         self.tray = TrayIcon(self.icon, self)
         self._wire()
+        if self.triggers is not None:
+            self.triggers.set_config(cfg)
 
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
@@ -1299,8 +1342,15 @@ class App(QApplication):
             log.info("Self-test: capturing for %.0f s", selftest_seconds)
             QTimer.singleShot(0, self.start_capture)
             QTimer.singleShot(int(max(0.0, selftest_seconds) * 1000), self.request_quit)
-        elif bool(getattr(cfg, "start_capture_on_launch", False)):
+        elif bool(getattr(cfg, "start_capture_on_launch", False)) and cfg.setup_complete and cfg.player_name:
             QTimer.singleShot(0, self.start_capture)
+        elif not cfg.setup_complete:
+            QTimer.singleShot(0, self.open_setup)
+        from mnmparse.app.app_updates import acknowledge_startup, consume_update_result
+        receipt = consume_update_result()
+        acknowledge_startup()
+        if receipt:
+            self.window.show_message(receipt)
 
     def _make_engine(self, cfg: Config) -> Any:
         cls = _engine_mod.get("Engine")
@@ -1331,6 +1381,7 @@ class App(QApplication):
 
         engine.state_changed.connect(window.on_state)
         engine.state_changed.connect(self._on_engine_state)
+        self._connect_optional(engine, "stopped", self._on_capture_stopped)
         engine.status.connect(window.on_status)
         engine.status.connect(self._on_engine_status)
         engine.error.connect(window.on_error)
@@ -1352,6 +1403,15 @@ class App(QApplication):
             self._connect_optional(live_page, "copy_requested", self.copy_snapshot)
             self._connect_optional(live_page, "group_override_requested", self.set_group_override)
             self._connect_optional(live_page, "pet_owner_requested", self.set_pet_owner)
+        session_page = window.page("session")
+        if session_page is not None and live_page is not None:
+            self._connect_optional(session_page, "archive_selected", live_page.set_archive_history)
+            self._connect_optional(live_page, "archive_corrected", session_page.refresh_corrected_archive)
+        about_page = window.page("about")
+        help_panel = getattr(about_page, "help", None)
+        if help_panel is not None:
+            help_panel.setup_requested.connect(self.open_setup)
+            help_panel.demo_requested.connect(self.show_demo)
         if self.triggers is not None:
             engine.message.connect(self._on_message_for_triggers)
             page = window.page("triggers")
@@ -1361,6 +1421,23 @@ class App(QApplication):
             if overlay is not None and callable(getattr(overlay, "set_trigger_runner", None)):
                 overlay.set_trigger_runner(self.triggers)
         self._connect_optional(engine, "session", window.on_session)
+        from mnmparse.app.revenge import RevengePrompts, RevengeList
+        self.revenge.pop_out_requested.connect(self.show_revenge_popout)
+        revenge_page = window.page("triggers")
+        if revenge_page is not None:
+            self._revenge_box = QWidget(revenge_page)
+            row = QHBoxLayout(self._revenge_box)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(RevengePrompts(self.revenge), 1)
+            row.addWidget(RevengeList(self.revenge), 1)
+            self._revenge_box.setMaximumHeight(180)
+            self._revenge_box.setVisible(self.cfg.revenge_enabled)
+            self.revenge.saved_changed.connect(lambda: self._revenge_box.setVisible(self.revenge.enabled))
+            revenge_page.layout().insertWidget(1, self._revenge_box)
+        engine.message.connect(self.revenge.on_message)
+        self._connect_optional(session_page, "new_session_requested", self.revenge.new_session)
+        if overlay is not None:
+            overlay.set_revenge_controller(self.revenge)
         if overlay is not None:
             engine.snapshot.connect(overlay.set_snapshot)
             if hasattr(overlay, "update_encounter"):
@@ -1382,18 +1459,33 @@ class App(QApplication):
         window.overlay_toggled.connect(self.set_overlay_visible)
         window.lock_toggled.connect(self.set_overlay_locked)
         window.quit_requested.connect(self.request_quit)
+        window.mute_requested.connect(self.toggle_mute)
         window.minimised_to_tray.connect(self._on_minimised_to_tray)
         window.visibility_changed.connect(tray.set_window_visible)
 
         settings_page = window.page("settings")
         if settings_page is not None:
+            tools_widget = getattr(settings_page, "profile_tools", None)
+            if tools_widget is not None:
+                trigger_page = window.page("triggers")
+                tools_widget.set_trigger_flush_callback(getattr(trigger_page, "flush_pending_changes", lambda: True))
+                tools_widget.set_revenge_flush_callback(self.revenge.flush_pending_changes)
+                tools_widget.restored.connect(self._on_preferences_restored)
             self._connect_optional(settings_page, "config_changed", self.on_config_changed)
+            self._connect_optional(settings_page, "capture_restart_requested", self.restart_capture)
             self._connect_optional(settings_page, "sound_preview_requested", self.play_sound)
             self._connect_optional(settings_page, "overlay_reset_requested", self.reset_overlay_position)
             self._connect_optional(settings_page, "overlay_setting_changed", self._on_overlay_setting)
             if self.app_updates is not None:
                 self._connect_optional(settings_page, "app_update_requested", self.app_updates.start)
                 self._connect_optional(settings_page, "app_restart_requested", self.restart_for_update)
+                self._connect_optional(settings_page, "app_recovery_requested", self.restart_for_recovery)
+                from mnmparse.app.app_updates import recovery_package, installed_directory, UpdateError
+                try:
+                    available = recovery_package(installed_directory()) is not None
+                except UpdateError:
+                    available = False
+                settings_page.app_recovery_button.setVisible(available)
                 self.app_updates.started.connect(
                     lambda: settings_page.set_app_update_status("Checking GitHub for updates…", True))
                 self.app_updates.progress.connect(
@@ -1434,6 +1526,7 @@ class App(QApplication):
             tray.set_overlay_click_through(bool(self.overlay.click_through))
         tray.reset_requested.connect(self.reset_encounter)
         tray.quit_requested.connect(self.request_quit)
+        self._connect_optional(tray, "toggle_mute_requested", self.toggle_mute)
 
     def _on_chat_share(self, msg: Any, event: Any) -> None:
         if getattr(msg, "backlog", False) or self.window is None:
@@ -1465,7 +1558,11 @@ class App(QApplication):
                 page.set_app_update_status(message, False, ready)
 
     def restart_for_update(self) -> None:
-        if self.app_updates is not None and self.app_updates.prepare_restart():
+        if self.app_updates is not None and self.app_updates.prepare_restart(arguments=["--config", str(self.config_path)]):
+            self.request_quit()
+
+    def restart_for_recovery(self) -> None:
+        if self.app_updates is not None and self.app_updates.prepare_recovery(arguments=["--config", str(self.config_path)]):
             self.request_quit()
 
     def _on_map_download_finished(self, message: str) -> None:
@@ -1490,6 +1587,7 @@ class App(QApplication):
 
     def start_capture(self) -> None:
         """Start the engine worker (returns immediately)."""
+        self._leave_demo()
         if getattr(self.cfg, "capture_backend", "wgc") == "mss" and self.overlay is not None and self.overlay.isVisible():
             # Only the WGC backend captures the game window alone; mss grabs the desktop
             # rectangle, so an overlay sitting over the Combat chat would be OCR'd.
@@ -1513,6 +1611,8 @@ class App(QApplication):
 
     def toggle_capture(self) -> None:
         """Start/Stop from the top bar, F5 or the tray."""
+        if getattr(self.engine, "state", "") == "stopping":
+            return
         running = bool(getattr(self.engine, "is_running", False))
         if not running:
             running = getattr(self.engine, "state", "stopped") in RUNNING_STATES
@@ -1529,9 +1629,14 @@ class App(QApplication):
         if self.tray is not None:
             self.tray.set_capture_running(state in RUNNING_STATES)
             self.tray.set_status_text(STATE_TEXT.get(state, state))
+            self.tray._capture_action.setEnabled(state != "stopping")
 
     def _on_engine_status(self, status: dict[str, Any]) -> None:
         self._last_status = dict(status)
+        emitted = float(status.get("emitted_at", 0.0) or 0.0)
+        note = getattr(self.engine, "note_ui_delivery", None)
+        if emitted and callable(note):
+            note(max(0.0, (time.monotonic() - emitted) * 1000.0))
 
     def _on_engine_error(self, text: str) -> None:
         log.error("engine: %s", text)
@@ -1540,9 +1645,13 @@ class App(QApplication):
 
     def _make_trigger_runner(self) -> Any:
         try:
-            from mnmparse.app.triggers_runtime import TriggerRunner, default_store
-
-            return TriggerRunner(default_store(), self)
+            from mnmparse.app.triggers_runtime import TriggerRunner
+            from mnmparse.triggers import TriggerStore
+            store = TriggerStore(self.config_path.parent / "triggers.json")
+            loaded = store.load()
+            if store.install_presets() and (loaded or not store.path.is_file()):
+                store.save()
+            return TriggerRunner(store, self)
         except Exception:  # noqa: BLE001 - triggers must never stop the app
             log.exception("triggers unavailable")
             return None
@@ -1564,8 +1673,12 @@ class App(QApplication):
         play the export sound and confirm it on the overlay and in the status bar."""
         from mnmparse.export import format_from_config, format_snapshot
 
+        if self.__dict__.get("_demo_active", False):
+            self.window.show_message("Demo exports are disabled. Start capture to return to your real session.")
+            return ""
+
         try:
-            text = format_snapshot(snap, format_from_config(self.cfg))
+            text = format_snapshot(project_encounter(snap, self.cfg), format_from_config(self.cfg))
         except Exception:  # noqa: BLE001 - a bad template must never break the app
             log.exception("export failed")
             text = ""
@@ -1575,6 +1688,7 @@ class App(QApplication):
         if clipboard is None:
             return ""
         clipboard.setText(text)
+        self._last_copied = text
         sound = str(getattr(self.cfg, "export_sound", "") or "")
         if sound:
             self.play_sound(sound)
@@ -1597,10 +1711,16 @@ class App(QApplication):
 
     def set_group_override(self, name: str, in_group: Any) -> None:
         """Right-click > count a person in or out of the group (the engine's party roster)."""
+        if casual_enabled(self.cfg):
+            return
         setter = getattr(self.engine, "set_group_override", None)
         if not callable(setter):
             return
         state = None if in_group is None else bool(in_group)
+        if self.window is not None:
+            page = self.window.page("live")
+            if page is not None and page.correct_selected_archive(name=name, in_group=state):
+                return
         try:
             setter(name, state)
         except Exception:  # noqa: BLE001
@@ -1614,6 +1734,12 @@ class App(QApplication):
                                              if running else " (from the next capture)"))
 
     def set_pet_owner(self, pet: str, owner: Any) -> None:
+        if casual_enabled(self.cfg):
+            return
+        if self.window is not None:
+            page = self.window.page("live")
+            if page is not None and page.correct_selected_archive(pet=pet, owner=owner):
+                return
         setter = getattr(self.engine, "set_pet_owner", None)
         if callable(setter):
             setter(pet, owner)
@@ -1831,6 +1957,15 @@ class App(QApplication):
     def on_config_changed(self, cfg: Config) -> None:
         """The Settings page saved ``cfg``: adopt it in the shell and the overlay."""
         self.cfg = cfg
+        revenge = self.__dict__.get("revenge")
+        if revenge is not None:
+            revenge.set_config(cfg)
+        if self.triggers is not None:
+            self.triggers.set_config(cfg)
+        if casual_enabled(cfg):
+            clipboard = QGuiApplication.clipboard()
+            if clipboard is not None and clipboard.text() == getattr(self, "_last_copied", None):
+                clipboard.clear()
         if self.window is not None:
             self.window.set_config(cfg)
         if self.overlay is not None:
@@ -1852,18 +1987,153 @@ class App(QApplication):
         self._sync_map_appearance()
         log.info("Configuration updated from the Settings page")
 
+    def _on_preferences_restored(self, cfg: Config) -> None:
+        self.engine.update_config(cfg)
+        reload_preferences = getattr(self.engine, "reload_preferences", None)
+        if callable(reload_preferences):
+            reload_preferences()
+        self.revenge._load()
+        self.revenge.set_config(cfg)
+        if self.triggers is not None:
+            self.triggers.audio.stop()
+            self.triggers.store.load()
+            page = self.window.page("triggers")
+            if page is not None:
+                page.set_runner(self.triggers)
+        self.window.show_message("Preferences restored in Casual Mode. Restart PNUT to apply restored window positions.")
+
+    def toggle_mute(self) -> None:
+        if self.triggers is not None:
+            self.triggers.set_muted(not self.triggers.muted)
+            if self.tray is not None:
+                self.tray.set_muted(self.triggers.muted)
+            if self.window is not None:
+                self.window.show_message("Audio muted" if self.triggers.muted else "Audio unmuted")
+
+    def restart_capture(self) -> None:
+        self._restart_capture_pending = True
+        self.stop_capture()
+        if not self.engine.is_running:
+            self._on_capture_stopped()
+
+    def _on_capture_stopped(self) -> None:
+        if self.engine.is_running:
+            QTimer.singleShot(50, self, self._on_capture_stopped)
+            return
+        if self._quit_pending:
+            self.shutdown()
+            self.quit()
+        elif self._restart_capture_pending:
+            self._restart_capture_pending = False
+            self.start_capture()
+
+    def open_setup(self) -> None:
+        if getattr(self, "_setup_wizard", None) is not None and self._setup_wizard.isVisible():
+            self._setup_wizard.raise_()
+            return
+        from mnmparse.app.setup_wizard import SetupWizard
+        attack_bar = self.settings.value("attack_bar/enabled", self.cfg.attack_bar, type=bool)
+        bar = getattr(self.overlay, "attack_bar", None)
+        if bar is not None:
+            attack_bar = bool(bar.enabled)
+        draft = dataclasses.replace(self.cfg, attack_bar=attack_bar)
+        wizard = SetupWizard(self.engine, draft, self.window,
+                             display_map=self.settings.value("map/visible", True, type=bool))
+        wizard.finished_config.connect(lambda cfg: self._finish_setup(cfg, display_map=wizard.display_map))
+        wizard.siren_requested.connect(lambda: self.play_sound("Siren"))
+        wizard.open()
+        self._setup_wizard = wizard
+
+    def show_demo(self) -> None:
+        if bool(getattr(self.engine, "is_running", False)):
+            self.window.show_message("Stop capture before opening the synthetic demo.")
+            return
+        from mnmparse.app.demo import demo_bundle
+        bundle = demo_bundle(self.cfg.player_name or "DemoHero")
+        self._demo_active = True
+        presentation = dataclasses.replace(self.cfg, player_name=self.cfg.player_name or "DemoHero")
+        self.window.set_config(presentation)
+        live = self.window.page("live")
+        live._demo_active = True
+        live.set_history(bundle.encounters)
+        live.select_key(bundle.encounters[-1].key)
+        live._csv.setEnabled(False)
+        live._json.setEnabled(False)
+        self.window.on_session(bundle.session)
+        self.window.page("session")._export.setEnabled(False)
+        self.window.page("session")._demo_active = True
+        if self.overlay is not None:
+            self.overlay.set_config(presentation)
+            self.overlay.set_snapshot(bundle.encounters[-1])
+            self.overlay.set_session(bundle.session)
+        self.window.show_page("live")
+        self.window._demo_banner.show()
+        self.window._brand_sub.setText("DEMO · synthetic data")
+        self.window._start_button.setText("Start capture · end demo")
+        self.window.show_message("DEMO — fictional data only. Start capture to return to your real session.")
+
+    def _leave_demo(self) -> None:
+        if not getattr(self, "_demo_active", False):
+            return
+        self._demo_active = False
+        self.window._demo_banner.hide()
+        self.window._brand_sub.setText(APP_TAGLINE)
+        self.window.set_config(self.cfg)
+        self.window.page("live")._demo_active = False
+        self.window.page("session")._demo_active = False
+        self.window.page("live").set_history([])
+        self.window.on_session(self.engine.session_snapshot())
+        self.window.page("session")._export.setEnabled(True)
+        self.window.on_state(getattr(self.engine, "state", "stopped"))
+        if self.overlay is not None:
+            self.overlay.set_config(self.cfg)
+            self.overlay.clear_history()
+            self.overlay.set_snapshot(None)
+            self.overlay.set_session(self.engine.session_snapshot())
+
+    def _finish_setup(self, cfg: Config, *, display_map: bool | None = None) -> None:
+        from mnmparse.config import save_config
+        try:
+            save_config(cfg, str(self.config_path))
+        except OSError as exc:
+            self.window.on_error(f"Setup could not be saved ({type(exc).__name__}).")
+            return
+        self.settings.setValue("attack_bar/enabled", bool(cfg.attack_bar))
+        self.engine.update_config(cfg)
+        self.on_config_changed(cfg)
+        page = self.window.page("settings")
+        if page is not None:
+            page.load(cfg)
+        if display_map is not None:
+            self.set_map_visible(bool(display_map))
+        if cfg.start_capture_on_launch:
+            self.start_capture()
+
     # -- shutdown ------------------------------------------------------------------------
 
     def request_quit(self) -> None:
         """Quit cleanly from anywhere (tray, Ctrl+Q, self-test timer)."""
+        if self._quit_pending:
+            return
+        self._quit_pending = True
         if self.window is not None:
             self.window.prepare_quit()
             self.window.save_state()
+            page = self.window.page("triggers")
+            flush = getattr(page, "flush_pending_changes", None)
+            if callable(flush) and not flush():
+                self.window.show_message("Trigger changes could not be saved; check storage permissions.")
+            self.window.show_message("Finishing capture and saving the session…")
         # QApplication.quit() closes windows before emitting aboutToQuit. Freeze
         # preferences first so those hide events cannot turn an open map into a
         # saved "closed" map on the next launch (including an update restart).
-        self.shutdown()
-        self.quit()
+        self.stop_capture()
+        self._on_capture_stopped()
+
+    def show_revenge_popout(self) -> None:
+        """Open the shared passive PvP list when its feature is enabled."""
+        if self.revenge.enabled:
+            self.revenge_popout.show()
 
     def shutdown(self) -> None:
         """``aboutToQuit``: stop the engine, hide the windows, flush settings (idempotent)."""
@@ -1874,6 +2144,12 @@ class App(QApplication):
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)
         self.stop_capture()
+        revenge = self.__dict__.get("revenge")
+        if revenge is not None and not revenge.flush_pending_changes():
+            log.warning("Revenge List changes could not be saved")
+        revenge_popout = self.__dict__.get("revenge_popout")
+        if revenge_popout is not None:
+            revenge_popout.close()
         if self.app_updates is not None:
             self.app_updates.shutdown()
         if self.map_downloads is not None:
@@ -1890,6 +2166,9 @@ class App(QApplication):
         if self.tray is not None:
             self.tray.hide()
         self.settings.sync()
+        coordinator = self.__dict__.get("instance_coordinator")
+        if coordinator is not None:
+            coordinator.close()
         log.info("Bye")
 
 
@@ -1990,7 +2269,13 @@ def run(argv: Sequence[str] | None = None) -> int:
     else:
         app = App([sys.argv[0]])
     try:
-        app.bootstrap(cfg, selftest_seconds=args.selftest_seconds)
+        if args.selftest_seconds is None:
+            from mnmparse.app.launch_identity import InstanceCoordinator
+            app.instance_coordinator = InstanceCoordinator(project_path("."), Path(args.config or DEFAULT_CONFIG_PATH).resolve(), app)
+            app.instance_coordinator.activation.connect(app.show_window)
+            if not app.instance_coordinator.acquire():
+                return 0
+        app.bootstrap(cfg, selftest_seconds=args.selftest_seconds, config_path=args.config)
     except Exception:
         log.exception("Startup failed")
         app.shutdown()

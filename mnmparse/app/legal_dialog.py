@@ -98,12 +98,10 @@ class LegalDialog(QDialog):
         path = url.toLocalFile() if url.isLocalFile() else url.path()
         if not path:
             return None
-        # Reject traversal and other drives before touching the candidate path.
+        # Canonicalize aliases (including Windows 8.3 paths) before checking the
+        # boundary. Only bundled files may be checked/read after this containment test.
         try:
-            candidate = Path(os.path.abspath(self._legal_dir / path))
-            if not candidate.is_relative_to(self._legal_dir):
-                return None
-            candidate = candidate.resolve()
+            candidate = (self._legal_dir / path).resolve()
             if not candidate.is_relative_to(self._legal_dir) or not candidate.is_file():
                 return None
         except (OSError, ValueError):

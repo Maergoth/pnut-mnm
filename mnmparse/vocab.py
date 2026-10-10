@@ -473,11 +473,17 @@ class Vocabulary:
             log.info("learned spellings: dropped %d saved entries that are not names", dropped)
 
     def save(self, path: str | Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(self.to_dict(), ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
+        from .storage import atomic_json
+        atomic_json(Path(path), self.to_dict())
+
+    def replace_dict(self, data: dict[str, Any]) -> None:
+        """Replace learned state after explicit restore; never double saved counts."""
+        with self._lock:
+            for counter in self._names.values():
+                counter.clear()
+            self._words.clear()
+            self._cache.clear()
+            self.merge_dict(data)
 
     def load(self, path: str | Path) -> bool:
         path = Path(path)

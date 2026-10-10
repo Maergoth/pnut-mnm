@@ -119,14 +119,15 @@ class NativeWindowIdentityTests(unittest.TestCase):
             self.assertRegex(title, r"^[0-9a-f]{24}$")
 
     def test_help_and_share_dialogs_have_aliases_and_keep_readable_contents(self) -> None:
+        from mnmparse.config import Config
         from mnmparse.app.trigger_help import TriggerHelpDialog
         from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt
         from mnmparse.triggers import Trigger
 
         trigger = Trigger(name="Example timer", pattern="test")
         help_dialog = self._keep(TriggerHelpDialog())
-        export_dialog = self._keep(TriggerChatExportDialog(trigger, "share-code"))
-        import_dialog = self._keep(TriggerSharePrompt(trigger, "Example player"))
+        export_dialog = self._keep(TriggerChatExportDialog(trigger, "share-code", cfg=Config(casual_mode=False, casual_mode_confirmed=True)))
+        import_dialog = self._keep(TriggerSharePrompt(trigger, "Example player", cfg=Config(casual_mode=False, casual_mode_confirmed=True)))
         titles = [window.windowTitle() for window in self.windows]
         self.assertEqual(len(set(titles)), 3)
         for title in titles:

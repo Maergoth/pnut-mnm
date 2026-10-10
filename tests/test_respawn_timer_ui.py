@@ -75,6 +75,7 @@ class RespawnTimerUiTests(unittest.TestCase):
         store = TriggerStore(Path(self.tmp.name) / "triggers.json")
         store.triggers = [Trigger(name="Existing", pattern="existing")]
         self.runner = TriggerRunner(store)
+        self.runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         self.runner.audio = Mock()
         self.windows = []
         self.overlay = self.make_overlay(self.settings)
@@ -89,7 +90,7 @@ class RespawnTimerUiTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def make_overlay(self, settings):
-        overlay = OverlayWindow(settings, Config(player_name=PLAYER))
+        overlay = OverlayWindow(settings, Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
         self.windows.append(overlay)
         overlay.set_trigger_runner(self.runner)
         overlay.setGeometry(50, 50, 800, 350)

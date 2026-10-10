@@ -7,4 +7,4 @@ Nothing in this package touches the game process: no memory reads, nothing
 loaded into it, no input or window messages sent to it.
 """
 
-__version__ = "0.9.1"
+__version__ = "1.0.0"

@@ -53,7 +53,7 @@ class TimerSharingUITests(unittest.TestCase):
         self.runner.save = Mock(side_effect=self.runner.store.save)
         self.runner.audio = SimpleNamespace(voices=lambda: [], devices=lambda: [])
         settings = QSettings(str(self.root / "settings.ini"), QSettings.Format.IniFormat)
-        self.page = TriggersPage(_MissingEngine(Config()), Config(), settings)
+        self.page = TriggersPage(_MissingEngine(Config()), Config(casual_mode=False, casual_mode_confirmed=True), settings)
         self.page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         self.page.set_runner(self.runner)
 
@@ -163,7 +163,7 @@ class TimerSharingUITests(unittest.TestCase):
         self.assertIn("active timer settings", self.page.sharing_status.text())
 
     def test_export_failure_is_visible(self) -> None:
-        with patch("mnmparse.app.triggers_page.export_trigger_file", side_effect=OSError("Access denied")):
+        with patch("mnmparse.app.triggers_page.export_visible_trigger_file", side_effect=OSError("Access denied")):
             self._export(self.root / "shared.json")
         self.assertIn("Export failed", self.page.sharing_status.text())
         self.assertIn("Access denied", self.page.sharing_status.text())

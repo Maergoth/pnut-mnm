@@ -65,7 +65,7 @@ class EngineOcrDiagnosisTests(unittest.TestCase):
         patcher = mock.patch("mnmparse.app.engine._load_vocab_once")
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.cfg = Config(player_name="Mitch", log_dir=folder.name, crop=(2, 3, 12, 13), preprocess="none")
+        self.cfg = Config(casual_mode=False, casual_mode_confirmed=True, player_name="Mitch", log_dir=folder.name, crop=(2, 3, 12, 13), preprocess="none")
         self.engine = Engine(self.cfg)
         self.ocr = FakeOcr()
         self.engine._prepare_run(self.cfg, self.ocr)
@@ -179,6 +179,7 @@ def _snapshot(cfg: Config) -> dict[str, Any]:
 
 class FakeEngine:
     def __init__(self, cfg: Config, frame: Any = None, error: Exception | None = None) -> None:
+        self.config = cfg
         self.snapshot = _snapshot(cfg)
         self.frame = frame
         self.error = error
@@ -200,7 +201,7 @@ class OcrDiagnosisExportTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.path = Path(folder.name) / "exports" / "diagnosis.zip"
-        self.cfg = Config(crop=(2, 3, 9, 10), preprocess="none")
+        self.cfg = Config(casual_mode=False, casual_mode_confirmed=True, crop=(2, 3, 9, 10), preprocess="none")
         self.frame = np.arange(12 * 20 * 3, dtype=np.uint8).reshape(12, 20, 3)
 
     def _read(self) -> tuple[dict[str, Any], list[str]]:
@@ -246,7 +247,7 @@ class OcrDiagnosisExportTests(unittest.TestCase):
         self.assertEqual(report["capture"]["image_dimensions"], {"width": 7, "height": 7})
 
     def test_default_saved_crop_and_unsaved_custom_crop_are_distinguished(self) -> None:
-        default = Config()
+        default = Config(casual_mode=False, casual_mode_confirmed=True, )
         engine = FakeEngine(default)
         write_ocr_diagnosis(self.path, engine, dataclasses.replace(default, crop=self.cfg.crop))
         report, _names = self._read()

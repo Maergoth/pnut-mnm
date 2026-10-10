@@ -46,7 +46,7 @@ class GroupFilterUiTests(unittest.TestCase):
 
         self.tmp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.tmp.name) / "ui.ini"), QSettings.Format.IniFormat)
-        cfg = Config(show_other_groups=True)
+        cfg = Config(show_other_groups=True, casual_mode=False, casual_mode_confirmed=True)
         self.overlay = OverlayWindow(self.settings, cfg)
         self.page = LivePage(_MissingEngine(cfg), cfg, self.settings)
         self.page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
@@ -155,12 +155,12 @@ class GroupFilterUiTests(unittest.TestCase):
         self.page.set_history([ours, theirs])
         self.page.select_zone()
         self.assertEqual(self.page.selected().encounters, 2)
-        self.page.set_config(Config(show_other_groups=False))
+        self.page.set_config(Config(show_other_groups=False, casual_mode=False, casual_mode_confirmed=True))
         self.assertEqual(self.page.listed_keys(), [ours.key])
         self.assertEqual(self.page.selected().encounters, 1)
-        self.page.set_config(Config(show_other_groups=True))
+        self.page.set_config(Config(show_other_groups=True, casual_mode=False, casual_mode_confirmed=True))
         self.page.select_key(theirs.key)
-        self.page.set_config(Config(show_other_groups=False))
+        self.page.set_config(Config(show_other_groups=False, casual_mode=False, casual_mode_confirmed=True))
         self.assertEqual(self.page.selected().key, ours.key)
         self.page.add_encounter(replace(ours, ours=False))
         self.assertEqual(self.page.listed_keys(), [])
@@ -169,7 +169,7 @@ class GroupFilterUiTests(unittest.TestCase):
     def test_main_page_live_fight_clears_when_filter_disabled(self) -> None:
         self.page.set_snapshot(fight(100, ours=False, closed=False))
         self.assertIsNotNone(self.page.selected())
-        self.page.set_config(Config(show_other_groups=False))
+        self.page.set_config(Config(show_other_groups=False, casual_mode=False, casual_mode_confirmed=True))
         self.assertEqual(self.page.listed_keys(), [])
         self.assertIsNone(self.page.selected())
 

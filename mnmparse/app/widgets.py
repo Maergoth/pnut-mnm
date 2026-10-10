@@ -382,6 +382,8 @@ class _MeterModel(QAbstractTableModel):
         self._rows: list[Any] = []
         #: Optional ``row -> html`` for the Name column (the overlay's active-tab breakdown).
         self.name_tooltip: Callable[[Any], str | None] | None = None
+        #: Optional presentation-only label; the underlying actor identity stays intact.
+        self.name_label: Callable[[Any], str] | None = None
         self._values: list[float] = []
         self._shares: list[float] = []
         self._ranks: list[int] = []
@@ -487,6 +489,8 @@ class _MeterModel(QAbstractTableModel):
             return _row_color(row)
         if role in (Qt.ItemDataRole.DisplayRole, SORT_ROLE):
             value: Any = self._ranks[r] if col.key == "rank" else col.value(row, self._shares[r])
+            if col.key == "name" and self.name_label is not None:
+                value = self.name_label(row)
             if role == SORT_ROLE:
                 return value.casefold() if isinstance(value, str) else value
             return col.text(value)
@@ -1003,6 +1007,9 @@ class MeterTable(QWidget):
         self._proxy.setDynamicSortFilter(True)
 
         self._view = _MeterView(lambda: self._model.columns, self)
+        if not compact:
+            self._view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self._view.setAccessibleName("Combat meter")
         self._header = _MeterHeader(lambda: self._model.columns, self._view)
         self._view.setHorizontalHeader(self._header)
         self._delegate = _MeterDelegate(self._view, compact)
@@ -1054,6 +1061,16 @@ class MeterTable(QWidget):
     def set_name_tooltip_provider(self, provider: Callable[[Any], str | None] | None) -> None:
         """Tooltip for the Name column (``None`` falls back to the row summary)."""
         self._model.name_tooltip = provider
+
+    def set_name_label_provider(self, provider: Callable[[Any], str] | None) -> None:
+        """Name-column presentation without changing actor identity or tooltip detail."""
+        self._model.name_label = provider
+        column = self._model.column_index("name")
+        if column >= 0 and self._model.rowCount():
+            self._model.dataChanged.emit(
+                self._model.index(0, column), self._model.index(self._model.rowCount() - 1, column),
+                [Qt.ItemDataRole.DisplayRole, SORT_ROLE],
+            )
 
     def set_sort(self, column_key: str, descending: bool) -> None:
         """Sort by ``column_key`` (falls back to the metric column when unknown)."""
@@ -1300,7 +1317,7 @@ class FeedView(QWidget):
         )
         self._edit.viewport().setAutoFillBackground(False)
         self._edit.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._edit.setFocusPolicy(Qt.FocusPolicy.NoFocus if compact else Qt.FocusPolicy.ClickFocus)
+        self._edit.setFocusPolicy(Qt.FocusPolicy.NoFocus if compact else Qt.FocusPolicy.StrongFocus)
         self._edit.setTextInteractionFlags(
             Qt.TextInteractionFlag.NoTextInteraction if compact else Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -1602,7 +1619,7 @@ class SliderRow(QWidget):
         self._slider.setRange(int(minimum), int(maximum))
         self._slider.setValue(int(value))
         self._slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._slider.setFocusPolicy(Qt.FocusPolicy.NoFocus if compact else Qt.FocusPolicy.ClickFocus)
+        self._slider.setFocusPolicy(Qt.FocusPolicy.NoFocus if compact else Qt.FocusPolicy.StrongFocus)
         self._value = QLabel(self._fmt(int(value)), self)
         self._value.setAlignment(_RIGHT)
         self._value.setFont(make_font(12 if compact else 13, tabular=True))

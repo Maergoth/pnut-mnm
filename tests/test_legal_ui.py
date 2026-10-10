@@ -150,6 +150,61 @@ class LegalUiTests(unittest.TestCase):
         dialog.browsers["open-source"].anchorClicked.emit(QUrl.fromLocalFile(str(self.legal / "licenses" / "PNUT-MIT.txt")))
         self.assertEqual(dialog.tabs.currentWidget().toPlainText(), self.license_text)
 
+    def test_local_path_aliases_resolve_before_the_bundle_boundary_check(self):
+        alias = self.root / "bundle-alias"
+        outside = self.root / "outside-documents"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("PRIVATE OUTSIDE FILE", encoding="utf-8")
+        outside_alias = self.legal / "licenses" / "outside-alias"
+        try:
+            for link, target in ((alias, self.legal), (outside_alias, outside)):
+                try:
+                    link.symlink_to(target, target_is_directory=True)
+                except OSError:
+                    if os.name != "nt":
+                        raise
+                    # Junctions need no symlink privilege on Windows runners.
+                    from _winapi import CreateJunction
+                    CreateJunction(str(target), str(link))
+        except OSError as exc:
+            self.skipTest(f"Path aliases are unavailable: {exc}")
+        dialog = self.dialog("open-source")
+        with patch("mnmparse.app.legal_dialog.QDesktopServices.openUrl") as external:
+            dialog.browsers["open-source"].anchorClicked.emit(
+                QUrl.fromLocalFile(str(alias / "licenses" / "PNUT-MIT.txt")))
+            self.assertEqual(dialog.tabs.currentWidget().toPlainText(), self.license_text)
+            dialog.select_section("open-source")
+            with patch.object(Path, "read_text", side_effect=AssertionError("Outside files must not be read")) as read:
+                dialog.browsers["open-source"].anchorClicked.emit(QUrl("licenses/outside-alias/secret.txt"))
+                read.assert_not_called()
+            self.assertIs(dialog.tabs.currentWidget(), dialog.browsers["open-source"])
+            self.assertNotIn("PRIVATE OUTSIDE FILE", dialog.tabs.currentWidget().toPlainText())
+            self.assertEqual(dialog.tabs.count(), 4)
+            external.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows short paths")
+    def test_windows_short_path_license_url_opens_the_same_bundled_file(self):
+        import ctypes
+        from ctypes import wintypes
+
+        target = self.legal / "licenses" / "full-open-source-license-with-long-name.txt"
+        target.write_text(self.license_text, encoding="utf-8")
+        short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        short_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        short_path.restype = wintypes.DWORD
+        size = short_path(str(target), None, 0)
+        if not size:
+            self.skipTest("Windows short paths are unavailable")
+        buffer = ctypes.create_unicode_buffer(size)
+        if not short_path(str(target), buffer, size) or buffer.value.casefold() == str(target).casefold():
+            self.skipTest("No 8.3 alias is available on this volume")
+        self.assertEqual(Path(buffer.value).resolve(), target.resolve())
+        dialog = self.dialog("open-source")
+        with patch("mnmparse.app.legal_dialog.QDesktopServices.openUrl") as external:
+            dialog.browsers["open-source"].anchorClicked.emit(QUrl.fromLocalFile(buffer.value))
+            self.assertEqual(dialog.tabs.currentWidget().toPlainText(), self.license_text)
+            external.assert_not_called()
+
     def test_source_bundle_documents_and_mit_license_are_available_offline(self):
         source_root = Path(legal_dialog.__file__).resolve().parents[2] / "legal"
         with patch("mnmparse.app.legal_dialog.QDesktopServices.openUrl") as external:
