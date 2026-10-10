@@ -367,7 +367,8 @@ class TriggerRunner(QObject):
         return True
 
     # -- timers ------------------------------------------------------------------------
-    def start_one_time_timer(self, label: str, seconds: float, now: float | None = None) -> ActiveTimer:
+    def start_one_time_timer(self, label: str, seconds: float, now: float | None = None, *,
+                             keep_until_dismissed: bool = False) -> ActiveTimer:
         """Start an independent, silent countdown without adding a chat trigger."""
         if not isinstance(label, str) or not label.strip():
             raise ValueError("A one-time timer needs a label")
@@ -382,12 +383,14 @@ class TriggerRunner(QObject):
         now = time.time() if now is None else now
         previous = list(self.board.timers)
         # A confirmed manual countdown must survive the board's longest-first cap.
-        while len(self.board.timers) >= self.board.MAX_TIMERS:
-            obsolete = next((timer for timer in self.board.timers if timer.ended), None)
+        ordinary = [timer for timer in self.board.timers if not timer.keep_until_dismissed]
+        while not keep_until_dismissed and len(ordinary) >= self.board.MAX_TIMERS:
+            obsolete = next((timer for timer in ordinary if timer.ended), None)
             if obsolete is None:
-                obsolete = max(self.board.timers, key=lambda timer: timer.remaining(now))
+                obsolete = max(ordinary, key=lambda timer: timer.remaining(now))
             self.board.cancel(obsolete.id)
-        timer = self.board.start(trigger, trigger.name, now)
+            ordinary.remove(obsolete)
+        timer = self.board.start(trigger, trigger.name, now, keep_until_dismissed=keep_until_dismissed)
         assert timer is not None  # A fresh stack timer cannot retain an older instance.
         for old in previous:
             if old not in self.board.timers:
@@ -396,16 +399,31 @@ class TriggerRunner(QObject):
         self.timers_changed.emit()
         return timer
 
+    def restart_timer(self, timer_id: str, now: float | None = None) -> bool:
+        """Restart an expired retained countdown with its existing label and duration."""
+        timer = next((timer for timer in self.board.timers if timer.id == timer_id), None)
+        if timer is None or not timer.ended or not timer.keep_until_dismissed:
+            return False
+        self.audio.cancel_speech(self._timer_scope(timer))
+        timer.start = time.time() if now is None else now
+        timer.warned = timer.ended = False
+        self._clock.start()
+        self.timers_changed.emit()
+        return True
+
     def cancel_timer(self, timer_id: str) -> None:
         for timer in self.board.timers:
             if timer.id == timer_id:
                 self.audio.cancel_speech(self._timer_scope(timer))
         self.board.cancel(timer_id)
+        if not any(not timer.ended or not timer.keep_until_dismissed for timer in self.board.timers):
+            self._clock.stop()
         self.timers_changed.emit()
 
     def clear_timers(self) -> None:
         self.audio.cancel_speech("timer:", prefix=True)
         self.board.clear()
+        self._clock.stop()
         self.timers_changed.emit()
 
     def _tick(self) -> None:
@@ -417,7 +435,7 @@ class TriggerRunner(QObject):
             self._alert(t, "end")
         if warned or ended or len(self.board.timers) != before:
             self.timers_changed.emit()
-        if not self.board.timers:
+        if not any(not timer.ended or not timer.keep_until_dismissed for timer in self.board.timers):
             self._clock.stop()
 
     def _alert(self, timer: ActiveTimer, which: str) -> None:

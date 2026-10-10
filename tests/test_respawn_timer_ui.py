@@ -185,6 +185,7 @@ class RespawnTimerUiTests(unittest.TestCase):
             self.context_menu(*self.header_target(), choice=RESPAWN_ACTION)
         timer, = self.runner.board.timers
         self.assertEqual((timer.label, timer.duration), (f"{NAMED_MOB} respawn", 754))
+        self.assertTrue(timer.keep_until_dismissed)
         self.assertIn(timer, self.overlay.timer_panel.timers())
         self.assertEqual(self.runner.store.to_dict(), before)
         self.runner.audio.run.assert_not_called()

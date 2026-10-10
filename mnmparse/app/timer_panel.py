@@ -2,23 +2,27 @@
 
 Each running timer is one row: a radial ring that empties as time runs out, the label and
 a minutes:seconds counter.  The ring turns amber in the warning period and red in the last
-five seconds; an ended timer flashes "0:00" for a moment.  Right-click a timer to cancel
-it (or all of them). The panel shows while timers run or recent triggers are displayed
-(unless "always show" is on)
-and docks / undocks like the auto-attack bar (:mod:`mnmparse.app.docked_panel`).
+five seconds; an ended trigger timer flashes "0:00" for a moment. Expired NPC timers stay
+until dismissed, with Restart and Dismiss buttons in place of the countdown. Right-click
+a timer to cancel it (or all of them). The panel shows while timers run or recent triggers
+are displayed (unless "always show" is on) and docks / undocks like the auto-attack bar
+(:mod:`mnmparse.app.docked_panel`).
 Accepted triggers without a countdown append a brief notification below the running
 timers. Notifications fade away after four seconds; timed triggers show only their timer.
 """
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen
-from PySide6.QtWidgets import QMenu
+from PySide6.QtCore import QPointF, QRectF, QSettings, QSignalBlocker, Qt, QTimer
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent, QWheelEvent,
+)
+from PySide6.QtWidgets import QMenu, QPushButton, QScrollBar
 
 from mnmparse.app.docked_panel import DockedPanel
 from mnmparse.app.widgets import make_font, qcolor, token
@@ -58,6 +62,8 @@ def timer_color(timer: ActiveTimer, now: float) -> QColor:
     """Resolve normal, warning, and low-duration colors, including the ended flash."""
     left = timer.remaining(now)
     if timer.ended:
+        if getattr(timer, "keep_until_dismissed", False):
+            return qcolor(timer.low_color or token("DANGER"))
         return qcolor(timer.low_color or token("DANGER"), 0.95 if int(now * 4) % 2 == 0 else 0.45)
     if left <= timer.low_s:
         return qcolor(timer.low_color or token("DANGER"))
@@ -80,12 +86,27 @@ class TimerPanel(DockedPanel):
         self._f_label = make_font(self._px * 0.95, weight=QFont.Weight.DemiBold)
         self._f_time = make_font(self._px * 1.05, weight=QFont.Weight.DemiBold, tabular=True)
         self._rows: list[tuple[QRectF, str]] = []  #: (row rect, timer id) from the last paint
+        self._expired_buttons: dict[str, tuple[QPushButton, QPushButton]] = {}
+        self._scroll = QScrollBar(Qt.Orientation.Vertical, self)
+        self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._scroll.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        self._scroll.setAccessibleName("Timer rows")
+        self._scroll.setToolTip("Scroll to see more timers")
+        self._scroll.setStyleSheet(
+            "QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }"
+            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.25); border-radius: 3px; min-height: 20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        )
+        self._scroll.hide()
+        self._scroll.valueChanged.connect(self.refresh)
         self._popups: list[TriggerPopup] = []
         self._anim = QTimer(self)
         self._anim.setInterval(FRAME_MS)
         self._anim.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim.timeout.connect(self._frame)
-        self.setToolTip("Running timers and recent triggers. Right-click a timer to cancel it.")
+        self.setToolTip("Running timers and recent triggers. Expired NPC timers can be restarted or dismissed. "
+                        "Right-click a timer to cancel it.")
         self._resize_for(1)
 
     # -- wiring --------------------------------------------------------------------------
@@ -124,6 +145,14 @@ class TimerPanel(DockedPanel):
     def timers(self) -> list[ActiveTimer]:
         return self.runner.board.ordered() if self.runner is not None else []
 
+    def _visible_timers(self) -> list[ActiveTimer]:
+        offset = self._scroll.value()
+        return self.timers()[offset:offset + MAX_ROWS]
+
+    def _needs_animation(self) -> bool:
+        return bool(self._popups) or any(not (timer.ended and getattr(timer, "keep_until_dismissed", False))
+                                        for timer in self.timers())
+
     def wants_visible(self) -> bool:
         return self.always_show or bool(self.timers()) or bool(self._popups)
 
@@ -147,9 +176,15 @@ class TimerPanel(DockedPanel):
         # The owner also calls sync when an overlay is re-shown. Expire notifications
         # before showing anything; their lifetime never pauses while the panel is hidden.
         self._prune_popups()
+        with QSignalBlocker(self._scroll):
+            self._scroll.setRange(0, max(0, len(self.timers()) - MAX_ROWS))
+            self._scroll.setPageStep(MAX_ROWS)
+        self._scroll.setVisible(len(self.timers()) > MAX_ROWS)
         self._resize_for(max(1, min(MAX_ROWS, len(self.timers())) + len(self._popups)))
+        self._sync_expired_buttons()
         super().sync()
-        if self.isVisible() and (self.timers() or self._popups):
+        self._position_controls()
+        if self.isVisible() and self._needs_animation():
             self._anim.start()
         else:
             self._anim.stop()
@@ -164,9 +199,91 @@ class TimerPanel(DockedPanel):
     def _frame(self) -> None:
         if self._prune_popups():
             self.refresh()
-        if not self.isVisible() or not (self.timers() or self._popups):
+        if not self.isVisible() or not self._needs_animation():
             self._anim.stop()
         self.update()
+
+    def _button_widths(self) -> tuple[int, int, int]:
+        metrics = QFontMetricsF(self._f_label)
+        padding = max(10, self._px)
+        return (math.ceil(metrics.horizontalAdvance("Restart") + padding),
+                math.ceil(metrics.horizontalAdvance("Dismiss") + padding), max(4, round(self._px * 0.35)))
+
+    def _row_rect(self, index: int) -> QRectF:
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        scroll_space = 14 if self._scroll.maximum() > 0 else 0
+        return QRectF(r.left() + 8, r.top() + 5 + index * (self._row_h() + 4),
+                      r.width() - 16 - scroll_space, self._row_h())
+
+    def _sync_expired_buttons(self) -> None:
+        expired = {timer.id: timer for timer in self._visible_timers()
+                   if timer.ended and getattr(timer, "keep_until_dismissed", False)}
+        for timer_id in self._expired_buttons.keys() - expired.keys():
+            for button in self._expired_buttons.pop(timer_id):
+                button.hide()
+                button.deleteLater()
+        for timer_id, timer in expired.items():
+            if timer_id not in self._expired_buttons:
+                restart, dismiss = QPushButton("Restart", self), QPushButton("Dismiss", self)
+                restart.clicked.connect(lambda _checked=False, tid=timer_id: self._restart_timer(tid))
+                dismiss.clicked.connect(lambda _checked=False, tid=timer_id: self._dismiss_timer(tid))
+                self._expired_buttons[timer_id] = (restart, dismiss)
+            restart, dismiss = self._expired_buttons[timer_id]
+            restart.setToolTip(f"Restart {timer.label} using the same duration")
+            dismiss.setToolTip(f"Dismiss {timer.label}")
+            for button in (restart, dismiss):
+                button.setFont(self._f_label)
+                button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                button.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setAccessibleName(f"{button.text()} {timer.label}")
+                button.setStyleSheet(
+                    f"QPushButton {{ color: {token('TEXT')}; background: rgba(255,255,255,0.06); "
+                    f"border: 1px solid {token('LINE')}; border-radius: 4px; padding: 0; "
+                    f"font-size: {self._f_label.pixelSize()}px; font-weight: 600; min-height: 0; }}"
+                    "QPushButton:hover { background: rgba(255,255,255,0.13); }"
+                    "QPushButton:pressed { background: rgba(255,255,255,0.20); }"
+                )
+                button.show()
+        restart_w, dismiss_w, gap = self._button_widths()
+        needed = math.ceil(16 + self._row_h() - 6 + 8 + self._px * 3 + 6 + restart_w + dismiss_w + gap)
+        self.setMinimumWidth(needed + (14 if self._scroll.maximum() > 0 else 0) if expired else 0)
+
+    def _position_controls(self) -> None:
+        restart_w, dismiss_w, gap = self._button_widths()
+        button_h = min(self._row_h() - 4, max(18, round(self._px * 1.8)))
+        for index, timer in enumerate(self._visible_timers()):
+            buttons = self._expired_buttons.get(timer.id)
+            if buttons is None:
+                continue
+            row = self._row_rect(index)
+            top = round(row.center().y() - button_h / 2)
+            right = math.floor(row.right())
+            buttons[0].setGeometry(right - dismiss_w - gap - restart_w, top, restart_w, button_h)
+            buttons[1].setGeometry(right - dismiss_w, top, dismiss_w, button_h)
+        self._scroll.setGeometry(self.width() - 14, 5, 8,
+                                 max(1, len(self._visible_timers()) * (self._row_h() + 4) - 4))
+
+    def _restart_timer(self, timer_id: str) -> None:
+        if self.runner is not None:
+            self.runner.restart_timer(timer_id)
+
+    def _dismiss_timer(self, timer_id: str) -> None:
+        if self.runner is not None:
+            self.runner.cancel_timer(timer_id)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_expired_buttons"):
+            self._position_controls()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        if self._scroll.maximum() > 0 and event.angleDelta().y():
+            step = -1 if event.angleDelta().y() > 0 else 1
+            self._scroll.setValue(self._scroll.value() + step)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     # -- painting ------------------------------------------------------------------------
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
@@ -180,7 +297,7 @@ class TimerPanel(DockedPanel):
         p.setPen(QPen(qcolor(token("LINE")), 1))
         p.drawPath(path)
         now = time.time()
-        timers = self.timers()[:MAX_ROWS]
+        timers = self._visible_timers()
         self._rows = []
         row_h = self._row_h()
         if not timers and not self._popups:
@@ -194,8 +311,7 @@ class TimerPanel(DockedPanel):
         time_w = fm_time.horizontalAdvance("88:88") + 6
         fm_label = QFontMetricsF(self._f_label)
         for i, t in enumerate(timers):
-            top = r.top() + 5 + i * (row_h + 4)
-            row = QRectF(r.left() + 8, top, r.width() - 16, row_h)
+            row = self._row_rect(i)
             self._rows.append((row, t.id))
             left = t.remaining(now)
             frac = t.fraction(now)
@@ -215,13 +331,19 @@ class TimerPanel(DockedPanel):
                 p.drawArc(ring.adjusted(width / 2, width / 2, -width / 2, -width / 2), 90 * 16, span)
             # label and counter
             text_left = ring.right() + 8
-            p.setFont(self._f_time)
-            p.setPen(color if (t.ended or left <= t.low_s) else qcolor(token("TEXT")))
-            p.drawText(QRectF(row.right() - time_w, row.top(), time_w, row.height()),
-                       int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight), format_remaining(left))
+            controls = self._expired_buttons.get(t.id)
+            reserved_w = time_w
+            if controls is not None:
+                restart_w, dismiss_w, gap = self._button_widths()
+                reserved_w = restart_w + dismiss_w + gap
+            else:
+                p.setFont(self._f_time)
+                p.setPen(color if (t.ended or left <= t.low_s) else qcolor(token("TEXT")))
+                p.drawText(QRectF(row.right() - time_w, row.top(), time_w, row.height()),
+                           int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight), format_remaining(left))
             p.setFont(self._f_label)
             p.setPen(qcolor(token("MUTED") if t.ended else token("TEXT")))
-            label_rect = QRectF(text_left, row.top(), row.right() - time_w - text_left - 6, row.height())
+            label_rect = QRectF(text_left, row.top(), max(0, row.right() - reserved_w - text_left - 6), row.height())
             p.drawText(label_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                        fm_label.elidedText(t.label, Qt.TextElideMode.ElideRight, label_rect.width()))
             # a thin progress line under the row (easier to read at a glance than the ring alone)
@@ -231,7 +353,7 @@ class TimerPanel(DockedPanel):
             p.drawRoundedRect(line, 1, 1)
         popup_now = time.monotonic()
         for i, popup in enumerate(self._popups, start=len(timers)):
-            row = QRectF(r.left() + 8, r.top() + 5 + i * (row_h + 4), r.width() - 16, row_h)
+            row = self._row_rect(i)
             p.save()
             p.setOpacity(popup.opacity(popup_now))
             p.setPen(Qt.PenStyle.NoPen)

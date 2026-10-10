@@ -92,6 +92,8 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertLessEqual(report["chat_share_chars"], 255)
             self.assertGreaterEqual(len(report["window_titles"]), 8)
             self.assertEqual(report["pet_rollup"], {"label": "SmokeOwner + SmokeOwner's Pet", "damage": 50})
+            self.assertEqual(report["legal_documents"], ["open-source", "privacy", "terms"])
+            self.assertTrue(report["image_processing"])
             for title in report["window_titles"]:
                 self.assertRegex(title, r"^[0-9a-f]{24}$")
 

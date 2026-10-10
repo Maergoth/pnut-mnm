@@ -60,6 +60,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Building with PyInstaller ..."
+& $python scripts/generate_legal_notices.py
+if ($LASTEXITCODE -ne 0) { throw "License notice generation failed ($LASTEXITCODE)" }
 & $python -m PyInstaller mnmparser.spec --noconfirm
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 

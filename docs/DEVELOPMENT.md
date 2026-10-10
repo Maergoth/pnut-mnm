@@ -9,6 +9,12 @@ searches to the selected Python environment and Windows; third-party tools in th
 caller's PATH must never supply DLLs to the app. Version 0.1.0 accidentally collected a
 Poppler ICU library whose exports were incompatible with the Windows ICU expected by Qt.
 
+The build first runs `scripts/generate_legal_notices.py` to refresh the dependency versions
+and preserve their full license and copyright notices under `legal/`. Review these files
+when changing dependencies. The spec bundles the legal documents for the in-app footer,
+including PNUT's MIT license at `_internal/legal/licenses/PNUT-MIT.txt`. Keep legal files
+under `_internal` so existing updaters continue accepting the release ZIP layout.
+
 The build script must pass the produced executable's `--smoke-test --report PATH` check.
 It creates temporary offscreen windows and settings without game capture. A successful
 PyInstaller build or a process that remains alive is not sufficient validation: a crash

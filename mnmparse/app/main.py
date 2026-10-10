@@ -77,6 +77,7 @@ from PySide6.QtWidgets import (
 from mnmparse import grammar
 from mnmparse.app import APP_NAME, APP_TAGLINE, APP_VERSION, ORGANIZATION, SETTINGS_APP_NAME, theme
 from mnmparse.app import icon as app_icon
+from mnmparse.app.legal_dialog import LegalDialog
 from mnmparse.app.tray import TrayIcon
 from mnmparse.app.widgets import WarningLatch, capture_warning
 from mnmparse.app.window_identity import window_title
@@ -547,6 +548,7 @@ class MainWindow(QMainWindow):
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, _NavButton] = {}
         self._fitting_top_bar = False
+        self._legal_dialog: LegalDialog | None = None
 
         self.setWindowTitle(window_title("main"))
         self.resize(DEFAULT_WINDOW_SIZE)
@@ -573,6 +575,7 @@ class MainWindow(QMainWindow):
         self._status_bar = QStatusBar(self)
         self._state_label = QLabel(STATE_TEXT["stopped"], self._status_bar)
         self._state_label.setProperty("class", "muted")
+        self._status_bar.addPermanentWidget(self._build_legal_footer())
         self._status_bar.addPermanentWidget(self._state_label)
         self.setStatusBar(self._status_bar)
 
@@ -620,7 +623,41 @@ class MainWindow(QMainWindow):
         QLabel#brand {{ font-size: 17px; font-weight: 600; letter-spacing: 0.5px; }}
         QLabel#brandSub {{ color: {theme.MUTED}; font-size: 11px; }}
         QLabel#switchLabel {{ color: {theme.MUTED}; }}
+        QWidget#legalFooter QPushButton {{
+            color: {theme.MUTED}; background: transparent; border: none;
+            font-size: 11px; padding: 2px 6px; min-height: 0;
+        }}
+        QWidget#legalFooter QPushButton:hover {{ color: {theme.TEXT}; }}
+        QWidget#legalFooter QPushButton:focus {{ color: {theme.ACCENT}; }}
         """
+
+    def _build_legal_footer(self) -> QWidget:
+        footer = QWidget(self._status_bar)
+        footer.setObjectName("legalFooter")
+        layout = QHBoxLayout(footer)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self._legal_buttons: dict[str, QPushButton] = {}
+        for key, title in (("privacy", "Privacy"), ("terms", "Terms & Disclaimer"),
+                           ("open-source", "Open Source Notices")):
+            button = QPushButton(title.replace("&", "&&"), footer)
+            button.setFlat(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(title)
+            button.setToolTip(f"Read {title}")
+            button.clicked.connect(lambda _checked=False, section=key: self._open_legal(section))
+            layout.addWidget(button)
+            self._legal_buttons[key] = button
+        return footer
+
+    def _open_legal(self, section: str) -> None:
+        if self._legal_dialog is None:
+            self._legal_dialog = LegalDialog(section, self)
+        else:
+            self._legal_dialog.select_section(section)
+        self._legal_dialog.show()
+        self._legal_dialog.raise_()
+        self._legal_dialog.activateWindow()
 
     def _build_top_bar(self) -> QWidget:
         bar = QFrame(self)

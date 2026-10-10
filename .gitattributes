@@ -4,3 +4,6 @@
 *.ps1 text eol=crlf
 *.png binary
 *.ico binary
+LICENSE text eol=lf
+# Preserve upstream license bytes and their recorded SHA-256 digests.
+legal/licenses/*.txt -text -whitespace

@@ -279,8 +279,11 @@ one countdown immediately. The duration is pre-filled with the last one you conf
 any mob in that encounter's zone, including after restarting PNUT. All mobs in a zone share
 that default; each zone remembers its own duration. The first timer in a zone defaults to
 five minutes.
-Each countdown runs once in the timer panel and can be cancelled there. It does not add
-an automatic chat trigger. Turn off overlay click-through to use the right-click menu.
+Each countdown runs once in the timer panel. When an NPC timer expires, **Restart** and
+**Dismiss** replace its time counter. It stays until you dismiss it; **Restart** starts a fresh
+countdown with the same duration. Scroll the timer panel when more than eight timers are
+listed. It does not add an automatic chat trigger. Turn off overlay click-through to use
+the buttons or the right-click menu.
 
 **Your group, outsiders and enemies.** The totals at the top (damage and DPS), the shares and the
 clipboard line count only your group: you, your pet and your party. Everyone else in a fight is
@@ -648,3 +651,12 @@ loot).
   effect-only message with no visible user remains uncredited.
 - The main window can open behind the fullscreen game because the app never steals focus;
   Alt-Tab to it.
+
+## Privacy and licensing
+
+The footer of the main window opens the [Privacy Policy](legal/privacy.md),
+[Terms and Disclaimer](legal/terms.md), and [Open Source Notices](legal/open-source.md)
+inside PNUT, including when you are offline. The Windows release includes these documents
+and the full dependency license texts. PNUT's own code is available under the
+[MIT License](LICENSE); dependency licenses and rights to game artwork are described in
+the notices.

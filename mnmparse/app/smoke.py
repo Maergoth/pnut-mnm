@@ -22,7 +22,8 @@ from typing import Any
 QT_MODULES = ("QtCore", "QtGui", "QtWidgets", "QtMultimedia", "QtTextToSpeech")
 APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
-    "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "map_overlay", "map_downloads", "app_updates", "main",
+    "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "legal_dialog",
+    "map_overlay", "map_downloads", "app_updates", "main",
 )
 NATIVE_MODULES = ("numpy", "cv2")
 WINDOWS_MODULES = (
@@ -164,6 +165,35 @@ def _exercise(report: dict[str, Any]) -> None:
             if "Table of contents" not in guide_text or "Righteous Smite II: 154 damage" not in guide_text:
                 raise RuntimeError("The packaged trigger guide is missing its content or examples")
             report["trigger_help"] = True
+
+            report["stage"] = "open bundled legal documents"
+            from PySide6.QtCore import QUrl
+            from mnmparse.app.legal_dialog import LegalDialog
+
+            legal = LegalDialog("privacy", window)
+            windows.append(legal)
+            for section, expected in (("privacy", "Privacy Policy"), ("terms", "Terms"),
+                                      ("open-source", "LGPL")):
+                if expected not in legal.browsers[section].toPlainText():
+                    raise RuntimeError(f"The packaged legal document is missing: {section}")
+            legal.browsers["open-source"].anchorClicked.emit(QUrl("licenses/PNUT-MIT.txt"))
+            if "MIT License" not in legal.tabs.currentWidget().toPlainText():
+                raise RuntimeError("The packaged MIT license could not be opened offline")
+            report["legal_documents"] = sorted(legal.browsers)
+
+            report["stage"] = "exercise bundled image processing"
+            import cv2
+            import numpy as np
+            from mnmparse.ocr import preprocess
+
+            image = np.zeros((4, 4, 3), dtype=np.uint8)
+            image[1, 1] = (10, 200, 30)
+            processed = preprocess(image, "maxchannel", 2.0)
+            encoded_ok, encoded = cv2.imencode(".png", processed)
+            if (processed.shape != (8, 8, 3) or not encoded_ok
+                    or not np.array_equal(cv2.imdecode(encoded, cv2.IMREAD_COLOR), processed)):
+                raise RuntimeError("Bundled OpenCV image processing or PNG encoding failed")
+            report["image_processing"] = True
             report["window_titles"] = [item.windowTitle() for item in [*windows, overlay.timer_panel, overlay.attack_bar]]
             if not all(re.fullmatch(r"[0-9a-f]{24}", title) for title in report["window_titles"]):
                 raise RuntimeError("An application window is missing its randomized session title")
