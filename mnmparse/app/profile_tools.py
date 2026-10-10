@@ -94,11 +94,11 @@ class ProfileTools(QWidget):
         layout.addWidget(profiles)
         preferences = QGroupBox("Backup and restore preferences", self)
         backup_layout = QVBoxLayout(preferences)
-        scope = QLabel("Carebear backup: technical settings and capture profiles with generic names. Logs and screenshots are excluded. Restored preferences always start in Carebear Mode; the current log folder is kept.", preferences)
+        scope = QLabel("Back up settings and capture profiles. Logs and screenshots are excluded. Restore starts in Carebear Mode and keeps your current log folder.", preferences)
         scope.setWordWrap(True)
         backup_layout.addWidget(scope)
         self.full_backup = QCheckBox("Include full preferences, triggers, ownership corrections, learned spellings and PvP reminder names", preferences)
-        self.full_backup.setToolTip("Available only after confirming Elitist Scumbag Mode. This archive can contain teammate identities.")
+        self.full_backup.setToolTip("Also include saved triggers, UI preferences, corrections, spellings and Revenge List entries.")
         self.full_backup.toggled.connect(lambda _checked: self._refresh_enabled())
         backup_layout.addWidget(self.full_backup)
         backup_row = QHBoxLayout()
@@ -144,9 +144,6 @@ class ProfileTools(QWidget):
             self.status.setText("Invalid saved profiles were ignored. Save a new profile to replace them.")
         self.profile_name.addItems(list(profiles))
         self.profile_name.setCurrentText(cfg.active_profile or "Default")
-        if cfg.casual_mode or not cfg.casual_mode_confirmed:
-            self.full_backup.setChecked(False)
-        self.full_backup.setEnabled(not cfg.casual_mode and cfg.casual_mode_confirmed)
         self._refresh_enabled()
 
     def _refresh_enabled(self) -> None:
@@ -233,8 +230,6 @@ class ProfileTools(QWidget):
         cfg = self._current()
         sensitive = self.full_backup.isChecked() if allow_sensitive is None else allow_sensitive
         if sensitive:
-            if cfg.casual_mode or not cfg.casual_mode_confirmed:
-                raise BackupError("Full preference backups require confirmed Elitist Scumbag Mode.")
             self._stopped()
         if self._trigger_flush is not None and self._trigger_flush() is False:
             raise BackupError("Could not save the current trigger preferences.")

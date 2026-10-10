@@ -73,11 +73,10 @@ def backup_profile(destination: Path, config_path: Path, triggers_path: Path,
                    settings_path: Path | None = None, *, allow_sensitive: bool = False,
                    party_path: Path | None = None, vocab_path: Path | None = None,
                    revenge_path: Path | None = None) -> dict:
-    """Default backup contains technical configuration only, excluding raw data.
+    """Back up configuration, optionally including other authored preferences.
 
-    Trigger expressions/examples, declared UI preferences, ownership corrections
-    and learned spellings require a confirmed full-information profile. Logs and
-    OCR images are never included. Restoring cannot authorize full-information mode.
+    Full preferences are available in every presentation mode. Logs and OCR
+    images are never included. Restoring cannot authorize full-information mode.
     """
     try:
         config = json.loads(_read_preference(Path(config_path)).decode("utf-8-sig")) if Path(config_path).exists() else {}
@@ -85,19 +84,6 @@ def backup_profile(destination: Path, config_path: Path, triggers_path: Path,
         raise BackupError("Could not read this profile's configuration.") from exc
     if not isinstance(config, dict):
         raise BackupError("Backup configuration must be an object.")
-    if allow_sensitive and (config.get("casual_mode", True) or not config.get("casual_mode_confirmed", False)):
-        raise BackupError("Full preference backups require confirmed Elitist Scumbag Mode.")
-    # Config fields are technical preferences; exported templates can embed peers.
-    if not allow_sensitive:
-        for key in ("export_line", "export_actor", "export_separator"):
-            config.pop(key, None)
-        # Profile labels are arbitrary user text; keep their technical settings
-        # under generic labels in a Carebear archive.
-        profiles = config.get("capture_profiles", {})
-        if isinstance(profiles, dict):
-            labels = {name: f"Profile {i + 1}" for i, name in enumerate(profiles)}
-            config["capture_profiles"] = {labels[name]: value for name, value in profiles.items()}
-            config["active_profile"] = labels.get(config.get("active_profile"), "Default")
     files = {"config.json": _config_bytes(config)}
     if allow_sensitive and Path(triggers_path).is_file():
         trigger_bytes = _read_preference(Path(triggers_path))
@@ -259,7 +245,7 @@ def restore_profile(archive_path: Path, config_path: Path, triggers_path: Path,
         if any(hashlib.sha256(data).hexdigest() != manifest["files"][name] for name, data in files.items()):
             raise BackupError("Backup checksum validation failed.")
         if not manifest["sensitive"] and set(files) != {"config.json"}:
-            raise BackupError("Carebear backup contains sensitive preferences.")
+            raise BackupError("Configuration-only backup contains additional preferences.")
         config_data = json.loads(files["config.json"])
         # The interactive restore can keep its active profile's local data root.
         # Imported paths never choose destinations for correction/spelling files.

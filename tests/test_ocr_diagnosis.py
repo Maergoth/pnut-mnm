@@ -150,6 +150,17 @@ class EngineOcrDiagnosisTests(unittest.TestCase):
         self.engine._ocr = SimpleNamespace(read=lambda _image: [])
         self.assertIsNone(self.engine.ocr_diagnosis()["active_ocr"]["recognizer_language"])
 
+    def test_carebear_keeps_raw_diagnostic_input_and_authored_config(self) -> None:
+        self.engine.update_config(dataclasses.replace(self.cfg, casual_mode=True,
+                                                      casual_mode_confirmed=False))
+        self._feed("Tamsin pierces a wolf for 42 points of damage.")
+        snapshot = self.engine.ocr_diagnosis()
+        self.assertEqual(snapshot["recent_messages"][-1]["raw_text"],
+                         "Tamsin pierces a wolf for 42 points of damage.")
+        self.assertEqual(snapshot["recent_messages"][-1]["amount"], 42)
+        self.assertEqual(snapshot["saved_settings"]["player_name"], "Mitch")
+        self.assertEqual(snapshot["saved_settings"]["log_dir"], self.cfg.log_dir)
+
     def test_new_run_clears_diagnostic_samples(self) -> None:
         self._feed("zz %% qqq 7")
         self.engine._process_frame(np.zeros((20, 20, 3), np.uint8), self.cfg)
@@ -245,6 +256,37 @@ class OcrDiagnosisExportTests(unittest.TestCase):
         report, _names = self._read()
         self.assertEqual(report["crop"]["effective"], list(self.cfg.crop))
         self.assertEqual(report["capture"]["image_dimensions"], {"width": 7, "height": 7})
+
+    def test_carebear_exports_fresh_crop_full_settings_and_raw_evidence(self) -> None:
+        cfg = dataclasses.replace(self.cfg, casual_mode=True, casual_mode_confirmed=False,
+                                  player_name="Owner", window_title="My game window")
+        engine = FakeEngine(cfg, self.frame)
+        engine.snapshot["recent_messages"] = [{"raw_text": "Tamsin heals Owner for 42 Health.", "amount": 42}]
+        engine.snapshot["recent_ocr_frames"] = [{"rows": [{"text": "Tamsin heals Owner for 42 Health."}]}]
+        write_ocr_diagnosis(self.path, engine, cfg, preview_metadata={"test_ocr_text": "Tamsin 42"})
+        report, names = self._read()
+        self.assertEqual(engine.grabs, 1)
+        self.assertEqual(set(names), {"report.json", "combat-crop.png"})
+        self.assertEqual(report["recent_messages"], engine.snapshot["recent_messages"])
+        self.assertEqual(report["recent_ocr_frames"], engine.snapshot["recent_ocr_frames"])
+        self.assertEqual(report["saved_settings"]["player_name"], "Owner")
+        self.assertEqual(report["saved_settings"]["window_title"], "My game window")
+        self.assertEqual(report["preview_metadata"]["test_ocr_text"], "Tamsin 42")
+        self.assertTrue(report["capture"]["available"])
+
+    def test_switching_mode_during_capture_does_not_scrub_requested_diagnostics(self) -> None:
+        engine = FakeEngine(self.cfg, self.frame)
+        engine.snapshot["recent_messages"] = [{"raw_text": "Tamsin 42"}]
+
+        def grab() -> Any:
+            engine.config = dataclasses.replace(self.cfg, casual_mode=True, casual_mode_confirmed=False)
+            return self.frame
+
+        engine.grab_frame = grab
+        write_ocr_diagnosis(self.path, engine)
+        report, names = self._read()
+        self.assertEqual(report["recent_messages"], [{"raw_text": "Tamsin 42"}])
+        self.assertEqual(set(names), {"report.json", "combat-crop.png"})
 
     def test_default_saved_crop_and_unsaved_custom_crop_are_distinguished(self) -> None:
         default = Config(casual_mode=False, casual_mode_confirmed=True, )

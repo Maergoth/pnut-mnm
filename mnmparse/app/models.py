@@ -1069,7 +1069,8 @@ def build_snapshot(
     vocab = getattr(stats, "vocab", None)
     dependency = (enc.revision, len(enc.events), enc.end, enc.last_activity, enc.closed,
                   player_name, id(roster), getattr(roster, "version", 0), id(vocab), getattr(vocab, "_version", 0),
-                  bool(getattr(stats, "others_misses_seen", False)), tuple(stats.zone_changes))
+                  bool(getattr(stats, "others_misses_seen", False)), tuple(stats.zone_changes),
+                  enc.zone_override, enc.zone_since_override)
     cached = getattr(enc, "_snapshot_cache", None)
     if cached is None or cached[0] != dependency:
         content = _build_snapshot_content(stats, enc, player_name)
@@ -1197,6 +1198,8 @@ def _build_snapshot_content(
     kills = int(count_kills(enc)) if callable(count_kills) else len(killed)
     visit_at = getattr(stats, "zone_visit_at", None)
     zone, zone_since = visit_at(enc.start) if callable(visit_at) else ("", 0.0)
+    if enc.zone_override:
+        zone, zone_since = enc.zone_override, enc.zone_since_override
     snap = EncounterSnapshot(
         key=f"{enc.start:.3f}",
         label=_fight_label(enc, canon, enemies, group),

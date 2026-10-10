@@ -29,7 +29,6 @@ import zlib
 
 from .trigger_exchange import TriggerExchangeError, validate_trigger
 from .triggers import Trigger
-from .privacy import safe_trigger_definition
 
 
 MAX_CHAT_LINE = 255
@@ -137,9 +136,7 @@ def encode_trigger(trigger: Trigger) -> str:
 
 
 def encode_visible_trigger(trigger: Trigger, *, cfg: object = None) -> str:
-    """Fail closed before encoding raw definitions for any presentation caller."""
-    if safe_trigger_definition(trigger, cfg) is None:
-        raise TriggerExchangeError("Carebear Mode hides timer definitions; sharing is unavailable.")
+    """Encode authored settings independently of performance presentation mode."""
     return encode_trigger(trigger)
 
 

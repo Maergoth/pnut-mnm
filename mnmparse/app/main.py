@@ -1396,6 +1396,12 @@ class App(QApplication):
         engine.message.connect(self._on_chat_share)
         if self.map_overlay is not None:
             engine.message.connect(self.map_overlay.on_message)
+            set_zone = getattr(self.map_overlay, "set_zone", None)
+            if callable(set_zone):
+                self._connect_optional(engine, "zone_changed", set_zone)
+                current_zone = getattr(engine, "current_zone", "")
+                if isinstance(current_zone, str) and current_zone:
+                    set_zone(current_zone)
             self.map_overlay.visibility_changed.connect(self._on_map_visibility)
         window.map_toggled.connect(self.set_map_visible)
         live_page = window.page("live")
@@ -1735,10 +1741,20 @@ class App(QApplication):
 
     def set_pet_owner(self, pet: str, owner: Any) -> None:
         if casual_enabled(self.cfg):
-            return
+            player = str(self.cfg.player_name or "").strip()
+            if not player or owner is not None and str(owner).casefold() != player.casefold():
+                return
+            if owner is not None:
+                owner = player
         if self.window is not None:
             page = self.window.page("live")
             if page is not None and page.correct_selected_archive(pet=pet, owner=owner):
+                return
+        if casual_enabled(self.cfg) and owner is None:
+            getter = getattr(self.engine, "pet_owners", None)
+            owners = getter() if callable(getter) else {}
+            previous = next((value for name, value in owners.items() if name.casefold() == pet.casefold()), "")
+            if previous.casefold() != player.casefold():
                 return
         setter = getattr(self.engine, "set_pet_owner", None)
         if callable(setter):

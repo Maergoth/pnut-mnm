@@ -101,7 +101,7 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertTrue(report["setup"]["casual"])
             self.assertFalse(report["setup"]["capture_started"])
             self.assertTrue(report["setup"]["local_calibration_preview"])
-            self.assertTrue(report["setup"]["frame_exports_protected"])
+            self.assertTrue(report["setup"]["local_frame_access"])
             self.assertTrue(report["setup"]["calibration_cleared"])
             self.assertTrue(report["setup"]["mode_slider"])
             self.assertTrue(report["setup"]["crop_checkbox_removed"])

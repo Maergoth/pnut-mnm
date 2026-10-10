@@ -41,7 +41,31 @@ def zone_title(zone: str) -> str:
     """Log zone variants such as Night Harbor (West) share their wiki map."""
     title = re.sub(r"\s+\((?:north|south|east|west)\)$", "", zone.strip(), flags=re.I)
     title = title.replace("_", " ").rstrip(".").strip()
-    return ALIASES.get(title.casefold(), next((z for z in ZONES if z.casefold() == title.casefold()), title))
+    # OCR and in-game identifiers can collapse a title's spaces (FallenPass).
+    # Match only exact known titles after spacing normalization, never a fuzzy
+    # guess that could choose a different zone.
+    key = re.sub(r"\s+", "", title).casefold()
+    return ALIASES.get(title.casefold(), next((z for z in ZONES if re.sub(r"\s+", "", z).casefold() == key), title))
+
+
+_WHO_ZONE_RX = re.compile(
+    r"^\s*There\s+(?:are|is)\s+\d+\s+players?\s+in\s+(.+?)\s+who\s+match\s+your\s+search[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def zone_from_who(text: str) -> str:
+    """Read the zone in a complete local /who summary without exposing players.
+
+    This is navigation evidence, not a zone transition: the parser keeps the
+    line's personal classification and an ongoing fight continues unchanged.
+    Ignore global/unknown search results and quoted chat containing the phrase.
+    """
+    match = _WHO_ZONE_RX.fullmatch(str(text or ""))
+    if match is None:
+        return ""
+    title = zone_title(match.group(1))
+    return title if title in ZONES else ""
 
 
 def wiki_url(zone: str) -> str:

@@ -84,8 +84,7 @@ def _load_cfg(path: str | None) -> Config:
     from mnmparse.config import load_config
 
     cfg = load_config(path)
-    from mnmparse.privacy import casual_enabled, safe_config_data
-    log.debug("config: %s", safe_config_data(dataclasses.asdict(cfg)) if casual_enabled(cfg) else cfg)
+    log.debug("config: %s", cfg)
     return cfg
 
 
@@ -565,10 +564,6 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 def cmd_snapshot(args: argparse.Namespace) -> int:
     """Capture one frame, crop it, OCR it once and print the recognised lines."""
     cfg = _load_cfg(args.config)
-    from mnmparse.privacy import casual_enabled
-    if casual_enabled(cfg):
-        print("Raw screenshots and OCR diagnostics require confirmed full mode in Morality Adjustment.", file=sys.stderr)
-        return EXIT_USAGE
     if not _require_window(cfg):
         return EXIT_NO_WINDOW
     engine = _make_engine_or_none(cfg)
@@ -855,28 +850,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point: parse arguments, configure logging, dispatch; returns the exit code."""
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
-    from mnmparse.privacy import casual_enabled
-    cfg = _load_cfg(args.config)
-    class PrivacyLogFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            if not casual_enabled(cfg) or not record.name.startswith("mnmparse"):
-                return True
-            if record.levelno < logging.WARNING:
-                return False  # parser/tracker diagnostic arguments may include raw chat
-            record.msg = "PNUT reported a diagnostic warning; technical details are withheld in Carebear Mode."
-            record.args = ()
-            record.exc_info = record.exc_text = record.stack_info = None
-            return True
-    privacy_filter = PrivacyLogFilter()
-    handlers = list(logging.getLogger().handlers)
-    for handler in handlers:
-        handler.addFilter(privacy_filter)
     func: Callable[[argparse.Namespace], int] = args.func
-    try:
-        return func(args)
-    finally:
-        for handler in handlers:
-            handler.removeFilter(privacy_filter)
+    return func(args)
 
 
 if __name__ == "__main__":

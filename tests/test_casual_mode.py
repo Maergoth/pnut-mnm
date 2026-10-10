@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QDialog, QCheckBox, QPushButton
@@ -98,7 +99,7 @@ class CasualUiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_files_and_existing_ui_are_scrubbed_on_mode_change(self):
+    def test_performance_views_are_projected_and_feed_survives_mode_change(self):
         from mnmparse.app.pages import LivePage, FeedPage, export_csv, export_json
         from mnmparse.app.overlay import OverlayWindow
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,7 +123,7 @@ class CasualUiTests(unittest.TestCase):
             feed.append("Tamsin crushes a rat for 54321 points of damage.", "melee_hit", False, 100)
             feed.set_config(CASUAL)
             feed.copy_all()
-            self.assertNotIn("Tamsin", self.app.clipboard().text())
+            self.assertIn("Tamsin crushes a rat for 54321 points of damage.", self.app.clipboard().text())
             page.close(); overlay.close(); feed.close()
 
     def test_switch_rejection_and_pledge_acceptance(self):
@@ -148,18 +149,22 @@ class CasualUiTests(unittest.TestCase):
         self.assertEqual(requests, [False, True])
         panel.close()
 
-    def test_casual_diagnostics_omit_ocr_pixels_and_peer_fields(self):
+    def test_carebear_diagnostics_keep_input_evidence_and_saved_settings(self):
         from mnmparse.diagnostics import write_ocr_diagnosis
         fake = SimpleNamespace(config=CASUAL,
             ocr_diagnosis=lambda: {"saved_settings":dataclasses.asdict(CASUAL),
                 "effective_settings":dataclasses.asdict(CASUAL), "recent_messages":[{"text":"Tamsin 54321"}],
                 "ocr_rows":[{"text":"Tamsin"}], "limitations":[]},
-            grab_frame=lambda: self.fail("Casual diagnostics must not capture images"))
+            grab_frame=Mock(return_value=None))
         with tempfile.TemporaryDirectory() as tmp:
             path = write_ocr_diagnosis(Path(tmp) / "safe.zip", fake, CASUAL)
             with zipfile.ZipFile(path) as archive:
                 self.assertEqual(archive.namelist(), ["report.json"])
-                self.assertNotIn("Tamsin", archive.read("report.json").decode())
+                report = json.loads(archive.read("report.json"))
+                self.assertEqual(report["recent_messages"], [{"text": "Tamsin 54321"}])
+                self.assertEqual(report["ocr_rows"], [{"text": "Tamsin"}])
+                self.assertEqual(report["saved_settings"]["player_name"], "Mitch")
+            fake.grab_frame.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

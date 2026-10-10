@@ -165,62 +165,23 @@ def safe_event_text(event: Any, cfg: Any = None) -> str | None:
     return safe_kinds[kind] + amount_text if kind in safe_kinds else None
 
 
-def personal_trigger_title(trigger: Any, line: str, cfg: Any = None) -> tuple[str, str]:
-    """Approve only an authored static title for a personal event or public preset."""
-    from mnmparse.grammar import is_you
-    from mnmparse.parser import parse_line
-    from mnmparse.trigger_presets import PRESETS
-    from types import SimpleNamespace
-
-    for preset in PRESETS:
-        if trigger.id == preset["id"] and trigger.name == preset["name"]:
-            return trigger.name, ""
-    player = str(getattr(cfg, "player_name", "") or "").strip()
-    event = parse_line(line, 0.0, player)
-    raw_actor = str(event.raw_actor or "").strip()
-    raw_folded = raw_actor.casefold()
-    personal_actor = (is_you(raw_actor) or raw_folded.startswith("your ")
-                      or bool(player and raw_folded.startswith(player.casefold() + "'s ")))
-    own_cfg = SimpleNamespace(player_name=player, casual_mode=True)
-    personal = (safe_event_text(event, own_cfg) is not None
-                or event.kind == "status" and (_own(event.actor, player) or personal_actor)
-                or event.kind != "unknown" and personal_actor)
-    if not personal:
-        return "Timer", ""
-    peers = {str(name).casefold() for name in (event.actor, event.target)
-             if name and not _own(name, player) and not is_you(str(name))
-             and not (name == event.actor and personal_actor)}
-    for candidate in (trigger.timer_label, trigger.name):
-        candidate = str(candidate or "").strip()
-        if candidate and "{" not in candidate and "}" not in candidate and _safe_skill(candidate, peers):
-            return candidate, player
-    return "Timer", ""
-
-
 def safe_static_trigger_title(trigger: Any, cfg: Any = None) -> str:
-    """A definition can show its personal title without exposing its pattern."""
-    if not casual_enabled(cfg):
-        return trigger.name
-    pattern = str(trigger.pattern or "")
-    if trigger.mode == "regex":
-        # Only anchored literal personal prefixes can establish self provenance.
-        # Dynamic expressions stay generic until an actual own event is matched.
-        player = str(getattr(cfg, "player_name", "") or "").strip()
-        own_prefix = r"(?:You|Your" + ("|" + re.escape(player) if player else "") + r")\b"
-        if not pattern.startswith("^") or not re.match(own_prefix, pattern[1:]) or "|" in pattern:
-            return personal_trigger_title(trigger, "", cfg)[0]
-        literal = re.split(r"[\[\]{}()*+?|$]", pattern[1:], maxsplit=1)[0]
-        pattern = re.sub(r"\\([.!?])", r"\1", literal)
-    return personal_trigger_title(trigger, pattern, cfg)[0]
+    """Names and patterns are authored settings, independent of captured group chat."""
+    return trigger.name
+
+
+def safe_trigger_match(match: Any, cfg: Any = None) -> Any:
+    """Carebear limits performance comparisons, not chat-trigger behavior."""
+    return match
 
 
 def safe_trigger_label(label: str, cfg: Any = None) -> str:
-    return "Timer" if casual_enabled(cfg) else label
+    """An authored label is the user's own information."""
+    return label
 
 
-def safe_trigger_definition(trigger: Any, cfg: Any = None) -> dict[str, Any] | None:
-    if casual_enabled(cfg):
-        return None
+def safe_trigger_definition(trigger: Any, cfg: Any = None) -> dict[str, Any]:
+    """Saved trigger settings are available independently of performance mode."""
     return dataclasses.asdict(trigger) if dataclasses.is_dataclass(trigger) else dict(trigger)
 
 

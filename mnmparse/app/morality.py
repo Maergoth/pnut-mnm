@@ -249,8 +249,8 @@ class MoralityPanel(QWidget):
         self.switch.setChecked(self._casual)
         self.switch.setAccessibleName("Carebear Mode" if self._casual else "Elitist Scumbag Mode")
         self.switch.move_to(self._casual, animate=False)
-        self.description.setText("Your information and rounded group averages. Other individuals stay hidden."
-                                 if self._casual else "Individual information is visible.")
+        self.description.setText("Your performance and group averages. Other players' individual results stay hidden."
+                                 if self._casual else "Individual performance is visible.")
         self.description.setToolTip(
             "Damage/DPS needs three active members whose damage is at least their healing. "
             "Healing/HPS needs three active members whose healing is at least their damage. "

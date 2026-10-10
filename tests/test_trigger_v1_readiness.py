@@ -171,40 +171,44 @@ class TriggerPresentationTests(unittest.TestCase):
         self.page.set_runner(self.runner)
         return self.page
 
-    def test_default_mode_sanitizes_signal_return_timer_and_speech(self):
+    def test_carebear_does_not_change_trigger_matches_labels_or_speech(self):
         signals = []
         self.runner.fired.connect(signals.append)
         result = self.runner.observe("Peer99 hits for 17", now=10)
-        self.assertEqual(self.runner.board.timers[0].label, "Timer")
-        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], "Timer")
+        self.assertEqual(self.runner.board.timers[0].label, "Peer99 17")
+        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], "Peer99 hits for 17; Peer99 17")
         for match in signals + result:
-            self.assertEqual(match.groups, {})
-            self.assertNotIn("Peer99", json.dumps(dataclasses.asdict(match)))
-            self.assertNotIn("17", match.line)
+            self.assertEqual(match.groups["who"], "Peer99")
+            self.assertEqual(match.groups["damage"], "17")
+            self.assertEqual(match.line, "Peer99 hits for 17")
+            self.assertEqual(match.text, "Peer99 hits for 17")
+            self.assertIs(match.trigger, self.trigger)
+            self.assertEqual(match.values()["name"], self.trigger.name)
         timer = self.runner.board.timers[0]
         self.runner._alert(timer, "warn")
-        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], "Timer soon")
+        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], "Peer99 Peer99 17")
         self.runner._alert(timer, "end")
-        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], "Timer ended")
+        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], f"Peer99 {self.trigger.name}")
 
-    def test_confirmed_mode_is_required_and_returning_cancels_audio(self):
+    def test_mode_changes_preserve_active_timers_and_audio(self):
         self.runner.set_config(SimpleNamespace(casual_mode=False, casual_mode_confirmed=False))
         self.runner.observe("Peer99 hits for 17", now=10)
-        self.assertEqual(self.runner.board.timers[0].label, "Timer")
+        self.assertTrue(self.runner._casual_mode)
+        self.assertEqual(self.runner.board.timers[0].label, "Peer99 17")
         self.runner.set_config(SimpleNamespace(casual_mode=False, casual_mode_confirmed=True))
         self.runner.observe("Peer99 hits for 29", now=11)
         self.assertEqual(self.runner.board.timers[0].label, "Peer99 29")
         self.runner.audio._speech_queue = [("Peer99 queued speech", 80, "timer:old")]
         self.runner.set_casual_mode(True)
-        self.assertEqual(self.runner.audio._speech_queue, [])
-        self.assertEqual(self.runner.board.timers[0].label, "Timer")
+        self.assertEqual(self.runner.audio._speech_queue, [("Peer99 queued speech", 80, "timer:old")])
+        self.assertEqual(self.runner.board.timers[0].label, "Peer99 29")
 
-    def test_casual_file_action_is_silent_and_manual_timer_keeps_its_authored_name(self):
+    def test_casual_file_action_and_manual_timer_preserve_authored_settings(self):
         self.trigger.action = "file"
         self.trigger.file = "Peer99.wav"
         self.runner.observe("Peer99 hits for 17", now=10)
-        self.assertEqual(self.runner.audio.run.call_args.args[0], "none")
-        self.assertEqual(self.runner.audio.run.call_args.kwargs["file"], "")
+        self.assertEqual(self.runner.audio.run.call_args.args[0], "file")
+        self.assertEqual(self.runner.audio.run.call_args.kwargs["file"], "Peer99.wav")
         self.assertEqual(self.runner.start_one_time_timer("Peer99", 10).label, "Peer99")
 
     def test_muting_survives_save_and_unmute_restores_master(self):
@@ -217,7 +221,7 @@ class TriggerPresentationTests(unittest.TestCase):
         self.runner.set_muted(False)
         self.assertAlmostEqual(self.runner.audio.master, .37)
 
-    def test_switching_mode_scrubs_every_editor_surface_and_dialog_copy(self):
+    def test_switching_mode_keeps_trigger_settings_and_dialog_copy(self):
         from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, _summary
         page = self.make_page(full=True)
         page.add_recent_line("Peer99 hits for 17")
@@ -231,27 +235,32 @@ class TriggerPresentationTests(unittest.TestCase):
         cfg.casual_mode_confirmed = False
         page.set_config(cfg)
         dialog._copy_line()
-        self.assertEqual(QApplication.clipboard().text(), "unchanged")
-        self.assertEqual(dialog.line.toPlainText(), "")
-        self.assertFalse(page.editor.isEnabled())
-        self.assertEqual(page.pattern.text(), "")
-        self.assertEqual(page.speech.text(), "")
-        self.assertEqual(page.test_line.text(), "")
-        self.assertEqual(page.recent.count(), 0)
-        self.assertEqual(page._completer_model.stringList(), [])
-        self.assertNotIn("Peer99", page.list.item(0).text())
-        self.assertNotIn("Peer99", page.list.item(0).toolTip())
-        self.assertNotIn("Peer99", _summary(self.trigger, "Peer99", cfg))
+        self.assertEqual(QApplication.clipboard().text(), "private-share-code")
+        self.assertEqual(dialog.line.toPlainText(), "private-share-code")
+        self.assertTrue(page.editor.isEnabled())
+        self.assertEqual(page.pattern.text(), self.trigger.pattern)
+        self.assertEqual(page.speech.text(), self.trigger.speech)
+        self.assertEqual(page.test_line.text(), "Peer99 hits for 17")
+        self.assertEqual(page.recent.count(), 1)
+        self.assertIn("Peer99 hits for 17", page._completer_model.stringList())
+        self.assertIn(self.trigger.name, page.list.item(0).text())
+        self.assertIn(self.trigger.pattern, page.list.item(0).toolTip())
+        self.assertIn(self.trigger.pattern, _summary(self.trigger, "Peer99", cfg))
         dialog.close()
         dialog.deleteLater()
 
-    def test_casual_export_is_blocked_before_chooser(self):
+    def test_carebear_exports_owned_definitions(self):
+        self.trigger = Trigger(name="Rebuff", pattern="You feel stronger", timer=True)
+        self.store.triggers = [self.trigger]
         page = self.make_page()
-        with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=AssertionError("Export chooser opened")):
+        destination = Path(self.tmp.name) / "my-timers.json"
+        with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", return_value=(str(destination), "")):
             page._on_export()
+        self.assertTrue(destination.exists())
+        self.assertIn(self.trigger.name, destination.read_text())
         page._on_export_chat()
-        self.assertIn("Carebear Mode", page.sharing_status.text())
-        self.assertIsNone(page._chat_export_dialog)
+        self.assertIsNotNone(page._chat_export_dialog)
+        page._chat_export_dialog.close()
 
     def test_export_rechecks_policy_after_nested_chooser(self):
         page = self.make_page(full=True)
@@ -263,28 +272,26 @@ class TriggerPresentationTests(unittest.TestCase):
 
         with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=choose):
             page._on_export()
-        self.assertFalse(destination.exists())
-        self.assertIn("Carebear Mode", page.sharing_status.text())
-        self.assertNotIn("Peer99", page.sharing_status.text())
+        self.assertTrue(destination.exists())
+        self.assertIn(self.trigger.name, destination.read_text())
+        self.assertIn("Exported", page.sharing_status.text())
 
-    def test_presentation_sharing_helpers_fail_closed_without_confirmed_policy(self):
+    def test_trigger_sharing_is_available_in_every_mode(self):
         from mnmparse.trigger_chat import encode_visible_trigger
-        from mnmparse.trigger_exchange import export_visible_trigger_file, TriggerExchangeError
+        from mnmparse.trigger_exchange import export_visible_trigger_file
         trigger = Trigger(name="Peer99", pattern="Peer99")
         destination = Path(self.tmp.name) / "shared.json"
         for cfg in (None, Config(), Config(casual_mode=False, casual_mode_confirmed=False)):
             with self.subTest(cfg=cfg):
-                with self.assertRaisesRegex(TriggerExchangeError, "Carebear Mode"):
-                    encode_visible_trigger(trigger, cfg=cfg)
-                with self.assertRaisesRegex(TriggerExchangeError, "Carebear Mode"):
-                    export_visible_trigger_file(destination, [trigger], cfg=cfg)
-                self.assertFalse(destination.exists())
+                self.assertTrue(encode_visible_trigger(trigger, cfg=cfg).startswith("PNUT1 "))
+                export_visible_trigger_file(destination, [trigger], cfg=cfg)
+                self.assertIn("Peer99", destination.read_text())
         full = Config(casual_mode=False, casual_mode_confirmed=True)
         self.assertTrue(encode_visible_trigger(trigger, cfg=full).startswith("PNUT1 "))
         export_visible_trigger_file(destination, [trigger], cfg=full)
         self.assertIn("Peer99", destination.read_text())
 
-    def test_replacing_config_scrubs_pending_share_and_blocks_stale_copy(self):
+    def test_replacing_config_preserves_pending_trigger_share(self):
         from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog
         page = self.make_page(full=True)
         dialog = TriggerChatExportDialog(self.trigger, "private-share-code", cfg=page._cfg)
@@ -292,17 +299,17 @@ class TriggerPresentationTests(unittest.TestCase):
         QApplication.clipboard().setText("unchanged")
         page.set_config(Config())  # Different object, not mutation of the old full Config.
         dialog._copy_line()
-        self.assertEqual(QApplication.clipboard().text(), "unchanged")
-        self.assertEqual(dialog.title.text(), "Timer")
-        self.assertEqual(dialog.line.toPlainText(), "")
-        self.assertEqual(dialog.code, "")
+        self.assertEqual(QApplication.clipboard().text(), "private-share-code")
+        self.assertEqual(dialog.title.text(), self.trigger.name)
+        self.assertEqual(dialog.line.toPlainText(), "private-share-code")
+        self.assertEqual(dialog.code, "private-share-code")
         dialog.deleteLater()
         page._chat_export_dialog = None
 
-    def test_reapplying_casual_stops_preexisting_unsafe_audio(self):
-        self.runner.audio._speech_queue = [("Peer99", 80, "")]
+    def test_reapplying_casual_keeps_authored_audio(self):
+        self.runner.audio._speech_queue = [("Rebuff Rebuff", 80, "")]
         self.runner.set_config(Config())
-        self.assertEqual(self.runner.audio._speech_queue, [])
+        self.assertEqual(self.runner.audio._speech_queue, [("Rebuff Rebuff", 80, "")])
 
     def test_repeated_runner_binding_does_not_duplicate_matches_or_warning_saves(self):
         page = self.make_page(full=True)

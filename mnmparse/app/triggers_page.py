@@ -43,8 +43,8 @@ from PySide6.QtWidgets import (
 from mnmparse.app.pages import _label, _page_qss, _panel
 from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, token
 from mnmparse.config import Config, project_path
-from mnmparse.privacy import (casual_enabled, safe_static_trigger_title,
-                             safe_trigger_definition, safe_trigger_label)
+from mnmparse.privacy import (safe_static_trigger_title,
+                             safe_trigger_label, safe_trigger_match)
 from mnmparse.trigger_exchange import export_visible_trigger_file, external_sound_files, merge_triggers, read_trigger_file
 from mnmparse.triggers import BUILTIN_SOUNDS, MODES, MAX_LINE_CHARS, MAX_PATTERN_CHARS, Trigger, fill_placeholders, match_trigger, regex_problem
 
@@ -127,8 +127,7 @@ class TriggersPage(QWidget):
         outer.setContentsMargins(20, 18, 20, 18)
         outer.setSpacing(12)
         outer.addWidget(self._build_audio_bar())
-        self.privacy_notice = _label("Carebear Mode hides captured chat, custom definitions and sharing. "
-                                     "To edit or share a definition, change Morality Adjustment in Settings.", "Muted")
+        self.privacy_notice = _label("", "Muted")
         self.privacy_notice.setWordWrap(True)
         outer.addWidget(self.privacy_notice)
 
@@ -567,21 +566,12 @@ class TriggersPage(QWidget):
     def set_config(self, cfg: Config) -> None:
         """Rerender every trigger surface immediately when the mode changes."""
         self._cfg = cfg
-        private = casual_enabled(cfg)
-        self.privacy_notice.setVisible(private)
-        self.new_button.setEnabled(not private)
-        self.duplicate_button.setEnabled(not private)
-        if private:
-            self._recent.clear()
-            self.recent.clear()
-            self.test_line.clear()
-            self.test_result.setToolTip("")
-            self.search.clear()
-            self.sharing_status.clear()
-            for dialog in (self._chat_dialog, self._chat_export_dialog):
-                if dialog is not None:
-                    dialog.set_config(cfg)
-                    dialog.reject()
+        self.privacy_notice.hide()
+        self.new_button.setEnabled(self.runner is not None)
+        self.duplicate_button.setEnabled(self.runner is not None and self._current is not None)
+        for dialog in (self._chat_dialog, self._chat_export_dialog):
+            if dialog is not None:
+                dialog.set_config(cfg)
         self._refresh_completions()
         self._refill_list()
         self._load_editor(self._current)
@@ -594,8 +584,6 @@ class TriggersPage(QWidget):
 
     def add_recent_line(self, text: str) -> None:
         """A chat line was read (feeds the pattern box's completion)."""
-        if casual_enabled(self._cfg):
-            return
         text = (text or "").strip()
         if text and (not self._recent or self._recent[-1] != text):
             self._recent.append(text)
@@ -605,12 +593,13 @@ class TriggersPage(QWidget):
         self._refresh_completions()
 
     def _refresh_completions(self) -> None:
-        if casual_enabled(self._cfg):
-            self._completer_model.setStringList([])
-            return
         seen: dict[str, None] = {}
         for line in reversed(self._recent):
             seen.setdefault(line, None)
+        for trigger in self._store_triggers():
+            for value in (trigger.name, trigger.pattern):
+                if value:
+                    seen.setdefault(value, None)
         try:
             from mnmparse.vocab import GLOBAL
 
@@ -634,7 +623,7 @@ class TriggersPage(QWidget):
             select = None
             for trig in self._store_triggers():
                 title = safe_static_trigger_title(trig, self._cfg)
-                pattern = "" if casual_enabled(self._cfg) else trig.pattern
+                pattern = trig.pattern
                 if needle and needle not in title.lower() and needle not in pattern.lower():
                     continue
                 item = QListWidgetItem()
@@ -648,6 +637,8 @@ class TriggersPage(QWidget):
         finally:
             self.list.blockSignals(False)
         self.empty.setVisible(not self._store_triggers())
+        self.new_button.setEnabled(self.runner is not None)
+        self.duplicate_button.setEnabled(self._current is not None)
         self.export_all.setEnabled(bool(self._store_triggers()))
         self.export_selected.setEnabled(self._current is not None)
         self.export_chat.setEnabled(self._current is not None)
@@ -661,12 +652,8 @@ class TriggersPage(QWidget):
         if trig.timer:
             m, s = divmod(int(trig.timer_seconds), 60)
             bits.append(f"timer {m}:{s:02d}")
-        if casual_enabled(self._cfg):
-            item.setText(f"{safe_static_trigger_title(trig, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
-            item.setToolTip("Carebear Mode hides custom definitions and captured chat.")
-        else:
-            item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
-            item.setToolTip(f"{trig.name}\n{MODE_TITLES.get(trig.mode, trig.mode)}: {trig.pattern}")
+        item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
+        item.setToolTip(f"{trig.name}\n{MODE_TITLES.get(trig.mode, trig.mode)}: {trig.pattern}")
 
     def _on_item_checked(self, item: QListWidgetItem) -> None:
         trig = self.runner.store.find(str(item.data(Qt.ItemDataRole.UserRole))) if self.runner else None
@@ -677,12 +664,13 @@ class TriggersPage(QWidget):
     def _on_select(self, item: QListWidgetItem | None, _prev: Any = None) -> None:
         trig = self.runner.store.find(str(item.data(Qt.ItemDataRole.UserRole))) if (item and self.runner) else None
         self._current = trig
+        self.duplicate_button.setEnabled(trig is not None)
         self.export_selected.setEnabled(trig is not None)
         self.export_chat.setEnabled(trig is not None)
         self._load_editor(trig)
 
     def _on_new(self) -> None:
-        if self.runner is None or casual_enabled(self._cfg):
+        if self.runner is None:
             return
         trig = Trigger(name=f"Trigger {len(self._store_triggers()) + 1}")
         self.runner.store.triggers.append(trig)
@@ -692,7 +680,7 @@ class TriggersPage(QWidget):
         self.pattern.setFocus()
 
     def _on_duplicate(self) -> None:
-        if self.runner is None or self._current is None or casual_enabled(self._cfg):
+        if self.runner is None or self._current is None:
             return
         copy = Trigger.from_dict({**self._current.to_dict(), "id": "", "name": f"{self._current.name} (copy)"})
         copy.id = Trigger().id
@@ -749,8 +737,7 @@ class TriggersPage(QWidget):
             incoming = read_trigger_file(path)
         except (OSError, ValueError) as exc:
             log.warning("import failed: %s", exc)
-            self._sharing_feedback("Import failed: the timer file is invalid or could not be read." if casual_enabled(self._cfg)
-                                   else f"Import failed: {exc}", error=True)
+            self._sharing_feedback(f"Import failed: {exc}", error=True)
             return
         self._merge_incoming(incoming)
 
@@ -763,8 +750,7 @@ class TriggersPage(QWidget):
             result = merge_triggers(self.runner.store.triggers, incoming)
         except (OSError, ValueError) as exc:
             log.warning("import failed: %s", exc)
-            self._sharing_feedback("Import failed: the timer definition is invalid." if casual_enabled(self._cfg)
-                                   else f"Import failed: {exc}", error=True)
+            self._sharing_feedback(f"Import failed: {exc}", error=True)
             return False
         if result.added:
             previous = self.runner.store.triggers
@@ -778,8 +764,7 @@ class TriggersPage(QWidget):
                 if pending_save:
                     self._schedule_save()
                 log.warning("could not save imported timers: %s", exc)
-                self._sharing_feedback("Import failed: could not save timers. Retry saving before importing." if casual_enabled(self._cfg)
-                                       else f"Import failed: could not save timers. {exc}", error=True)
+                self._sharing_feedback(f"Import failed: could not save timers. {exc}", error=True)
                 return False
             self._set_saved()
             previous_ids = {trig.id for trig in previous}
@@ -801,9 +786,6 @@ class TriggersPage(QWidget):
         if (selected and self._current is None) or not triggers:
             self._sharing_feedback("Select a timer to export." if selected else "There are no timers to export.", error=True)
             return
-        if any(safe_trigger_definition(trigger, self._cfg) is None for trigger in triggers):
-            self._sharing_feedback("Carebear Mode hides custom timer definitions. Change Morality Adjustment in Settings before exporting.", error=True)
-            return
         if not self.flush_pending_changes():
             return
         filename = "PNUT-timer.json" if selected else "PNUT-timers.json"
@@ -817,13 +799,10 @@ class TriggersPage(QWidget):
         try:
             if self.runner.store.path is not None and destination.resolve() == self.runner.store.path.resolve():
                 raise ValueError("Choose another filename; this is PNUT's active timer settings file.")
-            # A native chooser runs a nested event loop; policy may have
-            # changed since the initial button check. Recheck at publication.
             export_visible_trigger_file(destination, triggers, cfg=self._cfg)
         except (OSError, ValueError) as exc:
             log.warning("export failed: %s", exc)
-            self._sharing_feedback("Export unavailable in Carebear Mode." if casual_enabled(self._cfg)
-                                   else f"Export failed: {exc}", error=True)
+            self._sharing_feedback(f"Export failed: {exc}", error=True)
             return
         message = f"Exported {len(triggers)} to {destination.name}."
         if external_sound_files(triggers):
@@ -833,9 +812,6 @@ class TriggersPage(QWidget):
     def _on_export_chat(self) -> None:
         if self._current is None:
             self._sharing_feedback("Select a timer to share in game chat.", error=True)
-            return
-        if safe_trigger_definition(self._current, self._cfg) is None:
-            self._sharing_feedback("Carebear Mode hides custom timer definitions. Change Morality Adjustment in Settings before sharing.", error=True)
             return
         if not self.flush_pending_changes():
             return
@@ -938,12 +914,9 @@ class TriggersPage(QWidget):
         self.editor.setEnabled(on)
 
     def _load_editor(self, trig: Trigger | None) -> None:
-        hidden = casual_enabled(self._cfg)
-        self._set_editor_enabled(trig is not None and not hidden)
-        if trig is None or hidden:
-            # Clearing the disabled controls matters: hiding/disabling a widget
-            # alone leaves its text available to tooltips, selection and exports.
-            trig = Trigger(name="Timer" if hidden else "", pattern="", speech="", timer_label="",
+        self._set_editor_enabled(trig is not None)
+        if trig is None:
+            trig = Trigger(name="", pattern="", speech="", timer_label="",
                            timer_warn_speech="", timer_end_speech="")
             self.test_line.clear()
             self.test_result.setToolTip("")
@@ -985,7 +958,7 @@ class TriggersPage(QWidget):
         self._update_test()
 
     def _on_edit(self, *_args: Any) -> None:
-        if self._loading or self._current is None or casual_enabled(self._cfg):
+        if self._loading or self._current is None:
             return
         t = self._current
         t.name = self.name.text().strip() or "Trigger"
@@ -1069,9 +1042,6 @@ class TriggersPage(QWidget):
         t = self._current
         line = self.test_line.text()
         self.test_result.setToolTip("")
-        if casual_enabled(self._cfg):
-            self.test_result.setText("Captured chat and regex groups are hidden in Carebear Mode.")
-            return
         if t is None:
             self.test_result.setText("")
             return
@@ -1091,6 +1061,7 @@ class TriggersPage(QWidget):
             problem = regex_problem(t.pattern) if t.mode == "regex" else ""
             self.test_result.setText("⚠ " + problem if problem else "✗ No match")
         else:
+            m = safe_trigger_match(m, self._cfg)
             values = m.values()
             label = fill_placeholders(t.timer_label or t.name, values)
             said = fill_placeholders(t.speech, values) if t.action == "speak" else ""
@@ -1111,12 +1082,6 @@ class TriggersPage(QWidget):
             return
         t = self._current
         audio = self.runner.audio
-        if casual_enabled(self._cfg):
-            if which == "sound":
-                audio.play_builtin(t.sound, t.volume)
-            elif which != "file":
-                audio.speak(safe_static_trigger_title(t, self._cfg), t.volume)
-            return
         if which == "sound":
             audio.play_builtin(self.sound.currentText(), t.volume)
         elif which == "file":
@@ -1126,7 +1091,8 @@ class TriggersPage(QWidget):
             if t.mode == "regex" and regex_problem(t.pattern):
                 self._update_test()
                 return
-            values = m.values() if m else {"line": t.pattern, "match": t.pattern, "name": t.name}
+            values = (safe_trigger_match(m, self._cfg).values() if m
+                      else {"line": t.pattern, "match": t.pattern, "name": t.name})
             audio.speak(fill_placeholders(self.speech.text(), values), t.volume)
 
     def _fire_now(self) -> None:
@@ -1186,10 +1152,9 @@ class TriggersPage(QWidget):
 
     def _on_fired(self, m: Any) -> None:
         stamp = time.strftime("%H:%M:%S")
-        title = (m.trigger.name if getattr(m, "privacy_mode", "") == "casual"
-                 else safe_trigger_label(m.trigger.name, self._cfg))
-        line = "Captured chat hidden in Carebear Mode" if casual_enabled(self._cfg) else m.line
-        item = QListWidgetItem(f"{stamp}  {title}  ·  {line}")
+        shown = safe_trigger_match(m, self._cfg)
+        line = shown.line
+        item = QListWidgetItem(f"{stamp}  {shown.trigger.name}" + (f"  ·  {line}" if line else ""))
         item.setToolTip(line)
         self.recent.insertItem(0, item)
         while self.recent.count() > 50:

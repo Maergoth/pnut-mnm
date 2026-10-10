@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
 
 from mnmparse.app.widgets import ElidedLabel, token
 from mnmparse.app.window_identity import window_title
-from mnmparse.privacy import casual_enabled, safe_trigger_definition, safe_trigger_label
 from mnmparse.trigger_exchange import external_sound_files
 from mnmparse.triggers import Trigger
 
@@ -27,10 +26,9 @@ class TriggerChatExportDialog(QDialog):
         super().__init__(parent)
         self._cfg = cfg
         self._trigger = trigger
-        blocked = safe_trigger_definition(trigger, cfg) is None
         if not isinstance(code, str) or not code or "\n" in code or "\r" in code:
             raise ValueError("A timer must be shared as one chat line.")
-        self.code = "" if blocked else code
+        self.code = code
         self.setWindowTitle(window_title("trigger-export"))
         self.setModal(False)
         self.resize(620, 380)
@@ -38,9 +36,9 @@ class TriggerChatExportDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
-        self.title = ElidedLabel(safe_trigger_label(trigger.name, cfg))
+        self.title = ElidedLabel(trigger.name)
         self.title.setObjectName("Heading")
-        self.title.setToolTip(safe_trigger_label(trigger.name, cfg))
+        self.title.setToolTip(trigger.name)
         layout.addWidget(self.title)
         hint = QLabel("Copy this timer and paste it into game chat as one message. "
                       "Recipients with PNUT capture running can review it before importing.")
@@ -53,7 +51,7 @@ class TriggerChatExportDialog(QDialog):
         self.line.setTabChangesFocus(True)
         self.line.setPlainText(self.code)
         layout.addWidget(self.line, 1)
-        self.character_count = QLabel("Definition hidden in Carebear Mode" if blocked else f"{len(code)} characters · one chat message")
+        self.character_count = QLabel(f"{len(code)} characters · one chat message")
         self.character_count.setWordWrap(True)
         layout.addWidget(self.character_count)
         self.status = QLabel()
@@ -63,26 +61,14 @@ class TriggerChatExportDialog(QDialog):
         layout.addWidget(self.status)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.copy = buttons.addButton("Copy for game chat", QDialogButtonBox.ButtonRole.ActionRole)
-        self.copy.setEnabled(not blocked)
         self.copy.clicked.connect(self._copy_line)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
     def set_config(self, cfg: object) -> None:
         self._cfg = cfg
-        if safe_trigger_definition(self._trigger, cfg) is None:
-            self.code = ""
-            self.line.clear()
-            self.title.setText(safe_trigger_label(self._trigger.name, cfg))
-            self.title.setToolTip("")
-            self.character_count.setText("Definition hidden in Carebear Mode")
-            self.copy.setEnabled(False)
-            self.status.setText("Carebear Mode hides timer definitions; copying is unavailable.")
 
     def _copy_line(self) -> None:
-        if safe_trigger_definition(self._trigger, self._cfg) is None:
-            self.set_config(self._cfg)
-            return
         if not self.code:
             return
         QApplication.clipboard().setText(self.code)
@@ -100,13 +86,6 @@ def _action(action: str, sound: str, speech: str, file: str = "") -> str:
 
 
 def _summary(trigger: Trigger, sender: str, cfg: object = None) -> str:
-    if casual_enabled(cfg):
-        return (f"Name: {safe_trigger_label(trigger.name, cfg)}\n"
-                "Sender, custom definition, captures and speech are hidden in Carebear Mode.\n\n"
-                f"Enabled after import: {'Yes' if trigger.enabled else 'No'}\n"
-                f"Start a timer: {'Yes' if trigger.timer else 'No'}\n"
-                + (f"Length: {trigger.timer_seconds:g} seconds\n" if trigger.timer else "")
-                + "\nImport keeps the full definition locally. Carebear Mode continues to hide custom text and plays only safe cues.")
     modes = {"contains": "Contains", "starts": "Starts with", "exact": "Whole line", "regex": "Regular expression"}
     overlaps = {"replace": "Replace", "retain": "Retain", "stack": "Add another timer"}
     lines = [
@@ -181,11 +160,9 @@ class TriggerSharePrompt(QDialog):
         layout.addWidget(buttons)
 
     def set_error(self, text: str) -> None:
-        self.error.setText("The timer could not be imported. Check the timer save status and try again." if casual_enabled(self._cfg) else text)
+        self.error.setText(text)
         self.error.show()
 
     def set_config(self, cfg: object) -> None:
         self._cfg = cfg
         self.details.setPlainText(_summary(self._trigger, self._sender, cfg))
-        if casual_enabled(cfg):
-            self.error.clear()

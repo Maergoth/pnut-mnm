@@ -645,14 +645,11 @@ class CropPicker(QWidget):
         self.canvas.set_boxes([])
 
     def set_calibration_preview(self, enabled: bool) -> None:
-        """Permit a local setup canvas preview; frame access and OCR stay protected."""
+        """Track the local setup preview lifecycle."""
         self._calibration_preview = bool(enabled)
         self.canvas.set_frame(self._display_frame())
 
     def _display_frame(self) -> np.ndarray | None:
-        from mnmparse.privacy import casual_enabled
-        if self._frame is not None and casual_enabled(self._cfg) and not self._calibration_preview:
-            return np.zeros_like(self._frame)
         return self._frame
 
     def set_frame(self, frame: np.ndarray | None) -> None:
@@ -675,8 +672,7 @@ class CropPicker(QWidget):
 
     def frame(self) -> np.ndarray | None:
         """The last captured frame, if any."""
-        from mnmparse.privacy import casual_enabled
-        return np.zeros_like(self._frame) if self._frame is not None and casual_enabled(self._cfg) else self._frame
+        return self._frame
 
     def capture_frame(self) -> None:
         """Grab one frame of the game window through the engine (background thread)."""
@@ -738,11 +734,7 @@ class CropPicker(QWidget):
         left, top, right, _bottom = self.crop()
         boxes: list[OcrBox] = []
         for line in lines:
-            from mnmparse.privacy import casual_enabled, safe_event_text
-            from mnmparse.parser import parse_line
             text = line.text
-            if casual_enabled(self._cfg):
-                text = safe_event_text(parse_line(text, time.time(), self._cfg.player_name), self._cfg) or "Text hidden in Carebear Mode"
             width = min(int(len(line.text) * line.h * 0.55) or line.h, right - (left + line.x))
             boxes.append(OcrBox(left + int(line.x), top + int(line.y), max(width, 4), int(line.h), text))
             self._lines.addItem(text)

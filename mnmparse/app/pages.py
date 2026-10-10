@@ -92,7 +92,7 @@ from mnmparse.config import (
 )
 from mnmparse.export import actor_export_name
 from mnmparse.privacy import (AVERAGE_UNAVAILABLE_TEXT, casual_enabled, metric_available,
-                             project_encounter, project_session, safe_event_text)
+                             project_encounter, project_session)
 from mnmparse.app.morality import MoralityPanel
 
 if TYPE_CHECKING:
@@ -1449,13 +1449,27 @@ class LivePage(QWidget):
 
     def correct_selected_archive(self, **correction: Any) -> bool:
         """Apply a selected archived fight's correction to its durable source."""
-        if casual_enabled(self._cfg) or not self._selection or self._selection[0] != "enc":
+        if not self._selection or self._selection[0] != "enc":
             return False
         key = self._selection[1]
         session_id = self._archive_sources.get(key)
         raw = self._raw_snaps.get(key)
         if not session_id or raw is None:
             return False
+        if casual_enabled(self._cfg):
+            player = str(self._cfg.player_name or "").strip()
+            if not player or set(correction) != {"pet", "owner"}:
+                return True
+            owner = correction["owner"]
+            if owner is not None:
+                if str(owner).casefold() != player.casefold():
+                    return True
+                correction["owner"] = player
+            else:
+                own = owner_row(raw, player)
+                if own is None or str(correction["pet"]).casefold() not in {
+                        pet.casefold() for pet in own.attributed_pets}:
+                    return True
         try:
             snap = self._engine.correct_archived_encounter(raw.key, session_id=session_id, **correction)
         except Exception:  # noqa: BLE001
@@ -1721,8 +1735,6 @@ class LivePage(QWidget):
     def _fill_encounter(self, item: QTreeWidgetItem, key: str) -> None:
         snap = self._snaps[key]
         source = self._sources.get(key)
-        if casual_enabled(self._cfg) and source:
-            source = "Imported log"
         live = key == self._live_key
         you = owner_row(snap, self._cfg.player_name or "You")
         your_dps = f"you {you.dps:,.1f} DPS" if you is not None else "no own damage"
@@ -1789,7 +1801,7 @@ class LivePage(QWidget):
         if snap is None:
             super().contextMenuEvent(event)
             return
-        from mnmparse.app.overlay import add_group_entries, add_pet_entries
+        from mnmparse.app.overlay import add_group_entries, add_own_pet_entries, add_pet_entries
 
         menu = QMenu(self)
         zone = getattr(snap, "encounters", 1) > 1 or str(getattr(snap, "key", "")).startswith("zone:")
@@ -1800,6 +1812,9 @@ class LivePage(QWidget):
                                               self.group_override_requested.emit))
             handlers.update(add_pet_entries(menu, self._pane.table.row_at(event.globalPos()), snap,
                                             self.pet_owner_requested.emit))
+        else:
+            handlers.update(add_own_pet_entries(menu, self._pane.table.row_at(event.globalPos()),
+                                                self._cfg.player_name, self.pet_owner_requested.emit))
         chosen = menu.exec(event.globalPos())
         menu.deleteLater()
         action = handlers.get(chosen)
@@ -2086,11 +2101,6 @@ class FeedPage(QWidget):
         self, text: str, kind: str, is_player_action: bool, ts: float, is_player_target: bool | None = None
     ) -> None:
         """Add one logged message (same arguments as :meth:`FeedView.append`)."""
-        if casual_enabled(self._cfg):
-            from mnmparse.parser import parse_line
-            text = safe_event_text(parse_line(text, ts, self._cfg.player_name), self._cfg)
-            if text is None:
-                return
         self._lines.append((ts, kind, text))
         if len(self._lines) > self._max_lines:
             del self._lines[: len(self._lines) - self._max_lines]
@@ -2102,10 +2112,10 @@ class FeedPage(QWidget):
         self._cfg = cfg
         self._max_lines = cfg.feed_max_lines
         self.view.set_max_lines(self._max_lines)
-        self._lines.clear()
-        self.view.clear()
-        self._search.clear()
-        self._status.setText("Carebear Mode: own actions only." if casual_enabled(cfg) else "No messages yet.")
+        if len(self._lines) > self._max_lines:
+            del self._lines[: len(self._lines) - self._max_lines]
+        self._status.setText("No messages yet.")
+        self._update_status()
 
     def _update_status(self) -> None:
         if self._lines:
@@ -2117,11 +2127,12 @@ class FeedPage(QWidget):
 
     def copy_all(self) -> None:
         """Copy every kept line as ``[HH:MM:SS] text`` to the clipboard."""
-        text = "\n".join(f"[{_hms(ts)}] {line}" for ts, _kind, line in self._lines)
+        lines = self._lines
+        text = "\n".join(f"[{_hms(ts)}] {line}" for ts, _kind, line in lines)
         clipboard = QGuiApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(text)
-        self._status.setText(f"Copied {len(self._lines)} lines to the clipboard.")
+        self._status.setText(f"Copied {len(lines)} lines to the clipboard.")
 
     def active_kinds(self) -> set[str] | None:
         """The kinds currently shown, or ``None`` when every chip is checked."""
@@ -2653,7 +2664,7 @@ class SettingsPage(QWidget):
         self._row(form, "Minimize to tray on close", self.minimize_to_tray)
         self.revenge_enabled = ToggleSwitch()
         self._row(form, "Revenge List", self.revenge_enabled,
-                  "PvP prompts last 30 seconds. Hidden in Carebear Mode.")
+                  "PvP prompts last 30 seconds.")
         self.revenge_days = QSpinBox()
         self.revenge_days.setRange(0, 3650)
         self.revenge_days.setSpecialValueText("All")
@@ -3302,9 +3313,6 @@ class AboutPage(QWidget):
         label.setCursor(Qt.CursorShape.PointingHandCursor)
 
         def _open(_href: str) -> None:
-            if is_dir and casual_enabled(self._cfg):
-                label.setText("Raw logs are hidden in Carebear Mode. Open Morality Adjustment to change modes.")
-                return
             target = path
             if is_dir:
                 target.mkdir(parents=True, exist_ok=True)
@@ -3422,7 +3430,7 @@ class SessionPage(QWidget):
         self._imported[name] = snap
         index = self._source.findData(name)
         if index < 0:
-            self._source.addItem("Imported session" if casual_enabled(self._cfg) else f"Imported: {name}", name)
+            self._source.addItem(f"Imported: {name}", name)
             index = self._source.count() - 1
         self._source.setCurrentIndex(index)
         self._display(snap)
@@ -3454,7 +3462,7 @@ class SessionPage(QWidget):
         for index in range(1, self._source.count()):
             key = str(self._source.itemData(index))
             if not key.startswith("archive:"):
-                self._source.setItemText(index, "Imported session" if casual_enabled(cfg) else f"Imported: {key}")
+                self._source.setItemText(index, f"Imported: {key}")
         self._display(self.shown())
 
     def refresh_archives(self) -> None:

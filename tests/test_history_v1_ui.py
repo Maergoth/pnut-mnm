@@ -67,7 +67,9 @@ class HistoryUiTests(unittest.TestCase):
             self.assertEqual(page._raw_snaps[raw.key].total_damage, 30)
             self.assertEqual(page._archive_sources[raw.key], "uuid-import")
             page.set_config(dataclasses.replace(self.cfg, casual_mode=True))
-            self.assertFalse(page.correct_selected_archive(name="Peer", in_group=True))
+            engine.correct_archived_encounter.reset_mock()
+            self.assertTrue(page.correct_selected_archive(name="Peer", in_group=True))
+            engine.correct_archived_encounter.assert_not_called()
         finally:
             page.deleteLater()
 

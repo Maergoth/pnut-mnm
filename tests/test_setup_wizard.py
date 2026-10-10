@@ -263,35 +263,34 @@ class SetupWizardTests(unittest.TestCase):
         self.assertFalse(self.wizard.crop_page.isComplete())
         self.assertIsNone(self.wizard.crop_picker.frame())
 
-    def test_only_local_setup_canvas_shows_explicit_calibration_frame_without_changing_mode(self):
+    def test_setup_and_settings_canvas_show_local_frame_without_changing_mode(self):
         self.reach_crop()
         frame = np.ones((720, 1280, 3), dtype=np.uint8) * 99
         self.wizard.crop_picker.set_frame(frame)
         self.assertEqual(self.wizard.crop_picker.canvas._pixmap.toImage().pixelColor(10, 10), QColor(99, 99, 99))
         self.wizard.crop_picker.set_config(self.wizard._draft)
         self.assertEqual(self.wizard.crop_picker.canvas._pixmap.toImage().pixelColor(10, 10), QColor(99, 99, 99))
-        # Accessors used outside calibration still obey the presentation policy.
-        self.assertTrue(np.all(self.wizard.crop_picker.frame() == 0))
+        self.assertIs(self.wizard.crop_picker.frame(), frame)
         self.assertTrue(self.wizard._draft.casual_mode)
         self.assertTrue(self.cfg.casual_mode)
         self.assertEqual(self.wizard._frame_size, (1280, 720))
         normal = CropPicker(self.engine, self.cfg)
         try:
             normal.set_frame(frame)
-            self.assertEqual(normal.canvas._pixmap.toImage().pixelColor(10, 10), QColor(0, 0, 0))
-            self.assertTrue(np.all(normal.frame() == 0))
+            self.assertEqual(normal.canvas._pixmap.toImage().pixelColor(10, 10), QColor(99, 99, 99))
+            self.assertIs(normal.frame(), frame)
         finally:
             normal.deleteLater()
 
-    def test_calibration_does_not_reveal_ocr_text_or_visible_keyboard_callouts(self):
+    def test_calibration_shows_ocr_text_without_visible_keyboard_callouts(self):
         self.reach_crop()
         self.wizard.crop_picker.set_frame(np.ones((720, 1280, 3), dtype=np.uint8) * 99)
         self.wizard.crop_picker._on_ocr_done(([SimpleNamespace(text="Teammate hits Goblin for 12 points of damage.",
                                                             x=0, y=0, h=12)], 5), None)
-        for index in range(self.wizard.crop_picker._lines.count()):
-            self.assertNotIn("Teammate", self.wizard.crop_picker._lines.item(index).text())
-        for box in self.wizard.crop_picker.canvas._boxes:
-            self.assertNotIn("Teammate", box.text)
+        self.assertEqual(self.wizard.crop_picker._lines.item(0).text(),
+                         "Teammate hits Goblin for 12 points of damage.")
+        self.assertEqual(self.wizard.crop_picker.canvas._boxes[0].text,
+                         "Teammate hits Goblin for 12 points of damage.")
         for label in self.wizard.crop_picker.findChildren(QLabel):
             self.assertNotIn("Ctrl+arrows", label.text())
             self.assertNotIn("Shift 10", label.text())
