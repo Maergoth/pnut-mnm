@@ -118,11 +118,17 @@ class RespawnTimerControlsTests(unittest.TestCase):
     def test_expired_npc_replaces_counter_with_static_no_focus_buttons(self):
         timer = self.countdown()
         restart, dismiss = self.panel._expired_buttons[timer.id]
-        self.assertEqual((restart.text(), dismiss.text()), ("Restart", "Dismiss"))
-        for button in (restart, dismiss):
+        self.assertEqual((restart.text(), dismiss.text()), ("", ""))
+        self.assertNotEqual(restart.icon().pixmap(restart.iconSize()).toImage(),
+                            dismiss.icon().pixmap(dismiss.iconSize()).toImage())
+        for button, action in ((restart, "Restart"), (dismiss, "Dismiss")):
             self.assertTrue(button.isVisible())
             self.assertEqual(button.focusPolicy(), Qt.FocusPolicy.NoFocus)
+            self.assertFalse(button.icon().isNull())
+            self.assertIn(action, button.accessibleName())
             self.assertIn(timer.label, button.accessibleName())
+            self.assertIn(action, button.toolTip())
+            self.assertIn(timer.label, button.toolTip())
         self.assertEqual([text for _, text, _ in self.rendered_text()], [timer.label])
         self.assertTrue(self.panel.isVisible())
         self.assertFalse(self.panel._anim.isActive())
@@ -292,13 +298,25 @@ class RespawnTimerControlsTests(unittest.TestCase):
             self.assertLess(restart.geometry().right(), dismiss.geometry().left())
             label_rect = rendered[0][0]
             self.assertLessEqual(label_rect.right(), restart.geometry().left())
-            for button in (restart, dismiss):
+            for button, action in ((restart, "Restart"), (dismiss, "Dismiss")):
                 self.assertTrue(bounds.contains(QRectF(button.geometry())))
-                self.assertEqual(button.font().pixelSize(), self.panel._f_label.pixelSize())
-                self.assertEqual(button.font().weight(), self.panel._f_label.weight())
-                metrics = QFontMetricsF(button.font())
-                self.assertGreaterEqual(button.width() - 2, metrics.horizontalAdvance(button.text()))
-                self.assertGreaterEqual(button.height() - 2, metrics.height())
+                self.assertEqual(button.text(), "")
+                self.assertEqual(button.width(), button.height())
+                self.assertFalse(button.icon().isNull())
+                self.assertIn(action, button.accessibleName())
+                self.assertIn(action, button.toolTip())
+                icon_size = button.iconSize()
+                self.assertGreater(icon_size.width(), 0)
+                self.assertGreater(icon_size.height(), 0)
+                self.assertLessEqual(icon_size.width(), button.width() - 2)
+                self.assertLessEqual(icon_size.height(), button.height() - 2)
+                # Icons must contain visible strokes at normal and high-DPI sizes.
+                for resolution in (icon_size, icon_size * 2):
+                    icon = button.icon().pixmap(resolution).toImage()
+                    self.assertFalse(icon.isNull())
+                    self.assertTrue(any(icon.pixelColor(x, y).alpha() > 0
+                                        for y in range(icon.height()) for x in range(icon.width())),
+                                    f"{action} icon is blank at {resolution}")
 
 
 if __name__ == "__main__":

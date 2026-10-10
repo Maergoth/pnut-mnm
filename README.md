@@ -279,11 +279,11 @@ one countdown immediately. The duration is pre-filled with the last one you conf
 any mob in that encounter's zone, including after restarting PNUT. All mobs in a zone share
 that default; each zone remembers its own duration. The first timer in a zone defaults to
 five minutes.
-Each countdown runs once in the timer panel. When an NPC timer expires, **Restart** and
-**Dismiss** replace its time counter. It stays until you dismiss it; **Restart** starts a fresh
-countdown with the same duration. Scroll the timer panel when more than eight timers are
-listed. It does not add an automatic chat trigger. Turn off overlay click-through to use
-the buttons or the right-click menu.
+Each countdown runs once in the timer panel. When an NPC timer expires, a **circular arrow**
+to restart and an **X** to dismiss replace its time counter. Hover for the action's tooltip.
+It stays until you dismiss it; restarting uses the same duration. Scroll the timer panel
+when more than eight timers are listed. It does not add an automatic chat trigger. Turn off
+overlay click-through to use the buttons or the right-click menu.
 
 **Your group, outsiders and enemies.** The totals at the top (damage and DPS), the shares and the
 clipboard line count only your group: you, your pet and your party. Everyone else in a fight is
