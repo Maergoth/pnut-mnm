@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 
-from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, NPC, NPC_WORD, RULES, Event, is_you, lemmatize, starts_message
+from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, NPC, NPC_WORD, PLAYER, PLAYER_WORD, RULES, Event, is_you, lemmatize, starts_message
 
 #: "... and you receive 2 copper coins ... as your split": the number and the word after it (a
 #: denomination, or the OCR's remains of one: "2 coppe", "1 cc", "3 COI", "O coins", "4 cavalier's")
@@ -54,7 +54,7 @@ _LOG_TIMESTAMP_RX = re.compile(r"^\[[^\]]{0,40}\]\s*")
 _LEADING_JUNK_RX = re.compile(r"^(?!\d+\s+(?:platinum|gold|silver|copper|coins?)\b)[^A-Za-z(]+")
 _STRAY_TAIL_RX = re.compile(r"[^\x20-\x7e]+\s*$")
 _PAREN_ZERO_RX = re.compile(r"(?<=\d)\(\)")  # "2()" -> "20" (a 0 glyph read as parentheses)
-_SPACED_POSSESSIVE_RX = re.compile(r"\b([A-Z][a-z]+) s (?=[A-Z])")  # "Tovozen s Heal" -> "Tovozen's Heal"
+_SPACED_POSSESSIVE_RX = re.compile(rf"(?<![A-Za-z'])({PLAYER}) s (?=[A-Z])")  # "Tok'Nor s Heal" -> "Tok'Nor's Heal"
 _PET_RX = re.compile(r"^Your\s+pet\s+([A-Z][A-Za-z]*)\b")
 
 #: Whole-word OCR misreads seen in the recordings (SPEC 3c-3f).  Applied before any
@@ -83,7 +83,7 @@ _WORD_FIXES: dict[str, str] = {
 }
 _FUSED_CASTING_RX = re.compile(r"\bbegi\w{0,2}s?\s*[cgs]ast\w{2,4}\b")  # "beginsgasting", "begiwcastifig"
 # A missing space after the actor, constrained to recognisable cast/loot messages.
-_FUSED_ACTOR_RX = re.compile(r"^([A-Z][A-Za-z]*?)(begins(?=\s+casting\b)|loots(?=\s+[\[(]))")
+_FUSED_ACTOR_RX = re.compile(rf"^({PLAYER})(begins(?=\s+casting\b)|loots(?=\s+[\[(]))")
 _DIGIT_IN_WORD_RX = re.compile(r"(?<=[A-Za-z])[0159](?=[a-z])")  # "Dogabetaro1em" -> "Dogabetarolem"
 _DIGIT_IN_WORD_MAP = {"0": "o", "1": "l", "5": "s", "9": "g"}
 _MID_OF_RX = re.compile(r"(?<=\s)Of(?=\s)")  # "points Of damage" -> "points of damage"
@@ -121,14 +121,14 @@ _GARBLED_AMOUNT_RX = re.compile(r"\bfor\b(?P<amt>[^.!]{0,12}?)\s*\b(?P<unit>poin
 #: possessor (also with a capital inside it: "GoZifs Slice hits"), and an adjective such as
 #: "Righteous" in a clipped "Your Righteous Smite hits" is never one.
 _DROPPED_APOSTROPHE_RX = re.compile(
-    r"^([A-Z][A-Za-z]+?)(?<!ou)s (?=[A-Z][A-Za-z']*(?: (?:[a-z]+ )?[A-Z][A-Za-z']*)* (?:hits|heals)\b)"
+    rf"^(?!Your\b)({PLAYER})(?<!ou)s (?=[A-Z][A-Za-z']*(?: (?:[a-z]+ )?[A-Z][A-Za-z']*)* (?:hits|heals)\b)"
 )
 #: The NPC form: "a dunes madmans Strike hits YOU" -> "a dunes madman's Strike hits YOU".
 _DROPPED_NPC_APOSTROPHE_RX = re.compile(
     rf"^((?:a|an|the) {NPC_WORD}(?: {NPC_WORD})*?)s (?=[A-Z][A-Za-z']*(?: [A-Z]\w*)* (?:hits|heals)\b)"
 )
 #: The s lost instead: "ovozen' Heal heals Wululiso" -> "ovozen's Heal heals Wululiso"
-_BARE_APOSTROPHE_RX = re.compile(r"^([A-Za-z][a-z]{2,})' (?=[A-Z][a-z])")
+_BARE_APOSTROPHE_RX = re.compile(rf"^({PLAYER}|{NPC_WORD})' (?=[A-Z][a-z])")
 _YOU_BANG_END_RX = re.compile(r"\bYOU[lI1|]+[.!]?\s*$")
 _YOU_BANG_MID_RX = re.compile(r"\bYOU[lI1|]+(?=[\s,.])")
 #: The line's final "!" read as l / I / 1 / | after a word that ends a message ("but missesl",
@@ -459,7 +459,7 @@ def _build(kind: str, m: re.Match[str], text: str, ts: float, player_name: str) 
 # Clipped-name completion
 # --------------------------------------------------------------------------
 
-_LEAD_WORD_RX = re.compile(r"^([A-Za-z][a-z\-]*)(\s+|'s\b|'(?=\s))")
+_LEAD_WORD_RX = re.compile(rf"^({NPC_WORD})(\s+|'s\b|'(?=\s))")
 _ARTICLES = frozenset({"a", "an", "the"})
 _BANG_GLYPHS = "lI1|"
 #: The ability named by "YOU are temporarily IMMUNE to Tozuvek's Snaring Shot!"
@@ -497,7 +497,7 @@ class NameCompleter:
                 continue
             if _NPC_START_RX.match(raw):
                 self._npcs[raw] = self._npcs.get(raw, 0) + 1
-            elif raw[:1].isupper() and raw.replace(" ", "").isalpha():
+            elif re.fullmatch(PLAYER, raw):
                 self._players[raw] = self._players.get(raw, 0) + 1
         if ev.kind in _SKILL_SOURCE_KINDS and ev.skill:
             self._skills[ev.skill] = self._skills.get(ev.skill, 0) + 1
@@ -657,7 +657,7 @@ def _garbled_skill(skill: str | None) -> bool:
 #: "Gozif's Slice hits a for 3+oints,ofrBleed Damag": the ability and who used it are readable
 #: even when the rest is not.  Credited for crowd control and debuffs; never counted as damage.
 _PARTIAL_ABILITY_RX = re.compile(
-    rf"^(?:(?P<actor>[A-Z][a-z]{{2,}}(?:\s+[A-Z][a-z]+)?|{NPC})'s|(?P<you>Your))\s+"
+    rf"^(?:(?P<actor>{PLAYER}|{NPC})'s|(?P<you>Your))\s+"
     r"(?P<skill>[A-Z][a-z']+(?:\s+(?:of\s+|the\s+)?[A-Z][a-z']+){0,3}(?:\s+[IVX]{1,4})?)\s+(?:hits?|heals?)\b"
 )
 
@@ -712,8 +712,8 @@ def split_fused(text: str, player_name: str = "", *, depth: int = 2) -> list[str
             elif not (
                 len(left.split()) >= 4
                 and (
-                    _LOOT_START_RX.match(right)
-                    or (not left.rstrip().endswith(("'s", "s'")) and _CLEAN_START_RX.match(right))
+                    _LOOT_START_RX.match(right.translate(_QUOTE_MAP))
+                    or (not left.rstrip().endswith(("'s", "s'")) and _CLEAN_START_RX.match(right.translate(_QUOTE_MAP)))
                 )
                 and _parses_cleanly(right, player_name)
             ):
@@ -725,10 +725,10 @@ def split_fused(text: str, player_name: str = "", *, depth: int = 2) -> list[str
 
 
 #: A second message that can be trusted to start here (not a capitalised ability word).
-_CLEAN_START_RX = re.compile(r"^(?:(?:a|an|the)\s|You\b|Your\b|--|[A-Z][a-z]{2,}'s\s)")
+_CLEAN_START_RX = re.compile(rf"^(?:(?:a|an|the)\s|You\b|Your\b|--|{PLAYER_WORD}'s\s)")
 #: A loot line: no ability is called "<Name> loots", so it starts a message even right after a
 #: cut-off "... from a skeletal monk's".
-_LOOT_START_RX = re.compile(r"^-*[A-Z][a-z]{2,}\s+loots?\s")
+_LOOT_START_RX = re.compile(rf"^-*{PLAYER_WORD}\s+loots?\s")
 #: Where a new message starts whatever the line around it parsed as: the experience line (also
 #: "ou gain", "You zain", "ekperience"), and the attack toggles after a kill line whose "!" was
 #: read as l / I / 1 / | ("... has slain a skeletal monkl Stopped attacking.").
@@ -800,6 +800,13 @@ def parse_line(text: str, ts: float, player_name: str = "") -> Event:
                     if ev.kind in _SKILL_KINDS and _garbled_skill(ev.skill):
                         log.debug("garbled ability name, line left unread: %r", text)
                         break
+                    if kind == "status":
+                        # An alphabetic garbled amount can fit the generic status rule.
+                        # Preserve an incomplete ability as such so it still needs diagnosis.
+                        partial = _salvage_ability(clean, ts, text, player_name)
+                        if partial is not None:
+                            partial.is_pet = is_pet
+                            return partial
                     return ev
             else:
                 # "... hits a skeletal fighter for 41 points of": the window cut the line after the
