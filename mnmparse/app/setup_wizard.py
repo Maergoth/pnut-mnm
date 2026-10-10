@@ -213,7 +213,7 @@ class _OptionsPage(QWizardPage):
             setattr(self, key, switch)
             form.addRow(caption, switch)
             switch.toggled.connect(self._stage_options)
-        self.revenge_enabled.setToolTip("PvP only. Names are hidden in Carebear Mode.")
+        self.revenge_enabled.setToolTip("PvP only. Each attacker prompts once per session.")
         self.attack_bar.setToolTip("Shown below the overlay.")
         self.export_auto.setToolTip("Copies finished fights involving your group.")
         layout.addLayout(form)

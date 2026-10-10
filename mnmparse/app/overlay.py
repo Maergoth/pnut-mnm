@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QDialog,
     QHBoxLayout,
+    QInputDialog,
     QMenu,
     QSizeGrip,
     QStackedWidget,
@@ -67,7 +68,7 @@ from mnmparse.app.timer_panel import TimerPanel
 from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, MAX_RESPAWN_SECONDS, RespawnTimerDialog
 from mnmparse.app.window_identity import window_title
 from mnmparse.app.session_view import SessionView
-from mnmparse.privacy import casual_enabled, project_encounter, project_session, safe_event_text
+from mnmparse.privacy import casual_enabled, project_encounter, project_session
 from mnmparse.app.widgets import (
     ElidedLabel,
     FeedView,
@@ -280,6 +281,32 @@ def add_pet_entries(menu: QMenu, row: Any, snap: Any, emit: Any) -> dict[Any, An
     else:
         owner = str(getattr(row, "pet_owner", "") or "")
         choices(menu.addMenu("Assign pet to group member"), name, owner)
+    return handlers
+
+
+def add_own_pet_entries(menu: QMenu, row: Any, player: str, emit: Any) -> dict[Any, Any]:
+    """Carebear ownership controls use only your identity and your included pets."""
+    player = str(player or "").strip()
+    if row is None or not player or not (getattr(row, "is_you", False)
+            or str(getattr(row, "pet_owner", "") or "").casefold() == player.casefold()):
+        return {}
+    menu.addSeparator()
+    assign = menu.addAction("Assign a pet to me…")
+
+    def assign_to_self() -> None:
+        name, accepted = QInputDialog.getText(menu.parentWidget(), window_title("pet-assignment"), "Pet name")
+        if accepted and name.strip():
+            emit(name.strip(), player)
+
+    handlers = {assign: assign_to_self}
+    pets = list(dict.fromkeys(getattr(row, "attributed_pets", ()) or ()))
+    if getattr(row, "is_pet", False) and getattr(row, "pet_owner", ""):
+        pets.append(row.name)
+    if pets:
+        submenu = menu.addMenu("My pets")
+        for pet in dict.fromkeys(pets):
+            clear = submenu.addAction(f"Clear assignment for {pet}")
+            handlers[clear] = lambda pet=pet: emit(pet, None)
     return handlers
 
 
@@ -1295,11 +1322,14 @@ class OverlayWindow(QWidget):
         browse = menu.addAction("Earlier fights…")
         handlers = {copy: self.copy_current, mode: self.toggle_view_mode,
                     browse: lambda: self.open_encounter_menu(event.globalPos())}
-        row = self._table.row_at(event.globalPos()) if self._tab not in ("feed", "session") and self._view_mode != "self" else None
+        row = self._table.row_at(event.globalPos()) if self._tab not in ("feed", "session") and (
+            self._view_mode != "self" or casual_enabled(self._cfg)) else None
         handlers.update(self._add_respawn_entries(menu, self._respawn_names_at(event.globalPos(), row)))
         if not casual_enabled(self._cfg):
             handlers.update(add_group_entries(menu, row, self.group_override_requested.emit))
             handlers.update(add_pet_entries(menu, row, self._snap, self.pet_owner_requested.emit))
+        else:
+            handlers.update(add_own_pet_entries(menu, row, self._cfg.player_name, self.pet_owner_requested.emit))
         chosen = menu.exec(event.globalPos())
         menu.deleteLater()
         action = handlers.get(chosen)
@@ -1390,8 +1420,6 @@ class OverlayWindow(QWidget):
         self._pinned = None
         self._pin_live_key = None
         self._table.clear_selection()
-        self._feed.clear()
-        self._timer_panel._popups.clear()
         self._timer_panel.sync()
         self._session.set_config(cfg)
         self._session.set_snapshot(project_session(getattr(self, "_raw_session", None), cfg))
@@ -1471,11 +1499,6 @@ class OverlayWindow(QWidget):
         DANGER even when the line names the player instead of YOU; ``None`` falls back
         to the feed's own YOU/YOUR word scan.
         """
-        if casual_enabled(self._cfg):
-            from mnmparse.parser import parse_line
-            text = safe_event_text(parse_line(text, time.time(), getattr(self._cfg, "player_name", "")), self._cfg)
-            if text is None:
-                return
         self._feed.append(text, kind, is_player_action, time.time(), is_player_target=is_player_target)
 
     def persist_geometry(self) -> None:

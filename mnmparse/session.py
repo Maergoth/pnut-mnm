@@ -282,6 +282,14 @@ class SessionStats:
         self.combat_seconds += max(0.0, float(duration_s))
         self._version += 1
 
+    def note_zone(self, zone: str) -> bool:
+        """Update location metadata without adding a replayed line to the feed."""
+        if not zone or (self._zones and self._zones[-1] == zone):
+            return False
+        self._zones.append(zone)
+        self._version += 1
+        return True
+
     def set_roster(self, roster: Any) -> None:
         """Take the party from ``roster`` (the meter's PartyRoster) from now on."""
         self.roster = roster

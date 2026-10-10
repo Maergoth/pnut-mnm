@@ -6,8 +6,8 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.1 starts in Carebear Mode:** your own information and rounded averages for known groups
-of at least three, with other individuals hidden. Guided setup, saved session history,
+**v1.0.2 starts in Carebear Mode:** your own performance and eligible group averages,
+with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
 Do not talk about this tool in-game or use it to disparage or displace any other player. 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.1-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.2-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -180,10 +180,9 @@ The better the text looks, the better the OCR.
    bar choices preserve existing preferences. Back keeps your choices; Cancel changes nothing.
 
 Reopen setup from **About > Run setup…** when chat moves. Its captured image is a local
-calibration preview, cleared when setup closes, including canceled captures. Carebear Mode
-still protects combat views, OCR results and exports. Settings also provides crop coordinates
-and OCR options; its Carebear preview hides chat pixels. Changes to capture/OCR settings take
-effect after applying them with capture stopped.
+calibration preview, cleared when setup closes, including canceled captures. Setup and
+Settings show the captured image and OCR results in either mode. Settings also provides crop
+coordinates and OCR options. Apply capture/OCR changes with capture stopped.
 
 Which chat window is read is decided by that rectangle alone: the app captures the whole game
 window as a picture and reads only the pixels inside the crop. Nothing is hooked. With two chat
@@ -204,10 +203,11 @@ the `mss` backend nothing is grabbed while the game window is gone.
 ### Using the app
 
 **Carebear Mode and Morality Adjustment.** The flower mode button between capture and Overlay
-opens **Settings > Morality Adjustment**. Carebear Mode hides other individuals across meters,
-Session, Feed, history, overlays, tooltips, clipboard, file exports and support reports.
-Small or unknown groups show only your information. Unknown character identity hides details
-until your name is configured. Your assigned pets are folded into your own values.
+opens **Settings > Morality Adjustment**. Carebear Mode prevents direct comparisons with
+individual groupmates in meters, Session, history, overlays, tooltips and performance exports.
+Small or unknown groups show only your performance. Configure your character name to see
+your values; your assigned pets are folded into them. Feed text, triggers, capture/OCR,
+diagnostics, preference backups and an enabled Revenge List work in either mode.
 Damage/DPS averages need at least three active damage contributors whose damage is at least
 their healing. Healing/HPS averages need at least three active healing contributors whose
 healing is at least their damage. Positive ties count in both; inactive members count in
@@ -216,12 +216,12 @@ Your damage percentage is your actual share of the group total; the group row sh
 remaining share, independently of its displayed damage average.
 
 To request **Elitist Scumbag Mode**, drag the red handle most of the way right. A click or
-short drag keeps Carebear Mode. The confirmation requires the promise that you
-"will not use it to shit on their teammates because video games are not difficult enough
-to be an asshole." Cancel, Escape or closing the dialog keeps Carebear Mode. Returning to
-Carebear applies immediately and clears stale details and queued speech. Mute and reduced
+short drag keeps Carebear Mode. The confirmation asks:
+"Confirm you will not use this to shit on your teammates. Video games are not hard enough for you to be an asshole."
+Cancel, Escape or closing the dialog keeps Carebear Mode. Returning to
+Carebear applies immediately and clears stale individual performance details. Mute and reduced
 animations apply to the brief switch cue. Existing raw local logs and earlier external
-copies are not erased. The individual breakdowns described below are available in confirmed
+copies are not erased. Individual combat and session breakdowns are available in confirmed
 Elitist mode.
 
 The top bar has **Start/Stop capture**, the mode button, **Overlay**, **Lock overlay**, and **Map**.
@@ -240,8 +240,8 @@ minutes).
 
 For troubleshooting, use **Settings > Status > OCR Diagnosis** to save a ZIP report.
 It records capture/OCR settings, timing, crop dimensions, language, screen size and DPI.
-Carebear reports omit images and raw chat; confirmed Elitist reports may include recent
-messages and a fresh crop image. Saving does not upload or send anything. Lines that scrolled
+Reports may include recent captured messages and a fresh crop image in either mode.
+Saving does not upload or send anything. Lines that scrolled
 past without being captured cannot be recovered.
 
 - **Live:** every encounter, grouped like Advanced Combat Tracker: one collapsible header per
@@ -278,8 +278,8 @@ past without being captured cannot be recovered.
   gross amount you looted as a detail. Coin is shown as platinum/gold/silver/copper with
   100 copper to a silver, 100 silver to a gold and 100 gold to a platinum. Export writes
   JSON under `logs\exports\`.
-- **Feed:** readable captured events, colored by kind, with filter chips and search. Carebear
-  Mode shows safe own-character text and withholds other source lines.
+- **Feed:** original captured events, colored by kind, with filter chips, search and copying
+  in either mode.
 - **Settings:** the Status section, player name, capture and OCR options, crop calibration,
   overlay defaults, encounter timeout ("Timeout without damage"), **Dummy Fix**, whether to
   count personal lines and whether to list other groups' fights.
@@ -289,13 +289,13 @@ past without being captured cannot be recovered.
 **Previous sessions and imports.** The Session source selector opens locally saved runs;
 **Resume selected session** requires capture stopped. Live pages through older encounters.
 Log imports run in the background and can be canceled; a canceled import is not added.
-Carebear Mode also protects historical and imported views and exports.
+Carebear Mode also filters individual performance in historical and imported views and exports.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring
-a backup. Carebear backups contain technical preferences with generic profile names; confirmed
-Elitist mode can include full preferences, triggers, corrections, learned spellings and
-Revenge List entries. Logs and images are excluded. Restore always returns to Carebear Mode
+a backup. In either mode, backups include settings and named capture profiles, with an option
+to include full preferences, triggers, corrections, learned spellings and Revenge List
+entries. Logs and images are excluded. Restore always returns to Carebear Mode
 and keeps the current local log folder.
 
 The **overlay** has tabs Overview, Damage, Healing, Taken, Session and Feed, plus Revenge
@@ -370,8 +370,9 @@ players can still appear as faded outsiders within a fight that includes you; th
 does not count toward your group's totals. Changing this setting updates the displayed
 fight and encounter history immediately.
 
-The chat seldom says whose pet a pet is. Right-click any combatant in the Live meter or
-in the overlay and use **Assign pet to group member** to select yourself or a group member.
+The chat seldom says whose pet a pet is. In Carebear, use **Assign a pet to me…** to enter your
+pet's name, or clear an assignment through **My pets**. In Elitist mode, right-click a combatant in the Live
+meter or overlay and use **Assign pet to group member** to select yourself or a group member.
 An attributed pet merges into its owner's parse: one row labeled **Owner + Owner's Pet**
 shows their combined damage, healing, damage taken and utility. Multiple pets use **Owner +
 Owner's Pets**. Pet abilities keep their pet's name in the breakdown, and group totals count
@@ -379,8 +380,8 @@ each contribution once. Copied summaries and CSV exports use the shorter **Owner
 label. Attributed pets follow their owner's group inclusion. Right-click
 the combined owner row to reassign a pet or use
 **Clear pet assignment** to remove its manual link. Assignments
-are remembered across restarts and update the displayed encounters. The existing **Count as
-my group**, **Don't count as my group**, and **Let the chat decide** controls remain available.
+are remembered across restarts and update the displayed encounters. Elitist mode also offers
+**Count as my group**, **Don't count as my group**, and **Let the chat decide** controls.
 
 **Hit rates.** Your Combat chat shows your own misses and the enemies' misses on your group, but
 not other players' misses ("X tries to hit Y, but misses!" never appears for them; only the
@@ -471,12 +472,9 @@ Use `III` in both fields for a separate rank III trigger, or remove ` II` for th
 The named capture `(?P<damage>\d+)` supplies `{damage}`; matching only the spell name does
 not capture a number. **Start a timer** can stay off when you only want the fading popup.
 
-Carebear Mode keeps personal rebuff titles, manually started timer names and bundled starter
-titles visible. Other timer labels stay generic, and captured chat and regex values stay hidden.
-It protects speech, silences custom sound files and hides custom definitions, captured
-suggestions and sharing.
-The editing and sharing walkthrough below applies to confirmed Elitist mode. Expensive
-regular expressions are stopped and disabled rather than freezing capture or the editor.
+Trigger editing, captured matches and regex values, timer labels, speech, custom sound files
+and sharing work in either mode. Expensive regular expressions are stopped and disabled
+rather than freezing capture or the editor.
 
 The bar at the top sets the volume, voice, speech rate and audio output for all triggers.
 Triggers are saved as you edit them, in `triggers.json`, with saved/error status and **Retry
@@ -526,8 +524,8 @@ overlay's bottom edge, double-click it, or right-click > Snap to overlay); the a
 then docks under the overlay directly.
 
 **Revenge List.** This optional PvP reminder is **off by default**; enable **Revenge List**
-in setup or Settings. Confirmed Elitist mode shows its names; Carebear Mode hides names and
-attacker prompts. Disabling the option hides its panel, overlay tab and pop-out window.
+in setup or Settings. Its names, prompts and Add/Remove controls work in either mode.
+Disabling the option hides its panel, overlay tab and pop-out window.
 
 An incoming attack on your character can show a **+** prompt once per attacker per session,
 for **30 seconds**. Use + to save a player you recognize; named NPCs can resemble players.
@@ -552,8 +550,11 @@ drag that handle to move the window, or drag its edges to resize. Locking fixes 
 position and size while zone selection, panning and zoom remain available. F11 fills the screen, and Escape
 restores the window. Scroll to zoom and drag to pan. A recognized
 "You have entered ..." or "Entering ..." line switches the map automatically. Keep zone
-messages in the cropped Combat chat. You can also choose a zone manually and select another
-map or floor when the wiki has several. Directional Night Harbor names use the same city map.
+messages in the cropped Combat chat. PNUT restores the last known zone on launch; a complete
+local `/who` summary for a known zone can correct a stale selection without ending the fight.
+Incomplete, unknown-zone and game-wide summaries do not select a map. You can also choose a
+zone manually and select another map or floor when the wiki has several. Directional Night
+Harbor names use the same city map.
 
 Maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
 Maps are cached in `map_cache/` for offline use. Opening an unchanged cached map reuses its
@@ -672,7 +673,8 @@ not counted, and the same player dying twice within a minute is the same death r
 Lines that only you receive about yourself (skill-ups, faction standing, experience ticks, PvP
 opt-in, eating, loot from your own corpse, camping, harvesting, invites, tells, /who) are
 classified as personal and left out of the Session tab unless you turn on "Count personal
-lines" in Settings. The parser is about what the group can see. Vendor trades, NPC chat,
+lines" in Settings. A complete local `/who` summary can still identify the current zone.
+The parser is about what the group can see. Vendor trades, NPC chat,
 level-ups, quest rewards and /con text have kinds of their own: they show in the Feed and are
 no longer counted as unreadable, but only quest rewards reach the Session tab (as rewards, not
 loot).

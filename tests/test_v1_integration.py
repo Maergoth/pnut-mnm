@@ -12,12 +12,14 @@ import unittest
 def _probe(root: Path):
     import dataclasses
     from unittest.mock import patch
-    from PySide6.QtCore import QSettings
+    from PySide6.QtCore import QSettings, Qt
     from PySide6.QtWidgets import QLabel
     from mnmparse.app.revenge import RevengeList
     from mnmparse.app.main import App, _MissingPage
+    from mnmparse.app.models import build_snapshot
     from mnmparse.config import Config, save_config, load_config
     from mnmparse.parser import parse_line
+    from mnmparse.stats import Stats
     settings = QSettings(str(root / "ui.ini"), QSettings.Format.IniFormat)
     cfg = Config(player_name="Hero", log_dir=str(root / "logs"), start_capture_on_launch=False,
                  setup_complete=True, reduced_motion=True)
@@ -63,12 +65,36 @@ def _probe(root: Path):
     options.save()
     app.processEvents()
     assert set(app.revenge.saved_names) == {"Bandit", "Raider"}
+    stats = Stats(player_name="Hero")
+    for offset, (name, damage) in enumerate((("Hero", 100), ("TeammateOne", 200), ("TeammateTwo", 300))):
+        stats.roster.set_manual(name, True)
+        stats.add(parse_line(f"{name} crushes a rat for {damage} points of damage.", 300 + offset, "Hero"))
+    snapshot = build_snapshot(stats, stats.current(), "Hero")
+    app.window.page("live").set_snapshot(snapshot)
+    app.overlay.set_tab("damage")
+    app.overlay.set_snapshot(snapshot)
+    app.overlay._flush_snapshot()
+    for table in (app.window.page("live")._pane.table, app.overlay._table):
+        model = table._model
+        labels = [str(model.data(model.index(i, model.column_index("name")), Qt.ItemDataRole.DisplayRole))
+                  for i in range(model.rowCount())]
+        assert {"TeammateOne", "TeammateTwo"}.issubset(labels)
     options._on_morality_mode(True)
     app.processEvents()
-    assert app.revenge.saved_names == ()
-    for surface in (app.overlay, app.window.page("triggers"), app.revenge_popout):
-        assert not any(name in label.text() for label in surface.findChildren(QLabel)
-                       for name in ("Bandit", "Raider"))
+    app.overlay._flush_snapshot()
+    assert set(app.revenge.saved_names) == {"Bandit", "Raider"}
+    assert set(lists[0]._rows) == {"Bandit", "Raider"}
+    assert app.revenge_popout.isVisible()
+    assert "revenge" in dict(app.overlay._tabs.visible_tabs())
+    for table in (app.window.page("live")._pane.table, app.overlay._table):
+        model = table._model
+        labels = [str(model.data(model.index(i, model.column_index("name")), Qt.ItemDataRole.DisplayRole))
+                  for i in range(model.rowCount())]
+        assert "Hero" in labels and any("Group average" in label for label in labels)
+        assert not any(peer in label for peer in ("TeammateOne", "TeammateTwo") for label in labels)
+    copied = app.copy_snapshot(snapshot)
+    assert "Hero" in copied and not any(peer in copied for peer in ("TeammateOne", "TeammateTwo"))
+    app.overlay.set_tab("revenge")
     cfg = dataclasses.replace(app.cfg, revenge_enabled=False)
     options.load(cfg)
     options.save()
@@ -76,6 +102,9 @@ def _probe(root: Path):
     assert "revenge" not in dict(app.overlay._tabs.visible_tabs())
     assert app._revenge_box.isHidden()
     assert app.revenge_popout.isHidden()
+    for surface in (app.overlay, app.window.page("triggers"), app.revenge_popout):
+        assert not any(name in label.text() for label in surface.findChildren(QLabel)
+                       for name in ("Bandit", "Raider"))
     assert not options.revenge_days.isEnabled() and not options.revenge_entries.isEnabled()
     app.revenge.pop_out_requested.emit()
     app.processEvents()

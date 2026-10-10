@@ -29,6 +29,7 @@ import dataclasses
 import copy
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -287,6 +288,7 @@ class Engine(QObject):
     """
 
     message = Signal(object, object)
+    zone_changed = Signal(str)  #: navigation evidence; does not replay a captured chat message
     snapshot = Signal(object)
     encounter_closed = Signal(object)
     encounter_updated = Signal(object)
@@ -321,6 +323,10 @@ class Engine(QObject):
         #: zone, and the tracker with its key (_capture_key) and the time capture stopped.
         self._roster: Any | None = None
         self._last_zone: str = ""
+        self._announced_zone: str = ""
+        self._navigation_scan_frames = 0
+        self._navigation_scan_candidate: tuple[str, int] | None = None
+        self._navigation_live_evidence = False
         self._kept_tracker: tuple[list[Any], Tracker, float] | None = None
         self._restart: _RestartTail | None = None  #: the restart check of the first frame (see _filter_restart)
         self._backlog_dropped = 0  #: lines already on screen at start, not logged again (this run)
@@ -388,6 +394,9 @@ class Engine(QObject):
 
         self._test_ocr: OcrEngine | None = None
         self._test_ocr_key: tuple[str, float] | None = None
+        # A recent navigation checkpoint is useful even without an active archive.
+        # An old session's last zone must never stand in for the current location.
+        self._last_zone = self._load_session_state(cfg)
 
     # ------------------------------------------------------------------
     # Public API (GUI thread)
@@ -409,6 +418,12 @@ class Engine(QObject):
         """The configuration the engine currently holds (a copy)."""
         with self._lock:
             return dataclasses.replace(self._cfg)
+
+    @property
+    def current_zone(self) -> str:
+        """Latest reliable captured zone, available before capture starts too."""
+        with self._lock:
+            return self._current_zone()
 
     def start(self) -> None:
         """Spawn the worker thread; returns immediately (never blocks the GUI)."""
@@ -827,8 +842,8 @@ class Engine(QObject):
         self._stopped_stats = raw
         if raw is not None:
             raw._restored_archive = True
-        if restored._zones:
-            self._last_zone = restored._zones[-1]
+        # Archived zones describe those old encounters, not the current game
+        # location. Navigation comes from recent checkpoints or captured evidence.
         self._archive_saved_version = None
         self._session_dirty = True
 
@@ -1008,6 +1023,8 @@ class Engine(QObject):
         zone = self._last_zone or saved_zone
         if zone:
             stats.zone_changes.append((0.0, zone))
+            self._last_zone = zone
+            self._session_dirty |= self._session_stats.note_zone(zone)
         if self._roster is not None:
             stats.roster = self._roster
             stats.roster.player_name = cfg.player_name
@@ -1020,7 +1037,99 @@ class Engine(QObject):
         self._rebuilt_version = stats.roster.version
         self._rebuilt_members = stats.roster.members()
         self._rebuild_all = False
+        self._announce_zone(zone)
         return stats
+
+    def _announce_zone(self, zone: str) -> None:
+        from mnmparse.maps import zone_title
+        if zone and zone_title(zone) != zone_title(self._announced_zone):
+            self._announced_zone = zone
+            self.zone_changed.emit(zone)
+
+    def _observe_navigation(self, event: Event, *, backlog: bool = False) -> None:
+        """Keep location metadata current without replaying old combat or triggers.
+
+        Entry lines establish a transition. A complete known-zone /who summary
+        establishes where an ongoing fight is happening, without closing it.
+        Only completed entry lines or /who summaries may hydrate startup backlog;
+        an old 'Entering' intention is not proof the transition completed.
+        """
+        from mnmparse.maps import zone_from_who, zone_title
+
+        if backlog and getattr(self._tracker, "scrolled_back", False):
+            return
+        entry = event.kind == "zone" and bool(event.target)
+        if backlog and entry and re.match(r"^You\s+have\s+entered\b", event.text, re.I) is None:
+            return
+        who_zone = zone_from_who(event.text) if event.kind == "personal" else ""
+        zone = str(event.target) if entry else who_zone
+        if not zone:
+            return
+        if not backlog:
+            self._navigation_live_evidence = True
+        stats = self._stats
+        current = self._current_zone()
+        if not entry and current and zone_title(current) == zone:
+            zone = current  # Keep an entry's more precise East/West variant.
+        if backlog or who_zone:
+            if not current or zone_title(current) != zone_title(zone):
+                if stats is not None:
+                    fight = stats.current()
+                    # A /who response during combat identifies this fight's zone.
+                    # Previously closed fights retain their original visit labels.
+                    stamp = 0.0 if backlog else (fight.start if fight is not None else float(event.ts))
+                    previous_stamp = stats.zone_changes[-1][0] if stats.zone_changes else float("-inf")
+                    last_closed_start = max((closed.start for closed in stats.history), default=float("-inf"))
+                    if stamp <= previous_stamp or stamp <= last_closed_start:
+                        # Delayed OCR can open a fight with an earlier timestamp
+                        # than the latest transition or a previously closed fight.
+                        # Keep navigation ordered and correct only this fight.
+                        stamp = max(float(event.ts), previous_stamp)
+                        if stamp <= last_closed_start:
+                            stamp = math.nextafter(last_closed_start, math.inf)
+                        if fight is not None:
+                            fight.zone_override = zone
+                            fight.zone_since_override = fight.start
+                            fight.revision += 1
+                    stats.zone_changes.append((stamp, zone))
+                    self._snapshot_dirty = True
+            self._session_dirty |= self._session_stats.note_zone(zone)
+        self._last_zone = zone
+        self._announce_zone(zone)
+
+    def _scan_initial_navigation(self, tracker: Tracker, cfg: Config, now: float) -> None:
+        """Recover a stable visible zone even when remembered rows are deduplicated.
+
+        The tracker may recognize every startup row and emit no messages at all.
+        Inspect only the initial frames, require two matching readings, and use
+        the newest complete location line. Scrolled history is not evidence.
+        """
+        from mnmparse.maps import zone_from_who, zone_title
+        from mnmparse.parser import parse_line
+
+        if self._navigation_live_evidence or self._navigation_scan_frames >= 8:
+            return
+        self._navigation_scan_frames += 1
+        if getattr(tracker, "scrolled_back", False):
+            self._navigation_scan_candidate = None
+            return
+        latest = None
+        key = ""
+        for text in tracker.prev:
+            event = parse_line(text, now, cfg.player_name)
+            if event.kind == "zone" and event.target and re.match(r"^You\s+have\s+entered\b", event.text, re.I):
+                latest, key = event, zone_title(event.target)
+            elif event.kind == "personal" and (zone := zone_from_who(event.text)):
+                latest, key = event, zone
+        if latest is None:
+            self._navigation_scan_candidate = None
+            return
+        previous = self._navigation_scan_candidate
+        count = previous[1] + 1 if previous is not None and previous[0] == key else 1
+        self._navigation_scan_candidate = (key, count)
+        if count >= 2:
+            self._observe_navigation(latest, backlog=True)
+            self._navigation_scan_frames = 8
 
     def _load_session_state(self, cfg: Config) -> str:
         """The zone saved by the last run, when it was saved within STATE_MAX_AGE_S (else ``""``)."""
@@ -1283,6 +1392,9 @@ class Engine(QObject):
             self._diagnostic_frames.clear()
             self._diagnostic_run_started = time.time()
             self._restart = _RestartTail(tail) if tail else None
+            self._navigation_scan_frames = 0
+            self._navigation_scan_candidate = None
+            self._navigation_live_evidence = False
             self._install_stats(cfg, saved_zone)
             self._ensure_archive()
             if self._archive is not None:
@@ -1462,6 +1574,7 @@ class Engine(QObject):
             self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
             tracking_started = time.perf_counter()
             new_messages = tracker.update(lines, now)
+            self._scan_initial_navigation(tracker, cfg, now)
             self._record_timing("tracking", tracking_started)
             if self._last_frame_at:
                 self._frame_gap_ms = max(0.0, (time.monotonic() - self._last_frame_at) * 1000.0)
@@ -1612,6 +1725,7 @@ class Engine(QObject):
             return
         if getattr(msg, "backlog", False):
             self._backlog_dropped += 1
+            self._observe_navigation(parse_line(msg.text, msg.first_seen, cfg.player_name), backlog=True)
             return
         if not NOT_LOGGED_RX.match(msg.text):
             writer.write_raw(msg)
@@ -1700,6 +1814,7 @@ class Engine(QObject):
                     self.notice.emit("Session recovery storage failed; current data is retained in memory. Check the log folder.")
                 except Exception:
                     log.exception("session recovery fallback failed")
+        self._observe_navigation(ev)
         self._messages += 1
         self.message.emit(msg, ev)
         for closed in stats.history[before:]:

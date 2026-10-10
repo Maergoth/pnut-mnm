@@ -83,6 +83,8 @@ class Encounter:
     damage_events: int = 0  #: melee and ability hits so far (an encounter without any is dropped)
     revision: int = 0  #: event and marker mutations, for stable-content snapshot caches
     capture_quality: dict[str, Any] = field(default_factory=dict)
+    zone_override: str = ""  #: reliable current-location evidence for a delayed-timestamp fight
+    zone_since_override: float = 0.0
 
     @property
     def has_damage(self) -> bool:

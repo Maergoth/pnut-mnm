@@ -88,7 +88,7 @@ class ProfileToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Stop capture"):
             self.widget.restore_backup(backup)
 
-    def test_backup_flushes_trigger_edits_and_casual_archive_uses_generic_profile_names(self):
+    def test_backup_flushes_trigger_edits_and_keeps_authored_profile_names(self):
         self.assertTrue(self.widget.save_profile("Teammate custom label"))
         calls = []
         self.widget.set_trigger_flush_callback(lambda: calls.append(True))
@@ -98,19 +98,22 @@ class ProfileToolsTests(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             self.assertEqual(set(archive.namelist()), {"manifest.json", "config.json"})
             data = json.loads(archive.read("config.json"))
-        self.assertEqual(set(data["capture_profiles"]), {"Profile 1"})
-        self.assertNotIn("Teammate", json.dumps(data))
+        self.assertEqual(set(data["capture_profiles"]), {"Teammate custom label"})
+        self.assertEqual(data["active_profile"], "Teammate custom label")
 
     def test_full_backup_restores_with_current_log_directory_and_refresh_signal(self):
-        self.current = dataclasses.replace(self.current, casual_mode=False, casual_mode_confirmed=True)
         self.widget.load(self.current)
+        self.assertTrue(self.widget.full_backup.isEnabled())
+        self.widget.full_backup.setChecked(True)
+        self.widget.load(self.current)
+        self.assertTrue(self.widget.full_backup.isChecked())
         self.settings.setValue("overlay/opacity", .7)
         self.settings.setValue("triggers/private-editor", "Teammate")
         data_root = Path(self.current.log_dir)
         atomic_json(data_root / "party.json", {"version": 4, "manual_in": ["Teammate"], "manual_out": [], "pet_owners": {}, "seen": {}})
         atomic_json(data_root / "vocabulary.json", {"version": 1, "words": {"teammate": 3}, "names": {"player": {"Teammate": 3}}})
         path = self.root / "preferences.zip"
-        self.widget.create_backup(path, allow_sensitive=True)
+        self.widget.create_backup(path)
         self.assertEqual(self.engine.flushed, 1)
         with zipfile.ZipFile(path) as archive:
             self.assertNotIn("triggers/private-editor", json.loads(archive.read("settings.json"))["values"])
@@ -128,7 +131,6 @@ class ProfileToolsTests(unittest.TestCase):
         self.assertEqual(refreshed, [cfg])
 
     def test_full_backup_flushes_latest_revenge_activity_before_reading_saved_list(self):
-        self.current = dataclasses.replace(self.current, casual_mode=False, casual_mode_confirmed=True)
         self.widget.load(self.current)
         path = self.root / "preferences.zip"
         saved = {"schema": 2, "entries": [{"name": "Opponent Ω with symbols!", "added_at": 100.0, "last_activity": 100.0}]}
@@ -145,7 +147,7 @@ class ProfileToolsTests(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             self.assertEqual(json.loads(archive.read("revenge.json")), pending)
 
-    def test_failed_revenge_flush_preserves_existing_backup_and_casual_never_calls_it(self):
+    def test_failed_revenge_flush_preserves_existing_backup_and_basic_backup_never_calls_it(self):
         path = self.root / "preferences.zip"
         path.write_bytes(b"previous good backup")
         calls = []
@@ -153,7 +155,6 @@ class ProfileToolsTests(unittest.TestCase):
         self.widget.create_backup(path, allow_sensitive=False)
         self.assertEqual(calls, [])
         casual_archive = path.read_bytes()
-        self.current = dataclasses.replace(self.current, casual_mode=False, casual_mode_confirmed=True)
         self.widget.load(self.current)
         with self.assertRaisesRegex(BackupError, "latest Revenge List activity"):
             self.widget.create_backup(path, allow_sensitive=True)

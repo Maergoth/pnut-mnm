@@ -133,12 +133,13 @@ def _exercise(report: dict[str, Any]) -> None:
             frame = np.full((720, 1280, 3), 99, dtype=np.uint8)
             setup.crop_picker.set_frame(frame)
             pixel = setup.crop_picker.canvas._pixmap.toImage().pixelColor(10, 10)
-            if pixel.red() != 99 or not np.all(setup.crop_picker.frame() == 0):
-                raise RuntimeError("Setup must show the local calibration image while protecting frame exports")
+            if pixel.red() != 99 or setup.crop_picker.frame() is not frame:
+                raise RuntimeError("Setup must show the local calibration image and provide the original frame")
             standard_picker = CropPicker(engine, config.Config(), window)
             standard_picker.set_frame(frame)
-            if standard_picker.canvas._pixmap.toImage().pixelColor(10, 10).red() != 0:
-                raise RuntimeError("Carebear Mode exposed pixels outside the local setup preview")
+            if (standard_picker.canvas._pixmap.toImage().pixelColor(10, 10).red() != 99
+                    or standard_picker.frame() is not frame):
+                raise RuntimeError("Carebear Mode hid the local calibration image or frame")
             standard_picker.set_frame(None)
             standard_picker.deleteLater()
             if setup.crop_page.isComplete():
@@ -167,7 +168,7 @@ def _exercise(report: dict[str, Any]) -> None:
                 raise RuntimeError("Setup appearance check unexpectedly started capture")
             report["setup"] = {"style": "Modern", "heading": heading, "background_rgb": rgb,
                                "casual": setup._draft.casual_mode, "capture_started": False,
-                               "local_calibration_preview": True, "frame_exports_protected": True,
+                               "local_calibration_preview": True, "local_frame_access": True,
                                "calibration_cleared": True, "mode_slider": True,
                                "crop_checkbox_removed": True, "common_options": True}
             report["stage"] = "exercise Revenge pop-out and display limits"
@@ -196,14 +197,14 @@ def _exercise(report: dict[str, Any]) -> None:
             if len(revenge.saved_names) != 2:
                 raise RuntimeError("Revenge display limits discarded saved entries")
             revenge.set_config(dataclasses.replace(revenge_cfg, casual_mode=True, casual_mode_confirmed=False))
-            if revenge.saved_names or lists[0]._rows:
-                raise RuntimeError("Carebear Mode exposed a Revenge player in the pop-out")
+            if revenge.saved_names != ("SmokeRaider",) or set(lists[0]._rows) != {"SmokeRaider"}:
+                raise RuntimeError("Carebear Mode hid the enabled Revenge List")
             revenge.set_config(dataclasses.replace(revenge_cfg, revenge_enabled=False))
             if not popout.isHidden():
                 raise RuntimeError("Disabled Revenge List left the pop-out visible")
             revenge.flush_pending_changes()
             report["revenge"] = {"popout": True, "newest_first": True, "limits_preserve_saved": True,
-                                 "casual_hidden": True, "disabled_hidden": True}
+                                 "casual_available": True, "disabled_hidden": True}
             map_window = MapOverlay(settings, MapRepository(Path(temporary) / "map_cache"))
             windows.append(map_window)
             app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
@@ -311,8 +312,8 @@ def _exercise(report: dict[str, Any]) -> None:
                 matched = rebuff_runner.observe("Your Armor wears off.", now=100)
                 if (len(matched) != 1 or rebuff_runner.board.timers[0].label != "Rebuff"
                         or matched[0].trigger.name != "Rebuff" or matched[0].groups
-                        or "Your Armor" in matched[0].line):
-                    raise RuntimeError("Carebear Mode hid a personal rebuff title or exposed captured chat")
+                        or matched[0].line != "Your Armor wears off."):
+                    raise RuntimeError("Carebear Mode changed the user's rebuff trigger or its source line")
                 rebuff_runner.set_casual_mode(False)
                 rebuff_runner.set_config(casual_cfg)
                 if rebuff_runner.board.timers[0].label != "Rebuff":

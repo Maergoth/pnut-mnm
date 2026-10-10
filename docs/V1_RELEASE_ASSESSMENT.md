@@ -1,58 +1,93 @@
 # PNUT v1 release assessment
 
-Updated October 10, 2026. This records the implemented v1 features, including the **1.0.1** Carebear rename and role-based combat averages. After testing the local candidate, the user authorized publication. Installed copies receive the release through PNUT's updater; development and release tasks preserve the installed App folder.
+Updated October 10, 2026 for **1.0.2**. Carebear now limits individual performance
+comparisons while keeping ordinary tools usable. Zone recovery also recognizes complete
+local `/who` summaries for known zones and restores current-zone navigation.
 
-The original assessment reviewed 0.9.1 at commit `7c88e69d3168e63208ab12fdf60d0747a62a435b`. Its reproduced lifecycle, regex, persistence and release-gate problems drove the work below. Current evidence combines source review, synthetic fixtures, offscreen UI regressions, the user's local trial and disposable updater-helper tests. Live gameplay accuracy and long-session resource limits remain separate validation concerns.
+The original assessment reviewed 0.9.1 at commit
+`7c88e69d3168e63208ab12fdf60d0747a62a435b`. Its lifecycle, regex, persistence and release-gate
+findings drove the v1 work. Current evidence combines source review, synthetic fixtures,
+offscreen UI checks, the user's local trial and disposable updater tests. Gameplay accuracy
+and long-session resource limits require separate human trials.
 
-## Implemented in the local candidate
+## Implemented features
 
-| Area | Result | Evidence / qualification |
+| Area | Current behavior | Evidence / limits |
 | --- | --- | --- |
-| Capture lifecycle | Stop is nonblocking and retains worker ownership until completion; the stopping state prevents a second worker. Configuration apply/restart and quit respect that lifecycle. | [Engine](../mnmparse/app/engine.py), [capture](../mnmparse/capture.py), resilience regressions. Stalled synthetic workers are covered; gameplay recovery still needs a human trial. |
-| Trigger safety and saving | Enforceable regex deadlines, an overall matching budget, oversized-input limits and quarantine protect live matching and preview/imported patterns. Strict model loading preserves the previous store on malformed input. Unique atomic saves and explicit flush cover immediate quit and backups. | [Triggers](../mnmparse/triggers.py), trigger v1 regressions. `regex==2026.9.29` and its native extension are included in dependency/legal/build handling. |
-| Morality Adjustment | Carebear Mode defaults on for fresh and unconfirmed legacy configurations. A shared allowlisted policy covers views, overlays, historical/imported data, manual/automatic clipboard, CSV/JSON/text, session exports, CLI outputs, trigger presentation/sharing/TTS and diagnostics. | [Privacy policy](../mnmparse/privacy.py), Carebear/CLI/integration regressions. This restricts presentation and app-produced output; it does not erase captured local source files or recall earlier external copies. |
-| Guided setup and help | First launch stages character/mode on step 1, crop/OCR on step 2 and common options on step 3: Revenge List, Display map, Auto attack bar and Copy to clipboard after fight. Positive OCR evidence allows Continue without a crop checkbox. Setup shows a local calibration image in Carebear Mode and clears it on exit, including late worker results. Finishing saves the selected mode/options and respects the launch capture preference; Back preserves choices and Cancel keeps current preferences. Help offers setup, shortcuts, build information and a labeled synthetic demo. | [Setup](../mnmparse/app/setup_wizard.py), [Help](../mnmparse/app/help_panel.py), [Demo](../mnmparse/app/demo.py). No live game was captured during automated checks. |
-| Configuration and profiles | Settings writes the selected `--config` path, reports saved/unsaved/failure states and distinguishes saved from running capture settings. Named profiles preserve character, source/title, crop, OCR, rate, log directory and available calibration dimensions. Apply/restore requires fully stopped capture. | [Config](../mnmparse/config.py), [Profiles](../mnmparse/profiles.py), [Profile tools](../mnmparse/app/profile_tools.py). Profiles cannot authorize leaving Carebear Mode. |
-| Backup and restore | One validated workflow backs up technical configuration by default. Confirmed full mode can additionally include triggers, declared primitive UI preferences, roster/pet corrections, learned vocabulary and PvP reminder names. Logs and OCR images are excluded. Hash/schema/size checks precede writes; failed writes roll back earlier preference replacements. | [Backup](../mnmparse/backup.py), ProfileTools/readiness regressions. Restore keeps the active local data root, refreshes models and always returns to unconfirmed Carebear Mode. Carebear archives use generic profile labels and default export templates. |
-| Coordination and atomic writes | Installation and profile guards activate the existing instance; independent installations with independent profiles remain possible. Configuration/preference/report writes use unique, fsynced temporary files and atomic replacement. Verified inactive executable copies are removed at startup and normal exits schedule hidden, verified cleanup; a shared launch mutex protects the copy/spawn gap. | [Launch identity](../mnmparse/app/launch_identity.py), [Storage](../mnmparse/storage.py). Concurrent-save, conflicting-install/profile, real post-exit helper and mapped-image preservation fixtures pass. Unknown files and running copies remain intact. |
-| Capture-quality records | Encounters and sessions retain actual observed pause, occlusion, scroll-back and unavailable-frame intervals plus estimated amounts/timestamps and unreadable-message facts, including recovered interval endpoints. | [Engine/models](../mnmparse/app/engine.py), archive/resilience regressions. No invented confidence percentage or estimate of unseen lost messages is supplied. |
-| History and responsiveness | Revision/roster/vocabulary-aware caches reuse encounter/session content while idle rates retime. Imports run off the GUI thread with progress and cooperative cancellation; session visibility commits last. SQLite preserves archived correction evidence and recovery state. Recent fight/detail previews are bounded, older fights load in pages, and full exports rebuild off the GUI thread. Archive edits remain scoped to their original session even when timestamp keys match another session; browsing prevents live updates overwriting an archived selection. Interrupted imports are cleaned on archive startup. | [Models](../mnmparse/app/models.py), [Session](../mnmparse/session.py), [Archive](../mnmparse/session_archive.py). Defaults: 100 recent fights, 200 session detail entries, 30-day stale-session retention on capture startup; the active session is protected. |
-| Maps | Unchanged remote SHA1 checks reuse valid cached map bytes; bounded responses reject oversized/truncated downloads. Image decoding now emits worker-created QImages; QPixmaps stay on the GUI thread. Startup map updates remain opt-in. | [Maps](../mnmparse/maps.py), [Map overlay](../mnmparse/app/map_overlay.py), map/readiness regressions. Full-resolution decoded image memory remains a separate concern below. |
-| Update recovery | Startup success requires a matching token/version acknowledgement after initialization. Results are surfaced once; failed boot/swap can restore the previous application. Recovery validates owned, complete backups and preserves an older complete backup when the latest rollback leaves an empty directory. Only owned staging/backups are pruned; live leases and the recovery candidate are protected. | [Updater](../mnmparse/app/app_updates.py). Disposable PowerShell tests verify acknowledged success and failed-boot rollback while preserving config/triggers/logs. Actual newly frozen update behavior remains to be tested. |
-| Distribution | Embedded version/commit/dirty provenance must match frozen and extracted smoke reports. Packaging verifies the temporary ZIP before replacing a previous verified artifact. Windows CI repeats regressions, clean freeze and extracted startup/checksum/layout gates. Portable ZIP distribution remains supported. | [Build](../build_exe.ps1), [spec](../mnmparser.spec), [packager](../scripts/package_release.py), [workflow](../.github/workflows/windows-release-gates.yml). Local candidate validation passed both frozen and extracted smoke checks. Publication uses a clean build of the merged release commit. |
+| Capture lifecycle | Nonblocking Stop retains worker ownership; apply/restart and quit wait for completion. A stopping worker prevents a second capture worker. | [Engine](../mnmparse/app/engine.py), [Capture](../mnmparse/capture.py), synthetic stalled-worker regressions. Live recovery remains a gameplay check. |
+| Triggers | Regex deadlines, matching budgets, input limits and quarantine cover live matching and previews. Invalid stores preserve existing definitions; atomic saves and explicit flush cover immediate quit. Names, patterns, captured values, labels, speech, custom sounds and sharing work in either mode. | [Triggers](../mnmparse/triggers.py), [Runtime](../mnmparse/app/triggers_runtime.py), authored-settings and trigger regressions. Imported timers require review before use. |
+| Carebear performance views | Fresh and unconfirmed legacy preferences start in Carebear. Own values and eligible group averages replace individual groupmate performance across meters, Session, history, overlays and performance exports. | [Projection policy](../mnmparse/privacy.py), Carebear/export regressions. Feed text, trigger data and ordinary tools remain available. |
+| Setup and help | Character/mode, crop/OCR, then Revenge List, Display map, Auto attack bar and Copy to clipboard after fight. Successful OCR enables Continue. Back preserves choices; Cancel preserves current preferences. | [Setup](../mnmparse/app/setup_wizard.py). Local frame/OCR remain visible in both modes; setup clears its frame on close, including late worker results. Help includes a labeled demo that cannot export fictional data. |
+| Profiles and backups | Named profiles preserve character/source/crop/OCR/rate/log settings. Both modes can back up full preferences, triggers, corrections, spellings and Revenge entries. Logs/images are excluded. Restore validates contents, rolls back failed writes, retains the local data root and returns to Carebear. | [Profiles](../mnmparse/profiles.py), [Backup](../mnmparse/backup.py), preference regressions. Apply/restore requires stopped capture. |
+| Diagnostics | OCR Diagnosis retains settings, timing, captured messages and available crop images in either mode. Saving a report does not upload it. | [Diagnostics](../mnmparse/diagnostics.py), synthetic OCR report regressions. Uncaptured lines cannot be recovered. |
+| History and responsiveness | Cached projections avoid repeated idle aggregation. Imports run off the GUI thread with progress/cancellation. SQLite archives preserve correction evidence; older fights page in and full exports rebuild off-thread. | [Models](../mnmparse/app/models.py), [Session](../mnmparse/session.py), [Archive](../mnmparse/session_archive.py). Interrupted imports are discarded; archive retention does not prune raw logs. |
+| Maps and zone recovery | Valid remote hashes reuse unchanged cached maps; downloads are bounded and images decode off-thread. Known-zone entry lines and complete local `/who` summaries identify the current zone; restored state updates map/meters. | [Maps](../mnmparse/maps.py), [Engine](../mnmparse/app/engine.py), zone-navigation regressions. Incomplete, unknown-zone and game-wide summaries are ignored; `/who` does not end an active fight. Manual selection remains available. |
+| Coordination and executable cleanup | Installation/profile guards activate existing instances. Atomic writes use unique temporary files. Startup and post-exit helpers remove verified inactive executable copies; launch coordination preserves running copies and unknown files. | [Launch identity](../mnmparse/app/launch_identity.py), [Storage](../mnmparse/storage.py), disposable helper tests. Saved user data is preserved. |
+| Update and distribution | Initialization acknowledges matching token/version; failed update boot can restore a validated previous application. Version/commit/dirty provenance must match frozen and extracted smoke reports. Packaging verifies ZIPs before replacing verified artifacts. | [Updater](../mnmparse/app/app_updates.py), [Build](../build_exe.ps1), [Windows workflow](../.github/workflows/windows-release-gates.yml). Published assets require a clean committed build. |
 
-## Exact new mode and Revenge List behavior
+## Mode and Revenge List behavior
 
-The 1.0.1 update preserves actual own damage percentages and uses the remaining percentage on the protected group row. Personal rebuff titles, manual countdown names and public starter titles remain useful in Carebear Mode; captured trigger text, groups and other player details remain withheld.
+**Morality Adjustment** sits below Map updates. The flower/flame top-bar label opens it.
+The red lever uses a sad emoji and requires a drag across most of its travel to request
+Elitist mode. Individual performance remains filtered until the pledge and confirmation are
+accepted. Cancel, Escape and closing keep Carebear. Returning to Carebear immediately removes
+individual performance details; normal triggers and other tools keep working. Mute and
+reduced animations apply to the switch cue.
 
-**Morality Adjustment** appears below Map updates. The top bar shows **🌼 Carebear Mode 🌼** or **🔥 Elitist Scumbag Mode 🔥** with animated flames and opens that settings section. The red handle uses a sad emoji. The red mechanical lever requires a physical drag from the handle across most of its travel; a click or short drag cannot opt out. The brief animation/siren honors reduced motion and mute; data remains Carebear until the pledge checkbox and explicit confirmation are accepted. Cancel, Escape and closing keep Carebear active. Returning to Carebear applies immediately and clears stale sensitive presentation and queued output.
+Own pets are folded into your performance; Carebear provides self-only pet assignment and
+**My pets** controls to clear your links. A known group needs at least three eligible members
+for group averages. Damage/DPS additionally requires three active contributors with positive
+damage at least equal to their healing; Healing/HPS requires three with positive healing at
+least equal to their damage. Positive ties count in both; inactive members count in neither.
+Smaller role cohorts show **—** and omit that average from exports. Other non-combat averages
+retain their existing group rules. Your damage percentage remains your actual share of the
+group total; the group row shows the remaining percentage independently of its average.
+Unknown self identity hides performance details until configured. Rounding and cohort rules
+reduce simple inference but do not guarantee mathematical anonymity. Performance clipboard,
+CSV/JSON/text, automatic output and custom templates use the same projection.
 
-Carebear keeps own values and owned pets folded into self, plus rounded group averages only for a known group of at least three. Each damage/DPS average needs three active damage contributors whose damage is at least their healing; each healing/HPS average needs three active healing contributors whose healing is at least their damage. Positive ties count in both; inactive members count in neither. Smaller role cohorts show — and omit that average from exports. Other non-combat group averages retain their existing group rules. It omits peer rows, rankings, individual drilldowns and unsafe source text. Unknown self identity fails closed. Small/unknown groups receive self-only presentation. Rounding and cohort rules reduce obvious inference; they are not a mathematical anonymity guarantee. The same policy applies to every app export, including automatic output and custom templates.
+**Revenge List** is off by default and works in either mode when enabled. Disabling it hides
+its panel, overlay tab and pop-out and closes pending Add dialogs. Automatic detection needs
+known self identity and offers a right-hand **+** once per attacker per session for **30
+seconds**. It accepts ASCII-letter names without spaces/symbols and excludes articles, self
+and second-person aliases. Named NPCs may still qualify and can be ignored. Manual Add accepts
+arbitrary nonempty names or labels; Add/Remove and Pop out remain usable across mode changes.
 
-**Revenge List** is off by default. Its Settings switch hides the overlay Revenge tab, attacker/list panel and open pop-out when disabled, and returns an already selected Revenge tab to a normal meter. It is a PvP opt-in reminder, not a teammate comparison feature.
+The main list, overlay and single passive pop-out share newest-first activity ordering.
+Default filters are **30 days / 100 entries**; **All** removes each display limit without
+deleting saved entries. Names and addition/latest-activity dates persist; chat and damage
+are not stored in the list. Legacy undated entries remain visible until activity supplies a
+date. Repeated attacks update saved activity through coalesced writes, flushed on quit and
+full backup. A new session resets prompt eligibility without deleting saved names.
 
-When enabled in confirmed full mode with known self identity, an eligible attacker gets a **+** prompt once per attacker per session. Prompts expire after **30 seconds**. Saving is explicit; the persistent list stores names and addition/latest-activity times, never chat text or damage. The main list and overlay offer **Pop out**, opening one independent passive window with synchronized Add/Remove controls. All three surfaces show newest activity first, with configurable **last days** and **entries shown** limits (defaults **30 days / 100 entries**, **All** for either). Limits only filter presentation. Name-only legacy entries keep unknown dates and remain visible until new activity supplies a date. Repeated attacks on saved players update activity through coalesced writes, flushed on quit and full backup. Manual Add and per-name Remove are available, including a compact overlay Add dialog. A new session resets prompt eligibility without deleting saved names. Carebear hides saved names and prompts, clears queued candidates and closes the manual identity dialog. Automatic prompts require ASCII letters without spaces/symbols and exclude articles, self and second-person aliases. Manual additions accept arbitrary nonempty names or labels, including spaces, symbols and Unicode. This is a heuristic: a named NPC can resemble a player, so users must ignore inappropriate prompts. Enabling this switch does not bypass Morality Adjustment.
+## Verification and remaining trials
 
-## Verification completed and pending
+Focused offscreen regressions cover authored trigger settings, original captured matches,
+sharing/sender details, Revenge availability across modes, local frame/OCR access, setup
+cleanup and disposable startup. Performance projection tests cover role cohorts, individual
+row filtering, actual own damage shares and exports. Zone fixtures cover restored state,
+initial OCR/backlog evidence and current local `/who` corrections without replaying old
+combat or triggers. Release gates additionally require clean frozen/extracted startup and
+matching provenance; a source UI check alone does not establish frozen gameplay behavior.
 
-The local source regression run after executable cleanup completed with **1,266 tests run, 10 native UI checks skipped, and no failures** in 123.924 seconds. Coverage includes the actual drag/pledge flow, all four setup options through the real App, crop validation, preview cleanup and Carebear protections. Tests cover cancellation, failed saves, current map/bar preferences and persisting the bar choice when the overlay is unavailable. Release-readiness checks include concurrent atomic writes, validated backup/rollback, both single-instance guards, worker-side map decode, provenance mismatch rejection, startup acknowledgement and real disposable PowerShell success/failure helpers. Executable cleanup tests verify post-exit removal, currently mapped image preservation, launch/cleanup coordination and malformed/modified/linked-file rejection. Real worker-emission tests cover GUI-thread Revenge delivery; stale queued attacks cannot reappear after opt-in or leaving Carebear.
+Local automated UI work uses **Qt offscreen**, never live capture or map downloads.
+Native probes require explicit `PNUT_NATIVE_UI_TESTS=1` and isolated cleanup. The 1.0.2 build
+path is `dist/publish/v1.0.2/PNUT M&M/PNUT M&M.exe`; the portable archive is
+`releases/PNUT-MnM-1.0.2-windows.zip`. Published files are linked from
+[GitHub Releases](https://github.com/Maergoth/pnut-mnm/releases). Use the
+[local checklist](LOCAL_V1_TEST.md) for the actual build under test.
 
-Local automated UI work uses **Qt offscreen**. Native Windows visibility/restart probes require explicit `PNUT_NATIVE_UI_TESTS=1`, use isolated desktops, have emergency exit timers and guaranteed subprocess cleanup. The isolated Windows CI runner opts in; ordinary local suites skip them. Build and extracted smoke force offscreen and never start capture or map downloads. Native probes were stopped after unwanted map windows appeared during a prior test run; their callback signatures and cleanup were corrected. No further visible UI checks are part of this local automation.
+Remaining human/environment trials:
 
-**The separate local candidate build and portable ZIP passed startup validation and were tested locally before publication was authorized.** Candidate checks used matching dirty Development provenance; published assets require a clean committed build. The Windows workflow repeats regressions, isolated native probes, clean freezing and extracted ZIP validation. Offscreen startup checks cover imports, window construction and output policy; they do not establish live gameplay behavior. Use the [local test checklist](LOCAL_V1_TEST.md).
+1. A fresh supported Windows installation without development Python/Qt; frozen update and failed-boot recovery; audio/speech devices.
+2. Real crop/OCR accuracy, lost-game recovery, slow Stop/Start, rapid/wrapped chat, scroll/occlusion, group/pet changes, named NPCs and healing/CC/loot totals.
+3. Lever/pledge cancellation, mute/reduced motion, individual performance protection in every export, usable triggers/tools through mode changes and Revenge default-off behavior.
+4. Long sessions/large imports, full-size maps, network/disk failures, DPI/mixed monitors, tray/overlay restoration and assistive technology. Establish latency/memory budgets on representative machines; an eight-hour soak remains proposed.
 
-The user-trial candidate is retained at `dist/candidates/setup-options-20261010/PNUT M&M/PNUT M&M.exe` with its portable ZIP under `releases`. Candidate ZIP SHA256: `f099b2b824c3324a74c0b511899fb9d861ac93a8f8c7d3eaa483da005a1b5e6f`. This dirty candidate archive is not a release asset. Published files are linked from [GitHub Releases](https://github.com/Maergoth/pnut-mnm/releases).
-
-Setup selects ModernStyle and themes its header, page and footer; rendered contrast and smaller-screen navigation regressions cover the dialog. Legacy saved character/crop profiles without the new setup flag skip first-run calibration. The latest frozen and extracted ZIP checks passed, including the default-on setup slider, step 2 OCR gate, step 3 common options/defaults/staging, removed crop checkbox, visible calibration pixels, protected frame access and clearing on close. The preview uses a fresh separate configuration, while normal preferences and previous candidate folders are preserved.
-
-Remaining human and environment validation:
-
-1. **Environment coverage:** the local user trial is complete for publication approval. A fresh supported Windows installation without development Python/Qt, full frozen update/failed-boot recovery and audio/speech device coverage remain additional trials. Embedded version/provenance and extracted ZIP startup are automated release checks.
-2. **Gameplay coverage:** setup, crop/OCR readability, lost-game recovery, slow Stop/Start and mode changes during live capture. Check labeled rapid/wrapped chat, scroll/occlusion, group/pet changes, named NPCs, healing/CC/loot and estimates against expected totals. Invisible lost lines cannot be proven complete from the resulting log.
-3. **Privacy/interaction coverage:** physical lever travel, keyboard pledge/cancel/Escape, siren/mute/reduced motion, every export channel, existing selected dialogs and queued speech; Revenge prompts/manual controls/default-off hiding through mode and session changes.
-4. **Resource/usability coverage:** representative long sessions and large imports, full-size maps, failed network/disk writes, DPI/resolution and mixed monitors, tray/map/overlay restoration, keyboard-only navigation and assistive technology. Define p50/p95 latency and memory budgets from representative machines. An eight-hour soak is proposed, not completed.
-
-Known follow-ups beyond those trials: pipeline timings have bounded 256-sample p50/p95 histories, but no process working-set metric yet. Interrupted imports are discarded on archive startup and cooperative cancellation removes staged records. Archive retention does not prune separately captured raw log files. Very large maps still allocate full-resolution image surfaces; preview levels/tiles need a separate design if measured memory warrants them.
+Pipeline timings have bounded p50/p95 histories, but no process working-set metric yet.
+Large maps still allocate full-resolution image surfaces; preview levels or tiles need a
+separate design if measured memory warrants them. Captured raw logs remain outside archive
+retention, and unseen lost lines cannot be proven complete from the resulting log.
 
 ## Original performance evidence and its limits
 

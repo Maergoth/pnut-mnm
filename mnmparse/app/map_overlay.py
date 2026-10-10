@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from mnmparse.app import theme
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
-from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title
+from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title, zone_from_who
 
 log = logging.getLogger(__name__)
 
@@ -358,9 +358,16 @@ class MapOverlay(QWidget):
         self._position_chrome()
         self.update()
 
-    def on_message(self, _msg: Any, event: Any) -> None:
+    def on_message(self, msg: Any, event: Any) -> None:
         if event is not None and getattr(event, "kind", "") == "zone" and getattr(event, "target", ""):
             self.set_zone(event.target)
+            return
+        # Capture can begin long after the entry line has scrolled away. A local
+        # /who summary still names the current zone; it must replace a stale map
+        # selection even though it is correctly classified as personal chat.
+        zone = zone_from_who(getattr(event, "text", "") or getattr(msg, "text", ""))
+        if zone:
+            self.set_zone(zone)
 
     def set_zone(self, zone: str) -> None:
         title = zone_title(zone)

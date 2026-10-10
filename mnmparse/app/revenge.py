@@ -21,7 +21,6 @@ from mnmparse.app.widgets import ElidedLabel
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
 from mnmparse.grammar import is_you
-from mnmparse.privacy import casual_enabled
 from mnmparse.storage import atomic_json
 
 PROMPT_SECONDS = 30.0
@@ -134,7 +133,7 @@ class RevengeController(QObject):
 
     @property
     def available(self) -> bool:
-        return self.enabled and not casual_enabled(self._cfg)
+        return self.enabled
 
     @property
     def pending_candidates(self) -> tuple[AttackerCandidate, ...]:
@@ -171,7 +170,7 @@ class RevengeController(QObject):
         self._cfg = cfg
         if self.available and not self._presentation_available:
             # Engine messages can already be queued on the GUI thread. Older
-            # hidden attacks must not appear when the opt-in or mode changes.
+            # disabled attacks must not appear when the feature is enabled.
             self._delivery_cutoff = self._clock()
         self._presentation_available = self.available
         if self.available and not self._display_timer.isActive():
@@ -179,7 +178,7 @@ class RevengeController(QObject):
         elif not self.available:
             self._display_timer.stop()
         if not self.available:
-            # A hidden queued prompt must not appear after a later mode change.
+            # A disabled prompt must not appear when the feature is re-enabled.
             self._pending.clear()
             self._timer.stop()
             self._activity_refresh.stop()
@@ -399,8 +398,6 @@ class RevengeController(QObject):
 def _hint(controller: RevengeController) -> str:
     if not controller.enabled:
         return "Revenge is a PvP-only feature, off by default. Enable it in Options."
-    if not controller.available:
-        return "Carebear Mode hides revenge names and attacker prompts. Change Morality Adjustment in Settings to use this PvP feature."
     return ""
 
 

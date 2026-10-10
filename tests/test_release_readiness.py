@@ -136,19 +136,16 @@ class BackupTests(unittest.TestCase):
         data = dataclasses.asdict(Config(casual_mode=False, casual_mode_confirmed=True))
         storage.atomic_json(self.config, data)
 
-    def test_casual_backup_omits_sensitive_preferences_and_resets_export_templates(self):
+    def test_basic_backup_omits_additional_preferences_and_keeps_authored_templates(self):
         cfg = dataclasses.asdict(Config(export_line="Teammate identity {damage}"))
         storage.atomic_json(self.config, cfg)
         manifest = self.export()
         self.assertFalse(manifest["sensitive"])
         with zipfile.ZipFile(self.archive) as archive:
             self.assertEqual(set(archive.namelist()), {"manifest.json", "config.json"})
-            self.assertNotIn(b"Teammate", archive.read("config.json"))
+            self.assertEqual(json.loads(archive.read("config.json"))["export_line"], cfg["export_line"])
 
-    def test_full_backup_requires_confirmation_and_restore_always_starts_casual(self):
-        with self.assertRaises(backup.BackupError):
-            self.export(True)
-        self.full_mode()
+    def test_full_backup_available_in_carebear_and_restore_always_starts_carebear(self):
         manifest = self.export(True)
         self.assertEqual(set(manifest["files"]), {"config.json", "triggers.json", "settings.json", "party.json", "vocabulary.json", "revenge.json"})
         self.party.write_text("old")

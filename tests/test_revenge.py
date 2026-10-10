@@ -1,4 +1,4 @@
-"""PvP prompts require opt-in/full mode, expire once, and persist only on +."""
+"""PvP prompts require opt-in, expire once, and persist only on +."""
 from __future__ import annotations
 
 import json
@@ -67,14 +67,27 @@ class RevengeTests(unittest.TestCase):
         self.assertTrue(self.controller.observe(self.attack(target="You")))
         self.assertFalse(self.path.exists(), "Observing an attack must not persist a name")
 
-    def test_default_disabled_and_unconfirmed_full_mode_are_hidden(self):
+    def test_default_disabled_and_enabled_in_either_mode(self):
         self.controller.set_config(SimpleNamespace(player_name="Hero"))
         self.assertFalse(self.controller.observe(self.attack()))
         self.assertEqual(self.controller.pending_candidates, ())
         self.controller.set_config(SimpleNamespace(player_name="Hero", revenge_enabled=True,
                                                    casual_mode=False, casual_mode_confirmed=False))
+        self.assertTrue(self.controller.observe(self.attack()))
+        self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Bandit"])
+        self.controller.set_config(settings(casual=True))
+        self.assertTrue(self.controller.available)
+        self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Bandit"])
+
+    def test_only_automatic_detection_requires_own_player_identity(self):
+        cfg = settings(casual=True)
+        cfg.player_name = ""
+        self.controller.set_config(cfg)
+        self.assertTrue(self.controller.available)
         self.assertFalse(self.controller.observe(self.attack()))
-        self.assertEqual(self.controller.pending_candidates, ())
+        self.assertTrue(self.controller.save_attacker("Manual name"))
+        self.assertEqual(self.controller.saved_names, ("Manual name",))
+        self.assertTrue(self.controller.remove_saved("Manual name"))
 
     def test_once_per_attacker_per_session_with_thirty_second_expiry(self):
         self.assertTrue(self.controller.observe(self.attack()))
@@ -117,21 +130,22 @@ class RevengeTests(unittest.TestCase):
         self.assertEqual([c.name for c in self.controller.pending_candidates], ["Second"])
         self.assertTrue(self.controller.save_attacker("Second"))
 
-    def test_switching_casual_clears_pending_and_never_resurfaces_old_candidates(self):
+    def test_switching_modes_preserves_pending_saved_and_new_candidates(self):
         self.controller.observe(self.attack("First"))
         self.controller.save_attacker("First")
         self.controller.observe(self.attack("Second"))
         self.controller.set_config(settings(casual=True))
-        self.assertEqual(self.controller.pending_candidates, ())
-        self.assertEqual(self.controller.saved_names, ())
-        self.assertFalse(self.controller.observe(self.attack("Third")))
+        self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Second"])
+        self.assertEqual(self.controller.saved_names, ("First",))
+        self.assertTrue(self.controller.observe(self.attack("Third")))
         self.controller.set_config(settings())
         self.assertEqual(self.controller.saved_names, ("First",))
+        self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Second", "Third"])
         self.assertFalse(self.controller.observe(self.attack("Second")))
         self.assertFalse(self.controller.observe(self.attack("Third")))
         self.assertTrue(self.controller.observe(self.attack("Fourth")))
 
-    def test_widgets_plus_on_right_and_mode_change_removes_all_identity_text(self):
+    def test_widgets_plus_on_right_and_disabling_removes_all_identity_text(self):
         prompts, saved = RevengePrompts(self.controller), RevengeList(self.controller)
         self.widgets.extend((prompts, saved))
         self.controller.observe(self.attack("Bandit"))
@@ -141,6 +155,8 @@ class RevengeTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(self.controller.saved_names, ("Bandit",))
         self.controller.set_config(settings(casual=True))
+        self.assertEqual(set(saved._rows), {"Bandit"})
+        self.controller.set_config(settings(enabled=False, casual=True))
         self.app.processEvents()
         self.app.sendPostedEvents(None, 0)
         self.assertEqual(prompts._rows, {})
@@ -181,7 +197,7 @@ class RevengeTests(unittest.TestCase):
         self.assertTrue(observed_threads)
         self.assertEqual(set(observed_threads), {gui_thread})
 
-    def test_older_queued_attack_cannot_resurface_after_enabling_or_leaving_casual(self):
+    def test_older_queued_attack_cannot_resurface_after_enabling(self):
         from PySide6.QtCore import QObject, Signal
 
         class Feed(QObject):
@@ -189,24 +205,37 @@ class RevengeTests(unittest.TestCase):
 
         feed = Feed()
         feed.message.connect(self.controller.on_message)
-        for hidden in (settings(casual=True), settings(enabled=False)):
-            with self.subTest(hidden=hidden):
-                self.now = 100
-                self.controller.new_session()
-                self.controller.set_config(hidden)
-                attack = self.attack("Older")
-                worker = threading.Thread(target=lambda: feed.message.emit(None, attack))
-                worker.start()
-                worker.join(1)
-                self.assertFalse(worker.is_alive())
-                self.now = 101
-                self.controller.set_config(settings())
-                self.app.processEvents()
-                self.assertEqual(self.controller.pending_candidates, ())
-                self.now = 102
-                self.assertFalse(self.controller.observe(self.attack("Older")), "The hidden attack still counts for this session's once-per-attacker rule")
-                self.controller.on_message(None, self.attack("Newer"))
-                self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Newer"])
+        self.controller.set_config(settings(enabled=False, casual=True))
+        attack = self.attack("Older")
+        worker = threading.Thread(target=lambda: feed.message.emit(None, attack))
+        worker.start()
+        worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.now = 101
+        self.controller.set_config(settings(casual=True))
+        self.app.processEvents()
+        self.assertEqual(self.controller.pending_candidates, ())
+        self.now = 102
+        self.assertFalse(self.controller.observe(self.attack("Older")), "The disabled attack still counts for this session's once-per-attacker rule")
+        self.controller.on_message(None, self.attack("Newer"))
+        self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Newer"])
+
+    def test_queued_attack_is_delivered_when_switching_to_carebear(self):
+        from PySide6.QtCore import QObject, Signal
+
+        class Feed(QObject):
+            message = Signal(object, object)
+
+        feed = Feed()
+        feed.message.connect(self.controller.on_message)
+        worker = threading.Thread(target=lambda: feed.message.emit(None, self.attack("Bandit")))
+        worker.start()
+        worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.now = 101
+        self.controller.set_config(settings(casual=True))
+        self.app.processEvents()
+        self.assertEqual([entry.name for entry in self.controller.pending_candidates], ["Bandit"])
 
     def test_manual_entry_works_in_each_widget_without_pending_attack(self):
         first, second = RevengeList(self.controller), RevengeList(self.controller)
@@ -220,9 +249,13 @@ class RevengeTests(unittest.TestCase):
             self.assertEqual(widget.name_input.text(), "")
         self.assertEqual(self.controller.saved_names, ("Manualone", "Manualtwo"))
         self.controller.set_config(settings(casual=True))
+        self.assertFalse(first.name_input.isHidden())
+        self.assertTrue(self.controller.save_attacker("Manualthree"))
+        self.assertEqual(set(first._rows), {"Manualone", "Manualtwo", "Manualthree"})
+        self.controller.set_config(settings(enabled=False, casual=True))
         self.assertTrue(first.name_input.isHidden())
         self.assertFalse(first.add_button.isEnabled())
-        self.assertFalse(self.controller.save_attacker("Manualthree"))
+        self.assertFalse(self.controller.save_attacker("Manualfour"))
 
     def test_manual_names_accept_arbitrary_text_and_persist_in_both_schemas(self):
         names = ["a rat", "Hero", "A", "An", "The", "Éowyn 🦋", "D4rk-Name_", "<b>A&B</b>", "Line\nBreak"]
@@ -254,7 +287,7 @@ class RevengeTests(unittest.TestCase):
         self.assertEqual(label.textFormat(), Qt.TextFormat.PlainText)
         self.assertEqual(label.toolTip(), "<span>" + escape(name) + "</span>")
         widget.add_button.setFocus()
-        self.controller.set_config(settings(casual=True))
+        self.controller.set_config(settings(enabled=False, casual=True))
         self.assertEqual(label.text(), "")
         self.assertEqual(label.toolTip(), "")
 
@@ -284,7 +317,7 @@ class RevengeTests(unittest.TestCase):
         self.controller._load()
         self.assertEqual(set(self.controller.saved_names), {entry["name"] for entry in entries})
 
-    def test_compact_overlay_add_uses_focusable_dialog_and_scrubs_on_mode_change(self):
+    def test_compact_overlay_add_uses_focusable_dialog_and_scrubs_on_disable(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QLineEdit
@@ -305,6 +338,9 @@ class RevengeTests(unittest.TestCase):
         pending = widget._manual_dialog
         pending.setTextValue("Unconfirmedplayer")
         self.controller.set_config(settings(casual=True))
+        self.assertIs(widget._manual_dialog, pending)
+        self.assertEqual(pending.textValue(), "Unconfirmedplayer")
+        self.controller.set_config(settings(enabled=False, casual=True))
         self.assertIsNone(widget._manual_dialog)
         self.assertEqual(pending.textValue(), "")
         self.assertNotIn("Unconfirmedplayer", self.path.read_text())
@@ -476,6 +512,13 @@ class RevengeTests(unittest.TestCase):
         dialog.setTextValue("Unconfirmed")
         self.controller.set_config(settings(casual=True))
         self.app.processEvents()
+        self.assertIs(window.list._manual_dialog, dialog)
+        self.assertEqual(dialog.textValue(), "Unconfirmed")
+        for widget in (first, second, window.list):
+            self.assertEqual(set(widget._rows), {"Bandit"})
+        first.pop_out_button.click()
+        self.assertEqual(requests, [True, True, True])
+        self.controller.set_config(settings(enabled=False, casual=True))
         self.assertEqual(dialog.textValue(), "")
         self.assertIsNone(window.list._manual_dialog)
         for widget in (first, second, window):
@@ -483,8 +526,7 @@ class RevengeTests(unittest.TestCase):
                 self.assertNotIn("Bandit", label.text())
                 self.assertNotIn("Bandit", label.toolTip())
         first.pop_out_button.click()
-        self.assertEqual(requests, [True, True])
-        self.controller.set_config(settings(enabled=False))
+        self.assertEqual(requests, [True, True, True])
         self.assertTrue(window.isHidden())
         self.assertTrue(first.isHidden())
         self.assertTrue(second.isHidden())
