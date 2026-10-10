@@ -13,7 +13,8 @@ ability_hit) come before the looser ones (melee, cast, status).
 
 Name forms (see SPEC section 3):
 
-* player names are a single capitalised word (``Tovozen``), including the
+* player names and bare named NPCs use capitalised words, which may contain
+  internal apostrophes or hyphens (``Tovozen``, ``Tok'Nor``), including the
   pronoun forms ``You`` / ``Your`` / ``YOU``;
 * NPC names are an article followed by words, including internal capitals,
   hyphens and apostrophes (``a stumbling zombie``, ``a Mur'Hua scavenger``).
@@ -33,6 +34,7 @@ __all__ = [
     "KINDS",
     "YOU_TOKENS",
     "PLAYER",
+    "PLAYER_WORD",
     "NPC_WORD",
     "NPC",
     "NAME",
@@ -172,15 +174,19 @@ YOU_TOKENS: frozenset[str] = frozenset(
 # Building blocks
 # --------------------------------------------------------------------------
 
-PLAYER: str = r"[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}"
-"""A player name (one capitalised word, also You / Your / YOU) or a named NPC of up
-to three capitalised words (``Toilmaster Verith``)."""
-
-_NPC_STOP: str = r"(?!(?:with|for|but|on|to|from|is|are|has|have|was|were)\b)"
 NPC_WORD: str = r"[A-Za-z][A-Za-z\-]*(?:'(?!s\b)[A-Za-z][A-Za-z\-]*)*"
 """One NPC-name word, including ``Mur'Hua`` or ``MurHua``. A terminal ``'s``
 belongs to the surrounding possessive or pet rule, not to the word itself."""
 
+PLAYER_WORD: str = rf"(?=[A-Z]){NPC_WORD}"
+"""A capitalised name word using the same internal punctuation as article-led NPCs."""
+
+PLAYER: str = rf"{PLAYER_WORD}(?:\s+{PLAYER_WORD}){{0,2}}"
+"""A player name (also You / Your / YOU) or a bare named NPC of up to three
+capitalised words (``Tok'Nor``, ``Toilmaster Verith``). Internal apostrophes are
+part of the name; a terminal ``'s`` belongs to a possessive rule."""
+
+_NPC_STOP: str = r"(?!(?:with|for|but|on|to|from|is|are|has|have|was|were)\b)"
 NPC: str = rf"(?:a|an|the)\s+{NPC_WORD}(?:\s+{_NPC_STOP}{NPC_WORD})*(?:'s\s+pet)?"
 """An NPC name: a lowercase article followed by one or more words, which may be
 proper nouns (``a Wyrmsbane crusader``, ``a Mur'Hua scavenger``).  The words
@@ -476,9 +482,12 @@ MESSAGE_START_RX = re.compile(
     r"(?:You|Your)\b"
     r"|--"
     r"|(?:Starting|Stopped)\s+(?:to\s+)?attack"
-    r"|[A-Z][a-z]{2,}'s\s+[A-Z]"
-    r"|[A-Z][a-z]{2,}\s+(?:hits|slashes|crushes|pierces|punches|kicks|bashes|bites|claws|"
-    r"begins|tries|has|have|loots|crafts|heals|is|looks|staggers|casts)\b"
+    # Keep bare starts to one word: a clipped "Damage Tok'Nor's ..." must not
+    # invent a two-word actor while splitting fused messages.
+    rf"|{PLAYER_WORD}'s\s+[A-Z]"
+    rf"|{PLAYER_WORD}\s+(?:hits|slashes|crushes|pierces|punches|kicks|bashes|bites|claws|"
+    r"mauls|stings|begins|tries|has|have|loots|crafts|heals|is|looks|loses|staggers|"
+    r"casts|resists|awakens)\b"
     rf"|(?:a|an|the)\s+(?:{NPC_WORD}\s+){{1,4}}?(?:hits|slashes|crushes|pierces|punches|kicks|"
     r"bashes|bites|claws|mauls|stings|begins|tries|has|is|looks|loses|staggers|resists|awakens)\b"
     rf"|(?:a|an|the)\s+(?:{NPC_WORD}\s+){{0,3}}?{NPC_WORD}'s\s+[A-Z]"

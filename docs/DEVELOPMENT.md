@@ -274,8 +274,10 @@ re-read from its content on every layout request (`MainWindow._sync_minimum_size
 
 `grammar.py` holds every line shape observed, each rule with a verbatim example, and
 `tests/test_parser.py` checks them.
-Short version of the families (names: players are capitalized words, NPCs are article plus
-words that may contain capitals, hyphens and internal apostrophes, "You/Your/YOU" is the viewer):
+Short version of the families (names: players and bare named NPCs use capitalized words,
+including internal apostrophes and hyphens; article-led NPCs may also use lowercase words;
+"You/Your/YOU" is the viewer). Message-start detection keeps bare names to one word so a
+clipped damage type cannot become part of the following actor's name.
 
 - Melee: `X crushes Y [with their bow] for N points of damage[ (2 absorbed)][ (Block 6)].`,
   `You try to crush Y, but miss!`, `X tries to bite YOU, but YOU dodge!` (dodge, parry,
