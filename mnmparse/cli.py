@@ -112,12 +112,16 @@ def _note_encounter(stats: Stats, seen: list[Encounter]) -> None:
 def _render_encounter(stats: Stats, enc: Encounter, cfg: Config | None = None) -> str:
     """CLI output boundary: canonical numbers are projected before rendering."""
     from mnmparse.app.models import build_snapshot
-    from mnmparse.privacy import casual_enabled, project_encounter
+    from mnmparse.privacy import casual_enabled, metric_available, project_encounter
     if not casual_enabled(cfg):
         return stats.render(enc)
     snap = project_encounter(build_snapshot(stats, enc, getattr(cfg, "player_name", "")), cfg)
     lines = [f"{snap.label} - {snap.duration:.1f}s", "Actor                          Damage       DPS     Heals   Utility"]
-    lines.extend(f"{row.name:30} {row.damage:9g} {row.dps:9.2f} {row.heals:9g} {row.utility:9g}" for row in snap.rows)
+    for row in snap.rows:
+        damage = f"{row.damage:9g}" if metric_available(row, "damage") else f"{'—':>9}"
+        dps = f"{row.dps:9.2f}" if metric_available(row, "dps") else f"{'—':>9}"
+        heals = f"{row.heals:9g}" if metric_available(row, "heals") else f"{'—':>9}"
+        lines.append(f"{row.name:30} {damage} {dps} {heals} {row.utility:9g}")
     if not snap.rows:
         lines.append("No own-character data available.")
     return "\n".join(lines)
@@ -136,7 +140,7 @@ def _event_export(ev: Event, cfg: Config) -> dict | None:
     if text is None:
         return None
     # No raw text, target identities, skill strings or arbitrary parser outcomes
-    # cross the Casual export boundary.
+    # cross the Carebear export boundary.
     return dict(ts=ev.ts, kind=ev.kind, text=text, actor=cfg.player_name,
                 amount=ev.amount, estimated=ev.estimated, estimated_ts=ev.estimated_ts)
 
@@ -681,7 +685,7 @@ def cmd_parse(args: argparse.Namespace) -> int:
                     if not casual_enabled(cfg):
                         print(_format_event(ev))
         counts = Counter(result.counts)
-        summary = ("Casual Mode: own-character output" if casual_enabled(cfg) else
+        summary = ("Carebear Mode: own-character output" if casual_enabled(cfg) else
                    ", ".join(f"{kind}={cnt}" for kind, cnt in counts.most_common()))
         dropped = f" ({result.backlog_dropped} repeated at a restart left out)" if result.backlog_dropped else ""
         print(f"{result.path} ({result.kind}): {result.messages} lines{dropped} -> {summary or 'no events'}")
@@ -859,7 +863,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return True
             if record.levelno < logging.WARNING:
                 return False  # parser/tracker diagnostic arguments may include raw chat
-            record.msg = "PNUT reported a diagnostic warning; technical details are withheld in Casual Mode."
+            record.msg = "PNUT reported a diagnostic warning; technical details are withheld in Carebear Mode."
             record.args = ()
             record.exc_info = record.exc_text = record.stack_info = None
             return True

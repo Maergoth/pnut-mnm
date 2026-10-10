@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0 starts in Casual Mode:** your own information and rounded averages for known groups
+**v1.0.1 starts in Carebear Mode:** your own information and rounded averages for known groups
 of at least three, with other individuals hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -21,7 +21,7 @@ If you have any questions, or want to report people for being shitty with this t
 ## See PNUT in action
 
 App views with sample combat and timer data. The individual-detail examples show Elitist
-Scumbag Mode; new installs start in Casual Mode.
+Scumbag Mode; new installs start in Carebear Mode.
 
 **Combat and session tracking.** Review encounters, damage, healing, crowd control, and loot.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.0-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.1-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -180,9 +180,9 @@ The better the text looks, the better the OCR.
    bar choices preserve existing preferences. Back keeps your choices; Cancel changes nothing.
 
 Reopen setup from **About > Run setup…** when chat moves. Its captured image is a local
-calibration preview, cleared when setup closes, including canceled captures. Casual Mode
+calibration preview, cleared when setup closes, including canceled captures. Carebear Mode
 still protects combat views, OCR results and exports. Settings also provides crop coordinates
-and OCR options; its Casual preview hides chat pixels. Changes to capture/OCR settings take
+and OCR options; its Carebear preview hides chat pixels. Changes to capture/OCR settings take
 effect after applying them with capture stopped.
 
 Which chat window is read is decided by that rectangle alone: the app captures the whole game
@@ -203,17 +203,23 @@ the `mss` backend nothing is grabbed while the game window is gone.
 
 ### Using the app
 
-**Casual Mode and Morality Adjustment.** The flower mode button between capture and Overlay
-opens **Settings > Morality Adjustment**. Casual Mode hides other individuals across meters,
+**Carebear Mode and Morality Adjustment.** The flower mode button between capture and Overlay
+opens **Settings > Morality Adjustment**. Carebear Mode hides other individuals across meters,
 Session, Feed, history, overlays, tooltips, clipboard, file exports and support reports.
 Small or unknown groups show only your information. Unknown character identity hides details
 until your name is configured. Your assigned pets are folded into your own values.
+Damage/DPS averages need at least three active damage contributors whose damage is at least
+their healing. Healing/HPS averages need at least three active healing contributors whose
+healing is at least their damage. Positive ties count in both; inactive members count in
+neither. A role with too few contributors shows **—** and has no exported average.
+Your damage percentage is your actual share of the group total; the group row shows the
+remaining share, independently of its displayed damage average.
 
 To request **Elitist Scumbag Mode**, drag the red handle most of the way right. A click or
-short drag keeps Casual Mode. The confirmation requires the promise that you
+short drag keeps Carebear Mode. The confirmation requires the promise that you
 "will not use it to shit on their teammates because video games are not difficult enough
-to be an asshole." Cancel, Escape or closing the dialog keeps Casual Mode. Returning to
-Casual applies immediately and clears stale details and queued speech. Mute and reduced
+to be an asshole." Cancel, Escape or closing the dialog keeps Carebear Mode. Returning to
+Carebear applies immediately and clears stale details and queued speech. Mute and reduced
 animations apply to the brief switch cue. Existing raw local logs and earlier external
 copies are not erased. The individual breakdowns described below are available in confirmed
 Elitist mode.
@@ -234,7 +240,7 @@ minutes).
 
 For troubleshooting, use **Settings > Status > OCR Diagnosis** to save a ZIP report.
 It records capture/OCR settings, timing, crop dimensions, language, screen size and DPI.
-Casual reports omit images and raw chat; confirmed Elitist reports may include recent
+Carebear reports omit images and raw chat; confirmed Elitist reports may include recent
 messages and a fresh crop image. Saving does not upload or send anything. Lines that scrolled
 past without being captured cannot be recovered.
 
@@ -272,7 +278,7 @@ past without being captured cannot be recovered.
   gross amount you looted as a detail. Coin is shown as platinum/gold/silver/copper with
   100 copper to a silver, 100 silver to a gold and 100 gold to a platinum. Export writes
   JSON under `logs\exports\`.
-- **Feed:** readable captured events, colored by kind, with filter chips and search. Casual
+- **Feed:** readable captured events, colored by kind, with filter chips and search. Carebear
   Mode shows safe own-character text and withholds other source lines.
 - **Settings:** the Status section, player name, capture and OCR options, crop calibration,
   overlay defaults, encounter timeout ("Timeout without damage"), **Dummy Fix**, whether to
@@ -283,13 +289,13 @@ past without being captured cannot be recovered.
 **Previous sessions and imports.** The Session source selector opens locally saved runs;
 **Resume selected session** requires capture stopped. Live pages through older encounters.
 Log imports run in the background and can be canceled; a canceled import is not added.
-Casual Mode also protects historical and imported views and exports.
+Carebear Mode also protects historical and imported views and exports.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring
-a backup. Casual backups contain technical preferences with generic profile names; confirmed
+a backup. Carebear backups contain technical preferences with generic profile names; confirmed
 Elitist mode can include full preferences, triggers, corrections, learned spellings and
-Revenge List entries. Logs and images are excluded. Restore always returns to Casual Mode
+Revenge List entries. Logs and images are excluded. Restore always returns to Carebear Mode
 and keeps the current local log folder.
 
 The **overlay** has tabs Overview, Damage, Healing, Taken, Session and Feed, plus Revenge
@@ -404,7 +410,7 @@ is only as good as the chat timestamps (about a sixth of a second).
 
 **Copy a fight to the clipboard.** Automatic copy is **off by default**. Enable **Copy to
 clipboard after fight** during setup, or **Settings > Export > Copy each finished fight**,
-to copy a summary when your group's fight ends. Casual copies contain only your values and
+to copy a summary when your group's fight ends. Carebear copies contain only your values and
 eligible group averages, including with custom templates. A confirmed Elitist copy can show
 individual details, for example:
 
@@ -465,8 +471,10 @@ Use `III` in both fields for a separate rank III trigger, or remove ` II` for th
 The named capture `(?P<damage>\d+)` supplies `{damage}`; matching only the spell name does
 not capture a number. **Start a timer** can stay off when you only want the fading popup.
 
-Casual Mode keeps matching internally, but displays generic timer labels, protects speech,
-silences custom sound files and hides custom definitions, captured suggestions and sharing.
+Carebear Mode keeps personal rebuff titles, manually started timer names and bundled starter
+titles visible. Other timer labels stay generic, and captured chat and regex values stay hidden.
+It protects speech, silences custom sound files and hides custom definitions, captured
+suggestions and sharing.
 The editing and sharing walkthrough below applies to confirmed Elitist mode. Expensive
 regular expressions are stopped and disabled rather than freezing capture or the editor.
 
@@ -518,7 +526,7 @@ overlay's bottom edge, double-click it, or right-click > Snap to overlay); the a
 then docks under the overlay directly.
 
 **Revenge List.** This optional PvP reminder is **off by default**; enable **Revenge List**
-in setup or Settings. Confirmed Elitist mode shows its names; Casual Mode hides names and
+in setup or Settings. Confirmed Elitist mode shows its names; Carebear Mode hides names and
 attacker prompts. Disabling the option hides its panel, overlay tab and pop-out window.
 
 An incoming attack on your character can show a **+** prompt once per attacker per session,

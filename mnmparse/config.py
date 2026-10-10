@@ -257,7 +257,7 @@ def _apply_overrides(cfg: Config, data: dict[str, Any], source: str) -> Config:
         except (TypeError, ValueError) as exc:
             log.warning("%s: bad value for %r (%s); keeping default %r", source, key, exc, default)
     merged = dataclasses.replace(cfg, **updates)
-    # Old profiles and imported preferences never silently opt out of Casual Mode.
+    # Old profiles and imported preferences never silently opt out of Carebear Mode.
     if not merged.casual_mode and not merged.casual_mode_confirmed:
         merged.casual_mode = True
     if merged.casual_mode:

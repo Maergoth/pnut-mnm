@@ -139,7 +139,7 @@ def encode_trigger(trigger: Trigger) -> str:
 def encode_visible_trigger(trigger: Trigger, *, cfg: object = None) -> str:
     """Fail closed before encoding raw definitions for any presentation caller."""
     if safe_trigger_definition(trigger, cfg) is None:
-        raise TriggerExchangeError("Casual Mode hides timer definitions; sharing is unavailable.")
+        raise TriggerExchangeError("Carebear Mode hides timer definitions; sharing is unavailable.")
     return encode_trigger(trigger)
 
 

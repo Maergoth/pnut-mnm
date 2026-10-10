@@ -27,7 +27,7 @@ def _probe(root: Path):
         app = App([])
     app.bootstrap(cfg, config_path=config_path)
     assert not any(isinstance(page, _MissingPage) for page in app.window._pages.values())
-    assert "Casual Mode" in app.window._mode_button.text()
+    assert "Carebear Mode" in app.window._mode_button.text()
     assert not app.triggers.store.path.samefile(Path(__file__).parents[1] / "triggers.json") if (Path(__file__).parents[1] / "triggers.json").exists() else True
     assert app.triggers.store.path.resolve() == (root / "triggers.json").resolve()
     assert "revenge" not in dict(app.overlay._tabs.visible_tabs())

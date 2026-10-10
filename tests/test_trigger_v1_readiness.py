@@ -199,13 +199,13 @@ class TriggerPresentationTests(unittest.TestCase):
         self.assertEqual(self.runner.audio._speech_queue, [])
         self.assertEqual(self.runner.board.timers[0].label, "Timer")
 
-    def test_casual_file_action_is_silent_and_manual_timer_name_is_hidden(self):
+    def test_casual_file_action_is_silent_and_manual_timer_keeps_its_authored_name(self):
         self.trigger.action = "file"
         self.trigger.file = "Peer99.wav"
         self.runner.observe("Peer99 hits for 17", now=10)
         self.assertEqual(self.runner.audio.run.call_args.args[0], "none")
         self.assertEqual(self.runner.audio.run.call_args.kwargs["file"], "")
-        self.assertEqual(self.runner.start_one_time_timer("Peer99", 10).label, "Timer")
+        self.assertEqual(self.runner.start_one_time_timer("Peer99", 10).label, "Peer99")
 
     def test_muting_survives_save_and_unmute_restores_master(self):
         self.store.volume = 37
@@ -250,7 +250,7 @@ class TriggerPresentationTests(unittest.TestCase):
         with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=AssertionError("Export chooser opened")):
             page._on_export()
         page._on_export_chat()
-        self.assertIn("Casual Mode", page.sharing_status.text())
+        self.assertIn("Carebear Mode", page.sharing_status.text())
         self.assertIsNone(page._chat_export_dialog)
 
     def test_export_rechecks_policy_after_nested_chooser(self):
@@ -264,7 +264,7 @@ class TriggerPresentationTests(unittest.TestCase):
         with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=choose):
             page._on_export()
         self.assertFalse(destination.exists())
-        self.assertIn("Casual Mode", page.sharing_status.text())
+        self.assertIn("Carebear Mode", page.sharing_status.text())
         self.assertNotIn("Peer99", page.sharing_status.text())
 
     def test_presentation_sharing_helpers_fail_closed_without_confirmed_policy(self):
@@ -274,9 +274,9 @@ class TriggerPresentationTests(unittest.TestCase):
         destination = Path(self.tmp.name) / "shared.json"
         for cfg in (None, Config(), Config(casual_mode=False, casual_mode_confirmed=False)):
             with self.subTest(cfg=cfg):
-                with self.assertRaisesRegex(TriggerExchangeError, "Casual Mode"):
+                with self.assertRaisesRegex(TriggerExchangeError, "Carebear Mode"):
                     encode_visible_trigger(trigger, cfg=cfg)
-                with self.assertRaisesRegex(TriggerExchangeError, "Casual Mode"):
+                with self.assertRaisesRegex(TriggerExchangeError, "Carebear Mode"):
                     export_visible_trigger_file(destination, [trigger], cfg=cfg)
                 self.assertFalse(destination.exists())
         full = Config(casual_mode=False, casual_mode_confirmed=True)

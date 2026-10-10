@@ -122,7 +122,7 @@ def _exercise(report: dict[str, Any]) -> None:
             if image.isNull() or viewport.isNull() or any(max(color) >= 70 for color in rgb):
                 raise RuntimeError("Setup header, footer or content rendered white instead of the dark theme")
             if not setup.character_page.morality.switch.isChecked():
-                raise RuntimeError("The setup mode slider must default to Casual Mode")
+                raise RuntimeError("The setup mode slider must default to Carebear Mode")
             if setup.crop_page.findChildren(QCheckBox):
                 raise RuntimeError("Crop validation must not require a confirmation checkbox")
             import numpy as np
@@ -138,7 +138,7 @@ def _exercise(report: dict[str, Any]) -> None:
             standard_picker = CropPicker(engine, config.Config(), window)
             standard_picker.set_frame(frame)
             if standard_picker.canvas._pixmap.toImage().pixelColor(10, 10).red() != 0:
-                raise RuntimeError("Casual Mode exposed pixels outside the local setup preview")
+                raise RuntimeError("Carebear Mode exposed pixels outside the local setup preview")
             standard_picker.set_frame(None)
             standard_picker.deleteLater()
             if setup.crop_page.isComplete():
@@ -197,7 +197,7 @@ def _exercise(report: dict[str, Any]) -> None:
                 raise RuntimeError("Revenge display limits discarded saved entries")
             revenge.set_config(dataclasses.replace(revenge_cfg, casual_mode=True, casual_mode_confirmed=False))
             if revenge.saved_names or lists[0]._rows:
-                raise RuntimeError("Casual Mode exposed a Revenge player in the pop-out")
+                raise RuntimeError("Carebear Mode exposed a Revenge player in the pop-out")
             revenge.set_config(dataclasses.replace(revenge_cfg, revenge_enabled=False))
             if not popout.isHidden():
                 raise RuntimeError("Disabled Revenge List left the pop-out visible")
@@ -213,7 +213,7 @@ def _exercise(report: dict[str, Any]) -> None:
             report["pages"] = sorted(window._pages)
 
             report["stage"] = "exercise merged pet attribution"
-            from mnmparse.app.models import build_snapshot
+            from mnmparse.app.models import build_snapshot, owner_row
             from mnmparse.parser import parse_line
             from mnmparse.stats import Stats
 
@@ -245,16 +245,22 @@ def _exercise(report: dict[str, Any]) -> None:
             report["pet_rollup"] = {"label": expected_label, "overlay_label": expected_overlay_label,
                                     "damage": owner.damage}
 
-            report["stage"] = "exercise fresh Casual views and export"
+            report["stage"] = "exercise fresh Carebear views and export"
             from mnmparse.export import format_from_config, format_snapshot
-            from mnmparse.privacy import project_encounter
+            from mnmparse.privacy import CASUAL_LABEL, project_encounter
 
             casual_cfg = config.Config(player_name="SmokeOwner", start_capture_on_launch=False, minimize_to_tray=False)
             if not casual_cfg.casual_mode or casual_cfg.casual_mode_confirmed:
-                raise RuntimeError("Fresh preferences must default to unconfirmed Casual Mode")
-            for peer in ("SmokePeerOne", "SmokePeerTwo"):
+                raise RuntimeError("Fresh preferences must default to unconfirmed Carebear Mode")
+            damage_peers = ("Falcon", "Briar")
+            for peer in damage_peers:
                 stats.roster.set_manual(peer, True)
                 stats.add(parse_line(f"{peer} crushes a rat for 40 points of damage.", 103.0, "SmokeOwner"))
+            healers = ("Iris", "Cobalt", "Velvet")
+            for index, peer in enumerate(healers, 1):
+                stats.roster.set_manual(peer, True)
+                stats.add(parse_line(f"{peer} crushes a rat for 1 points of damage.", 103.0 + index, "SmokeOwner"))
+                stats.add(parse_line(f"{peer}'s Heal heals you for {index * 100} Health.", 103.0 + index, "SmokeOwner"))
             snapshot = build_snapshot(stats, stats.current(), "SmokeOwner")
             casual_settings = QSettings(str(Path(temporary) / "casual-settings.ini"), QSettings.Format.IniFormat)
             casual_engine = Engine(casual_cfg)
@@ -262,6 +268,8 @@ def _exercise(report: dict[str, Any]) -> None:
             casual_window = main.MainWindow(casual_engine, casual_overlay, casual_cfg, casual_settings)
             windows.extend((casual_overlay, casual_window))
             casual_window.prepare_quit()
+            if casual_window._mode_button.text() != CASUAL_LABEL or "Carebear" not in CASUAL_LABEL:
+                raise RuntimeError("The protected mode badge is missing its Carebear label")
             casual_window.show()
             app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
             casual_window.page("live").set_snapshot(snapshot)
@@ -271,14 +279,49 @@ def _exercise(report: dict[str, Any]) -> None:
                 model = table._model
                 labels = [str(model.data(model.index(i, model.column_index("name")), Qt.ItemDataRole.DisplayRole))
                           for i in range(model.rowCount())]
-                if any(peer in label for peer in ("SmokePeerOne", "SmokePeerTwo") for label in labels):
-                    raise RuntimeError("Fresh Casual meter exposed a teammate identity")
+                if any(peer in label for peer in (*damage_peers, *healers) for label in labels):
+                    raise RuntimeError("Fresh Carebear meter exposed a teammate identity")
                 if not any("SmokeOwner" in label for label in labels):
-                    raise RuntimeError("Fresh Casual meter hid the viewer's own result")
-            exported = format_snapshot(project_encounter(snapshot, casual_cfg), format_from_config(casual_cfg))
-            if any(peer in exported for peer in ("SmokePeerOne", "SmokePeerTwo")) or "SmokeOwner" not in exported:
-                raise RuntimeError("Fresh Casual export did not enforce the shared projection")
+                    raise RuntimeError("Fresh Carebear meter hid the viewer's own result")
+            protected = project_encounter(snapshot, casual_cfg)
+            average = next(row for row in protected.rows if not row.is_you)
+            if (average.damage != 43 or average.heals != 200
+                    or average.average_counts != {"damage": 3, "heals": 3}):
+                raise RuntimeError("The protected role averages included the opposite role")
+            if (protected.rows[0].share != owner_row(snapshot, "SmokeOwner").share
+                    or abs(protected.rows[0].share + average.share - 1.0) > 1e-9):
+                raise RuntimeError("The protected damage percentages were derived from averages")
+            report["role_averages"] = {"damage": average.damage, "heals": average.heals,
+                                       "contributors": average.average_counts}
+            exported = format_snapshot(protected, format_from_config(casual_cfg))
+            if any(peer in exported for peer in (*damage_peers, *healers)) or "SmokeOwner" not in exported:
+                raise RuntimeError("Fresh Carebear export did not enforce the shared projection")
             report["casual_projection"] = True
+
+            report["stage"] = "exercise personal rebuff title"
+            from mnmparse.app.triggers_runtime import TriggerRunner
+            from mnmparse.triggers import Trigger
+
+            rebuff_store = TriggerStore(Path(temporary) / "rebuff-triggers.json")
+            rebuff_store.triggers = [Trigger(name="Rebuff", pattern="Your Armor wears off",
+                                            action="none", timer=True)]
+            rebuff_runner = TriggerRunner(rebuff_store)
+            try:
+                rebuff_runner.set_config(casual_cfg)
+                matched = rebuff_runner.observe("Your Armor wears off.", now=100)
+                if (len(matched) != 1 or rebuff_runner.board.timers[0].label != "Rebuff"
+                        or matched[0].trigger.name != "Rebuff" or matched[0].groups
+                        or "Your Armor" in matched[0].line):
+                    raise RuntimeError("Carebear Mode hid a personal rebuff title or exposed captured chat")
+                rebuff_runner.set_casual_mode(False)
+                rebuff_runner.set_config(casual_cfg)
+                if rebuff_runner.board.timers[0].label != "Rebuff":
+                    raise RuntimeError("Mode changes lost the personal rebuff title")
+                report["personal_rebuff_title"] = True
+            finally:
+                rebuff_runner._clock.stop()
+                rebuff_runner.audio.stop()
+                rebuff_runner.deleteLater()
 
             report["stage"] = "load bundled presets"
             store = TriggerStore()

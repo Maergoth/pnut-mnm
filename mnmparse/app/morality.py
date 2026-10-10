@@ -33,9 +33,9 @@ class RedModeSwitch(QAbstractButton):
         super().__init__(parent)
         self.setCheckable(True)
         self.setChecked(True)
-        self.setAccessibleName("Casual Mode")
+        self.setAccessibleName("Carebear Mode")
         self.setAccessibleDescription("Drag the red handle right, or press Shift+Right, to request Elitist Scumbag Mode. "
-                                      "The teammate promise is required. Click or press Space to return to Casual Mode.")
+                                      "The teammate promise is required. Click or press Space to return to Carebear Mode.")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMinimumSize(280, 112)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -96,7 +96,7 @@ class RedModeSwitch(QAbstractButton):
         self.setDown(False)
         self.position = self._drag_position(event.position().x())
         # Starting on the handle and moving most of its travel is deliberate;
-        # a plain click, click on the far track, or short drag stays Casual.
+        # a plain click, click on the far track, or short drag stays Carebear.
         if event.button() == Qt.MouseButton.LeftButton and self.position >= .75:
             self.toggle_requested.emit()
         else:
@@ -209,13 +209,13 @@ class MoralityPanel(QWidget):
         self.description.setWordWrap(True)
         box.addWidget(self.description)
         labels = QHBoxLayout()
-        labels.addWidget(QLabel("🌼 Casual Mode 🌼", self))
+        labels.addWidget(QLabel("🌼 Carebear Mode 🌼", self))
         labels.addStretch(1)
         right = QLabel("Elitist Scumbag Mode", self)
         right.setWordWrap(True)
         labels.addWidget(right)
         box.addLayout(labels)
-        self.interaction_hint = QLabel("Slide right to switch modes. Click to return to Casual.", self)
+        self.interaction_hint = QLabel("Slide right to switch modes. Click to return to Carebear.", self)
         self.interaction_hint.setWordWrap(True)
         box.addWidget(self.interaction_hint)
         self.switch = RedModeSwitch(self)
@@ -247,11 +247,16 @@ class MoralityPanel(QWidget):
         self.switch.setEnabled(True)
         self.switch.motion_enabled = not reduced_motion(cfg)
         self.switch.setChecked(self._casual)
-        self.switch.setAccessibleName("Casual Mode" if self._casual else "Elitist Scumbag Mode")
+        self.switch.setAccessibleName("Carebear Mode" if self._casual else "Elitist Scumbag Mode")
         self.switch.move_to(self._casual, animate=False)
         self.description.setText("Your information and rounded group averages. Other individuals stay hidden."
                                  if self._casual else "Individual information is visible.")
-        self.status.setText("Casual Mode is active." if self._casual else "Elitist Scumbag Mode is active.")
+        self.description.setToolTip(
+            "Damage/DPS needs three active members whose damage is at least their healing. "
+            "Healing/HPS needs three active members whose healing is at least their damage. "
+            "Pets count with their owners. Positive ties count in both; unavailable averages show —."
+            if self._casual else "")
+        self.status.setText("Carebear Mode is active." if self._casual else "Elitist Scumbag Mode is active.")
         if self._casual and self._dialog is not None:
             self._dialog.reject()
 
@@ -266,7 +271,7 @@ class MoralityPanel(QWidget):
         self._request_generation += 1
         generation = self._request_generation
         self.switch.setEnabled(False)
-        self.status.setText("Casual Mode stays active until you confirm.")
+        self.status.setText("Carebear Mode stays active until you confirm.")
         self.switch.move_to(False, animate=not reduced_motion(self._cfg))
         self.siren_requested.emit()
         QTimer.singleShot(560 if not reduced_motion(self._cfg) else 0, self,
@@ -288,7 +293,7 @@ class MoralityPanel(QWidget):
         pledge.setObjectName("moralityPledge")
         layout.addWidget(pledge)
         buttons = QHBoxLayout()
-        keep = QPushButton("Keep Casual Mode", dialog)
+        keep = QPushButton("Keep Carebear Mode", dialog)
         keep.setDefault(True)
         keep.clicked.connect(dialog.reject)
         agree = QPushButton("I promise — switch modes", dialog)
@@ -309,7 +314,7 @@ class MoralityPanel(QWidget):
         self.switch.setChecked(self._casual)
         self.switch.move_to(self._casual, animate=not reduced_motion(self._cfg))
         if self._casual:
-            self.status.setText("Casual Mode is active.")
+            self.status.setText("Carebear Mode is active.")
 
     def focus_switch(self) -> None:
         self.switch.setFocus(Qt.FocusReason.ShortcutFocusReason)

@@ -43,7 +43,8 @@ from PySide6.QtWidgets import (
 from mnmparse.app.pages import _label, _page_qss, _panel
 from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, token
 from mnmparse.config import Config, project_path
-from mnmparse.privacy import casual_enabled, safe_trigger_definition, safe_trigger_label
+from mnmparse.privacy import (casual_enabled, safe_static_trigger_title,
+                             safe_trigger_definition, safe_trigger_label)
 from mnmparse.trigger_exchange import export_visible_trigger_file, external_sound_files, merge_triggers, read_trigger_file
 from mnmparse.triggers import BUILTIN_SOUNDS, MODES, MAX_LINE_CHARS, MAX_PATTERN_CHARS, Trigger, fill_placeholders, match_trigger, regex_problem
 
@@ -126,7 +127,7 @@ class TriggersPage(QWidget):
         outer.setContentsMargins(20, 18, 20, 18)
         outer.setSpacing(12)
         outer.addWidget(self._build_audio_bar())
-        self.privacy_notice = _label("Casual Mode hides captured chat, custom definitions and sharing. "
+        self.privacy_notice = _label("Carebear Mode hides captured chat, custom definitions and sharing. "
                                      "To edit or share a definition, change Morality Adjustment in Settings.", "Muted")
         self.privacy_notice.setWordWrap(True)
         outer.addWidget(self.privacy_notice)
@@ -632,7 +633,7 @@ class TriggersPage(QWidget):
             self.list.clear()
             select = None
             for trig in self._store_triggers():
-                title = safe_trigger_label(trig.name, self._cfg)
+                title = safe_static_trigger_title(trig, self._cfg)
                 pattern = "" if casual_enabled(self._cfg) else trig.pattern
                 if needle and needle not in title.lower() and needle not in pattern.lower():
                     continue
@@ -661,8 +662,8 @@ class TriggersPage(QWidget):
             m, s = divmod(int(trig.timer_seconds), 60)
             bits.append(f"timer {m}:{s:02d}")
         if casual_enabled(self._cfg):
-            item.setText(f"{safe_trigger_label(trig.name, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
-            item.setToolTip("Casual Mode hides custom definitions and captured chat.")
+            item.setText(f"{safe_static_trigger_title(trig, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
+            item.setToolTip("Carebear Mode hides custom definitions and captured chat.")
         else:
             item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
             item.setToolTip(f"{trig.name}\n{MODE_TITLES.get(trig.mode, trig.mode)}: {trig.pattern}")
@@ -801,7 +802,7 @@ class TriggersPage(QWidget):
             self._sharing_feedback("Select a timer to export." if selected else "There are no timers to export.", error=True)
             return
         if any(safe_trigger_definition(trigger, self._cfg) is None for trigger in triggers):
-            self._sharing_feedback("Casual Mode hides custom timer definitions. Change Morality Adjustment in Settings before exporting.", error=True)
+            self._sharing_feedback("Carebear Mode hides custom timer definitions. Change Morality Adjustment in Settings before exporting.", error=True)
             return
         if not self.flush_pending_changes():
             return
@@ -821,7 +822,7 @@ class TriggersPage(QWidget):
             export_visible_trigger_file(destination, triggers, cfg=self._cfg)
         except (OSError, ValueError) as exc:
             log.warning("export failed: %s", exc)
-            self._sharing_feedback("Export unavailable in Casual Mode." if casual_enabled(self._cfg)
+            self._sharing_feedback("Export unavailable in Carebear Mode." if casual_enabled(self._cfg)
                                    else f"Export failed: {exc}", error=True)
             return
         message = f"Exported {len(triggers)} to {destination.name}."
@@ -834,7 +835,7 @@ class TriggersPage(QWidget):
             self._sharing_feedback("Select a timer to share in game chat.", error=True)
             return
         if safe_trigger_definition(self._current, self._cfg) is None:
-            self._sharing_feedback("Casual Mode hides custom timer definitions. Change Morality Adjustment in Settings before sharing.", error=True)
+            self._sharing_feedback("Carebear Mode hides custom timer definitions. Change Morality Adjustment in Settings before sharing.", error=True)
             return
         if not self.flush_pending_changes():
             return
@@ -1069,7 +1070,7 @@ class TriggersPage(QWidget):
         line = self.test_line.text()
         self.test_result.setToolTip("")
         if casual_enabled(self._cfg):
-            self.test_result.setText("Captured chat and regex groups are hidden in Casual Mode.")
+            self.test_result.setText("Captured chat and regex groups are hidden in Carebear Mode.")
             return
         if t is None:
             self.test_result.setText("")
@@ -1114,7 +1115,7 @@ class TriggersPage(QWidget):
             if which == "sound":
                 audio.play_builtin(t.sound, t.volume)
             elif which != "file":
-                audio.speak(safe_trigger_label(t.name, self._cfg), t.volume)
+                audio.speak(safe_static_trigger_title(t, self._cfg), t.volume)
             return
         if which == "sound":
             audio.play_builtin(self.sound.currentText(), t.volume)
@@ -1185,8 +1186,9 @@ class TriggersPage(QWidget):
 
     def _on_fired(self, m: Any) -> None:
         stamp = time.strftime("%H:%M:%S")
-        title = safe_trigger_label(m.trigger.name, self._cfg)
-        line = "Captured chat hidden in Casual Mode" if casual_enabled(self._cfg) else m.line
+        title = (m.trigger.name if getattr(m, "privacy_mode", "") == "casual"
+                 else safe_trigger_label(m.trigger.name, self._cfg))
+        line = "Captured chat hidden in Carebear Mode" if casual_enabled(self._cfg) else m.line
         item = QListWidgetItem(f"{stamp}  {title}  ·  {line}")
         item.setToolTip(line)
         self.recent.insertItem(0, item)
