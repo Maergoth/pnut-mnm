@@ -26,6 +26,7 @@ sort, font scale and locked state persist in ``QSettings`` under the
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
@@ -51,6 +52,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QDialog,
     QHBoxLayout,
     QMenu,
     QSizeGrip,
@@ -62,6 +64,7 @@ from PySide6.QtWidgets import (
 
 from mnmparse.app.attack_bar import AttackBar
 from mnmparse.app.timer_panel import TimerPanel
+from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, MAX_RESPAWN_SECONDS, RespawnTimerDialog
 from mnmparse.app.window_identity import window_title
 from mnmparse.app.session_view import SessionView
 from mnmparse.app.widgets import (
@@ -1155,6 +1158,75 @@ class OverlayWindow(QWidget):
         """Confirm a copy: the header's copy glyph shows a check mark for a moment."""
         self._header.flash_copied()
 
+    @staticmethod
+    def _respawn_mob(row: Any) -> str:
+        if row is None or getattr(row, "is_you", False) or getattr(row, "is_pet", False):
+            return ""
+        if not (getattr(row, "is_npc", False) or getattr(row, "is_enemy", False)):
+            return ""
+        return str(getattr(row, "name", "") or "").strip()
+
+    def _respawn_names_at(self, global_pos: QPoint, row: Any) -> list[str]:
+        name = self._respawn_mob(row)
+        if name:
+            return [name]
+        pos = QPointF(self._header.mapFromGlobal(global_pos))
+        if (self._snap is None or str(self._snap.key).startswith("zone:")
+                or not self._header._label_rect.contains(pos)):
+            return []
+        names = {self._respawn_mob(actor) for actor in getattr(self._snap, "rows", ())}
+        return sorted(names - {""}, key=str.casefold)
+
+    def _respawn_durations(self) -> dict[str, int]:
+        try:
+            data = json.loads(str(self._settings.value("overlay/respawn_durations", "{}")))
+        except (ValueError, TypeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {name: value for name, value in data.items()
+                if type(value) is int and 0 < value <= MAX_RESPAWN_SECONDS}
+
+    @staticmethod
+    def _respawn_key(name: str) -> str:
+        return " ".join(name.split()).casefold()
+
+    def start_respawn_timer(self, name: str) -> None:
+        """Start one countdown and remember only the confirmed duration for this mob."""
+        runner = self._timer_panel.runner
+        if runner is None or not name.strip():
+            return
+        key = self._respawn_key(name)
+        seconds = self._respawn_durations().get(key, DEFAULT_RESPAWN_SECONDS)
+        dialog = RespawnTimerDialog(name, seconds, self)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            seconds = dialog.duration()
+        finally:
+            dialog.deleteLater()
+        if not 0 < seconds <= MAX_RESPAWN_SECONDS:
+            return
+        runner.start_one_time_timer(f"{name} respawn", seconds)
+        durations = self._respawn_durations()
+        durations[key] = seconds
+        self._settings.setValue("overlay/respawn_durations", json.dumps(durations, ensure_ascii=False))
+        self._settings.sync()
+
+    def _add_respawn_entries(self, menu: QMenu, names: list[str]) -> dict[Any, Any]:
+        if not names or self._timer_panel.runner is None:
+            return {}
+        menu.addSeparator()
+        if len(names) == 1:
+            action = menu.addAction("Start respawn timer…")
+            return {action: lambda: self.start_respawn_timer(names[0])}
+        submenu = menu.addMenu("Start respawn timer…")
+        handlers = {}
+        for name in names:
+            action = submenu.addAction(name.replace("&", "&&"))
+            handlers[action] = lambda name=name: self.start_respawn_timer(name)
+        return handlers
+
     def contextMenuEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
         menu = QMenu(self)
         menu.setStyleSheet(self.menu_qss())
@@ -1165,6 +1237,7 @@ class OverlayWindow(QWidget):
         handlers = {copy: self.copy_current, mode: self.toggle_view_mode,
                     browse: lambda: self.open_encounter_menu(event.globalPos())}
         row = self._table.row_at(event.globalPos()) if self._tab not in ("feed", "session") and self._view_mode != "self" else None
+        handlers.update(self._add_respawn_entries(menu, self._respawn_names_at(event.globalPos(), row)))
         handlers.update(add_group_entries(menu, row, self.group_override_requested.emit))
         handlers.update(add_pet_entries(menu, row, self._snap, self.pet_owner_requested.emit))
         chosen = menu.exec(event.globalPos())
@@ -1495,7 +1568,8 @@ class OverlayWindow(QWidget):
         )
         browsing = "\n(an earlier fight: the next fight replaces it)" if self._pinned is not None else ""
         self._header.set_base_tip(
-            f"{label}{browsing}\nClick the name to browse earlier fights; click elsewhere on this bar to switch to the "
+            f"{label}{browsing}\nClick the name to browse earlier fights; right-click it to start a respawn timer. "
+            f"Click elsewhere on this bar to switch to the "
             f"{'group table' if self._view_mode == 'self' else 'self view (your own sources)'}"
         )
 
