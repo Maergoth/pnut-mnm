@@ -1,4 +1,4 @@
-"""NPC context-menu targeting and remembered one-time countdown durations."""
+"""NPC context-menu targeting and zone defaults for one-time countdowns."""
 
 from __future__ import annotations
 
@@ -31,17 +31,21 @@ from mnmparse.triggers import Trigger, TriggerStore
 
 if HAVE_QT:
     from mnmparse.app.overlay import OverlayWindow
-    from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, RespawnTimerDialog
+    from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, MAX_RESPAWN_SECONDS, RespawnTimerDialog
     from mnmparse.app.triggers_runtime import TriggerRunner
 
 
 PLAYER = "Maergoth"
 NAMED_MOB = "Dreadfang"
 COMMON_MOB = "a skeletal warrior"
+ZONE = "Dreadlands"
+OTHER_ZONE = "Northern Crypts"
 RESPAWN_ACTION = "Start respawn timer…"
+ZONE_DURATIONS = "overlay/respawn_zone_durations"
+LEGACY_MOB_DURATIONS = "overlay/respawn_durations"
 
 
-def fight(*, multi: bool = False):
+def fight(*, multi: bool = False, zone: str = ZONE):
     stats = Stats(player_name=PLAYER)
     lines = [
         f"You crush {NAMED_MOB} for 40 points of damage.",
@@ -54,7 +58,7 @@ def fight(*, multi: bool = False):
         ])
     for offset, line in enumerate(lines):
         stats.add(parse_line(line, 100 + offset, PLAYER))
-    return build_snapshot(stats, stats.current(), PLAYER, now=106)
+    return replace(build_snapshot(stats, stats.current(), PLAYER, now=106), zone=zone)
 
 
 @unittest.skipUnless(HAVE_QT, "PySide6 not installed")
@@ -93,8 +97,8 @@ class RespawnTimerUiTests(unittest.TestCase):
         self.app.processEvents()
         return overlay
 
-    def show_fight(self, *, multi=False):
-        snap = fight(multi=multi)
+    def show_fight(self, *, multi=False, zone=ZONE):
+        snap = fight(multi=multi, zone=zone)
         self.overlay.set_snapshot(snap)
         self.overlay._flush_snapshot()
         self.overlay.set_tab("overview")
@@ -119,13 +123,15 @@ class RespawnTimerUiTests(unittest.TestCase):
                 return view.viewport(), view.visualRect(index).center()
         self.fail(f"No displayed row for {name}")
 
-    def context_menu(self, widget, local_pos, *, choice=None):
+    def context_menu(self, widget, local_pos, *, choice=None, while_open=None):
         seen = []
 
         def choose(menu, _global_pos):
             actions = menu.actions()
             seen.append([action.text() for action in actions if not action.isSeparator()])
             respawn = next((action for action in actions if action.text() == RESPAWN_ACTION), None)
+            if while_open is not None:
+                while_open()
             if choice is None:
                 return None
             self.assertIsNotNone(respawn)
@@ -150,14 +156,21 @@ class RespawnTimerUiTests(unittest.TestCase):
         self.assertTrue(seen, "The child widget must propagate its context menu to the overlay")
         return seen
 
-    def dialog_response(self, *, seconds=None, accept=True, inspect=None):
+    def dialog_response(self, *, seconds=None, accept=True, inspect=None, while_open=None):
         def execute(dialog):
             if inspect is not None:
                 inspect(dialog)
             if seconds is not None:
                 dialog.minutes.setValue(seconds // 60)
                 dialog.seconds.setValue(seconds % 60)
-            QTimer.singleShot(0, dialog.accept if accept else dialog.reject)
+            def finish():
+                try:
+                    if while_open is not None:
+                        while_open()
+                finally:
+                    (dialog.accept if accept else dialog.reject)()
+
+            QTimer.singleShot(0, finish)
             return QDialog.exec(dialog)
 
         return patch.object(RespawnTimerDialog, "exec", execute)
@@ -240,37 +253,123 @@ class RespawnTimerUiTests(unittest.TestCase):
         menu, = self.context_menu(*self.header_target())
         self.assertNotIn(RESPAWN_ACTION, menu)
 
-    def test_confirmed_duration_prefills_by_mob_across_new_settings_and_overlay(self):
+    def test_latest_duration_is_shared_by_mobs_in_one_zone_and_separate_between_zones(self):
+        self.show_fight(multi=True)
         initial_defaults = []
         with self.dialog_response(seconds=754, inspect=lambda dialog: initial_defaults.append(dialog.duration())):
             self.overlay.start_respawn_timer(NAMED_MOB)
         with self.dialog_response(seconds=42, inspect=lambda dialog: initial_defaults.append(dialog.duration())):
             self.overlay.start_respawn_timer(COMMON_MOB)
-        self.assertEqual(initial_defaults, [DEFAULT_RESPAWN_SECONDS, DEFAULT_RESPAWN_SECONDS])
+        with self.dialog_response(seconds=91, inspect=lambda dialog: initial_defaults.append(dialog.duration())):
+            self.overlay.start_respawn_timer(NAMED_MOB, zone=OTHER_ZONE)
+        self.assertEqual(initial_defaults, [DEFAULT_RESPAWN_SECONDS, 754, DEFAULT_RESPAWN_SECONDS])
+        self.assertEqual(json.loads(self.settings.value(ZONE_DURATIONS)),
+                         {ZONE.casefold(): 42, OTHER_ZONE.casefold(): 91})
+
+    def test_zone_defaults_survive_new_settings_overlay_and_case_spacing_changes(self):
+        with self.dialog_response(seconds=754):
+            self.overlay.start_respawn_timer(NAMED_MOB, zone=ZONE)
+        with self.dialog_response(seconds=42):
+            self.overlay.start_respawn_timer(NAMED_MOB, zone=OTHER_ZONE)
         settings = QSettings(self.settings_path, QSettings.Format.IniFormat)
         settings.sync()
-        self.assertEqual(json.loads(settings.value("overlay/respawn_durations")),
-                         {NAMED_MOB.casefold(): 754, COMMON_MOB.casefold(): 42})
-        recreated = self.make_overlay(settings)
+        self.assertEqual(json.loads(settings.value(ZONE_DURATIONS)),
+                         {ZONE.casefold(): 754, OTHER_ZONE.casefold(): 42})
+        self.overlay = self.make_overlay(settings)
         restored = []
+        self.show_fight(zone=OTHER_ZONE)
         with self.dialog_response(accept=False, inspect=lambda dialog: restored.append(dialog.duration())):
-            recreated.start_respawn_timer(NAMED_MOB)
-            recreated.start_respawn_timer(COMMON_MOB)
-            recreated.start_respawn_timer("  DREADFANG  ")
-        self.assertEqual(restored, [754, 42, 754])
+            self.overlay.start_respawn_timer(COMMON_MOB)
+            self.overlay.start_respawn_timer("a wandering ghoul", zone="  DREADLANDS  ")
+            self.overlay.start_respawn_timer(COMMON_MOB, zone=" NORTHERN   CRYPTS ")
+        self.show_fight(zone=ZONE)
+        with self.dialog_response(accept=False, inspect=lambda dialog: restored.append(dialog.duration())):
+            self.overlay.start_respawn_timer(COMMON_MOB)
+        self.assertEqual(restored, [42, 754, 42, 754])
+
+    def test_menu_and_dialog_keep_the_selected_fights_zone_when_snapshot_changes(self):
+        for target in ("header", "row"):
+            with self.subTest(target=target):
+                self.runner.clear_timers()
+                self.settings.setValue(ZONE_DURATIONS, json.dumps({ZONE.casefold(): 754, OTHER_ZONE.casefold(): 42}))
+                self.show_fight(multi=True, zone=ZONE)
+                defaults = []
+
+                with self.dialog_response(seconds=123, inspect=lambda dialog: defaults.append(dialog.duration()),
+                                          while_open=lambda: self.show_fight(zone="Later Zone")):
+                    widget, point = self.header_target() if target == "header" else self.row_target(COMMON_MOB)
+                    self.context_menu(widget, point, choice=NAMED_MOB if target == "header" else RESPAWN_ACTION,
+                                      while_open=lambda: self.show_fight(zone=OTHER_ZONE))
+                self.assertEqual(defaults, [754])
+                self.assertEqual(json.loads(self.settings.value(ZONE_DURATIONS)),
+                                 {ZONE.casefold(): 123, OTHER_ZONE.casefold(): 42})
+                timer, = self.runner.board.timers
+                mob = NAMED_MOB if target == "header" else COMMON_MOB
+                self.assertEqual((timer.label, timer.duration), (f"{mob} respawn", 123))
+
+    def test_unknown_zones_always_use_the_default_without_remembering_a_duration(self):
+        saved = json.dumps({ZONE.casefold(): 754})
+        self.settings.setValue(ZONE_DURATIONS, saved)
+        defaults = []
+        for zone in (None, "", " \t "):
+            with self.subTest(zone=zone):
+                with self.dialog_response(seconds=42, inspect=lambda dialog: defaults.append(dialog.duration())):
+                    self.overlay.start_respawn_timer(NAMED_MOB, zone=zone)
+                self.assertEqual(self.settings.value(ZONE_DURATIONS), saved)
+        self.show_fight(zone=" \t ")
+        with self.dialog_response(seconds=91, inspect=lambda dialog: defaults.append(dialog.duration())):
+            self.overlay.start_respawn_timer(COMMON_MOB)
+        self.assertEqual(defaults, [DEFAULT_RESPAWN_SECONDS] * 4)
+        self.assertEqual(self.settings.value(ZONE_DURATIONS), saved)
+        self.assertEqual([timer.duration for timer in self.runner.board.timers], [42, 42, 42, 91])
+
+    def test_legacy_mob_defaults_are_ignored_and_preserved(self):
+        legacy = json.dumps({NAMED_MOB.casefold(): 754, ZONE.casefold(): 999})
+        self.settings.setValue(LEGACY_MOB_DURATIONS, legacy)
+        self.show_fight()
+        defaults = []
+        with self.dialog_response(seconds=42, inspect=lambda dialog: defaults.append(dialog.duration())):
+            self.overlay.start_respawn_timer(NAMED_MOB)
+        self.assertEqual(defaults, [DEFAULT_RESPAWN_SECONDS])
+        self.assertEqual(self.settings.value(LEGACY_MOB_DURATIONS), legacy)
+        self.assertEqual(json.loads(self.settings.value(ZONE_DURATIONS)), {ZONE.casefold(): 42})
+
+    def test_invalid_saved_zone_values_are_ignored(self):
+        self.show_fight()
+        for value in (0, -1, MAX_RESPAWN_SECONDS + 1, True, 42.5, "754", None, [], {}):
+            with self.subTest(value=value):
+                saved = json.dumps({ZONE.casefold(): value})
+                self.settings.setValue(ZONE_DURATIONS, saved)
+                defaults = []
+                with self.dialog_response(accept=False, inspect=lambda dialog: defaults.append(dialog.duration())):
+                    self.overlay.start_respawn_timer(NAMED_MOB)
+                self.assertEqual(defaults, [DEFAULT_RESPAWN_SECONDS])
+                self.assertEqual(self.settings.value(ZONE_DURATIONS), saved)
+        for saved in ("not JSON", "[]", "null", "754"):
+            with self.subTest(saved=saved):
+                self.settings.setValue(ZONE_DURATIONS, saved)
+                defaults = []
+                with self.dialog_response(accept=False, inspect=lambda dialog: defaults.append(dialog.duration())):
+                    self.overlay.start_respawn_timer(NAMED_MOB)
+                self.assertEqual(defaults, [DEFAULT_RESPAWN_SECONDS])
+                self.assertEqual(self.settings.value(ZONE_DURATIONS), saved)
+        self.assertEqual(self.runner.board.timers, [])
 
     def test_cancelled_edits_never_save_or_start(self):
+        self.show_fight()
         with self.dialog_response(seconds=754):
             self.overlay.start_respawn_timer(NAMED_MOB)
-        before = self.settings.value("overlay/respawn_durations")
+        before = self.settings.value(ZONE_DURATIONS)
         previous = list(self.runner.board.timers)
         with self.dialog_response(seconds=5, accept=False):
             self.overlay.start_respawn_timer(NAMED_MOB)
             self.overlay.start_respawn_timer(COMMON_MOB)
-        self.assertEqual(self.settings.value("overlay/respawn_durations"), before)
+            self.overlay.start_respawn_timer(NAMED_MOB, zone=OTHER_ZONE)
+        self.assertEqual(self.settings.value(ZONE_DURATIONS), before)
         self.assertEqual(self.runner.board.timers, previous)
 
     def test_zero_duration_cannot_be_accepted_saved_or_started(self):
+        self.show_fight()
         def execute(dialog):
             dialog.minutes.setValue(0)
             dialog.seconds.setValue(0)
@@ -283,7 +382,7 @@ class RespawnTimerUiTests(unittest.TestCase):
         with patch.object(RespawnTimerDialog, "exec", execute):
             self.overlay.start_respawn_timer(NAMED_MOB)
         self.assertEqual(self.runner.board.timers, [])
-        self.assertFalse(self.settings.contains("overlay/respawn_durations"))
+        self.assertFalse(self.settings.contains(ZONE_DURATIONS))
 
     def test_dialog_uses_focusable_normal_flags_and_minute_second_controls(self):
         dialog = RespawnTimerDialog(NAMED_MOB, 754, self.overlay)
