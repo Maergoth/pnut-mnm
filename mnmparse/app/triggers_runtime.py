@@ -367,6 +367,35 @@ class TriggerRunner(QObject):
         return True
 
     # -- timers ------------------------------------------------------------------------
+    def start_one_time_timer(self, label: str, seconds: float, now: float | None = None) -> ActiveTimer:
+        """Start an independent, silent countdown without adding a chat trigger."""
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError("A one-time timer needs a label")
+        try:
+            duration = float(seconds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("A one-time timer needs a positive, finite duration") from exc
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError("A one-time timer needs a positive, finite duration")
+        trigger = Trigger(name=label.strip(), action="none", timer=True, timer_seconds=duration,
+                          timer_mode="stack", timer_warn_action="none", timer_end_action="none")
+        now = time.time() if now is None else now
+        previous = list(self.board.timers)
+        # A confirmed manual countdown must survive the board's longest-first cap.
+        while len(self.board.timers) >= self.board.MAX_TIMERS:
+            obsolete = next((timer for timer in self.board.timers if timer.ended), None)
+            if obsolete is None:
+                obsolete = max(self.board.timers, key=lambda timer: timer.remaining(now))
+            self.board.cancel(obsolete.id)
+        timer = self.board.start(trigger, trigger.name, now)
+        assert timer is not None  # A fresh stack timer cannot retain an older instance.
+        for old in previous:
+            if old not in self.board.timers:
+                self.audio.cancel_speech(self._timer_scope(old))
+        self._clock.start()
+        self.timers_changed.emit()
+        return timer
+
     def cancel_timer(self, timer_id: str) -> None:
         for timer in self.board.timers:
             if timer.id == timer_id:

@@ -272,6 +272,14 @@ own damage, healing and taken by source); clicking elsewhere on the header, or r
 "Show just you", does the same. The cursor shows the move arrows only while the overlay is
 unlocked.
 
+**One-time respawn timers.** Right-click an NPC row or the encounter name at the top of the
+overlay and choose **Start respawn timer…**. If the fight includes several mobs, pick the
+mob name from the submenu. Enter minutes and seconds, then choose **Start timer** to start
+one countdown immediately. The duration is pre-filled with the last one you confirmed for
+that mob name, including after restarting PNUT; the first timer defaults to five minutes.
+Each countdown runs once in the timer panel and can be cancelled there. It does not add
+an automatic chat trigger. Turn off overlay click-through to use the right-click menu.
+
 **Your group, outsiders and enemies.** The totals at the top (damage and DPS), the shares and the
 clipboard line count only your group: you, your pet and your party. Everyone else in a fight is
 one of two kinds:
