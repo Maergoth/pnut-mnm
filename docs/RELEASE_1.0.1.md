@@ -11,4 +11,6 @@ Group combat averages now compare the same roles:
 
 The Damage tab keeps your actual percentage of group damage; the group row shows the remaining percentage. These shares are independent of the displayed averages. Personal rebuff timers keep useful static titles while captured chat and player details remain protected.
 
+The 1.0.1 download has been refreshed with clearer mode-switch confirmation text. If you already installed 1.0.1, download the ZIP again and replace the app files, keeping your settings, timers and logs.
+
 Download **PNUT-MnM-1.0.1-windows.zip**, extract it into a writable folder, and keep `_internal` beside **PNUT M&M.exe**. Existing installations can use PNUT's Update option. The companion `.zip.sha256` file records the package checksum.

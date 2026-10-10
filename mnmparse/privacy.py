@@ -13,8 +13,8 @@ from typing import Any
 
 CASUAL_LABEL = "🌼 Carebear Mode 🌼"
 ELITIST_LABEL = "Elitist Scumbag Mode"
-PROMISE = ("will not use it to shit on their teammates because video games are not "
-           "difficult enough to be an asshole.")
+PROMISE = ("will not use this to shit on your teammates. Video games are not "
+           "hard enough for you to be an asshole.")
 MIN_AVERAGE_GROUP = 3
 AVERAGE_UNAVAILABLE_TEXT = "At least three active group members are needed for this average."
 
