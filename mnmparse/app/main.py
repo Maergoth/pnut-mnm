@@ -1404,7 +1404,7 @@ class App(QApplication):
             if self.map_downloads is not None:
                 self._connect_optional(settings_page, "map_download_requested", self.map_downloads.start)
                 self.map_downloads.started.connect(
-                    lambda: settings_page.set_map_download_status("Downloading latest maps…", True))
+                    lambda: settings_page.set_map_download_status("Checking for map updates…", True))
                 self.map_downloads.progress.connect(
                     lambda message: settings_page.set_map_download_status(message, True))
                 self.map_downloads.finished.connect(self._on_map_download_finished)
