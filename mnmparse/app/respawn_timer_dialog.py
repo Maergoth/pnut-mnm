@@ -13,7 +13,8 @@ MAX_RESPAWN_SECONDS = 600 * 60 + 59
 
 
 class RespawnTimerDialog(QDialog):
-    def __init__(self, name: str, seconds: int, parent: QWidget | None = None) -> None:
+    def __init__(self, name: str, seconds: int, parent: QWidget | None = None,
+                 *, remember_duration: bool = True) -> None:
         super().__init__(parent)
         self.setWindowTitle(window_title("respawn-timer"))
         # Keep normal dialog flags so the duration editor can accept keyboard focus.
@@ -27,7 +28,8 @@ class RespawnTimerDialog(QDialog):
         mob.setTextFormat(Qt.TextFormat.PlainText)
         mob.setToolTip(name)
         layout.addWidget(mob)
-        hint = QLabel("Start one countdown now. This duration will be remembered for this mob name.")
+        hint = QLabel("Start one countdown now." +
+                      (" This duration will be remembered for all mobs in this zone." if remember_duration else ""))
         hint.setWordWrap(True)
         layout.addWidget(hint)
         duration = QHBoxLayout()

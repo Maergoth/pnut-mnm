@@ -1179,26 +1179,28 @@ class OverlayWindow(QWidget):
 
     def _respawn_durations(self) -> dict[str, int]:
         try:
-            data = json.loads(str(self._settings.value("overlay/respawn_durations", "{}")))
+            data = json.loads(str(self._settings.value("overlay/respawn_zone_durations", "{}")))
         except (ValueError, TypeError):
             return {}
         if not isinstance(data, dict):
             return {}
-        return {name: value for name, value in data.items()
+        return {zone: value for zone, value in data.items()
                 if type(value) is int and 0 < value <= MAX_RESPAWN_SECONDS}
 
     @staticmethod
-    def _respawn_key(name: str) -> str:
-        return " ".join(name.split()).casefold()
+    def _respawn_key(zone: str) -> str:
+        return " ".join(zone.split()).casefold()
 
-    def start_respawn_timer(self, name: str) -> None:
-        """Start one countdown and remember only the confirmed duration for this mob."""
+    def start_respawn_timer(self, name: str, zone: str | None = None) -> None:
+        """Start one countdown and remember the confirmed duration for its zone."""
         runner = self._timer_panel.runner
         if runner is None or not name.strip():
             return
-        key = self._respawn_key(name)
+        if zone is None:
+            zone = str(getattr(self._snap, "zone", "") or "")
+        key = self._respawn_key(zone)
         seconds = self._respawn_durations().get(key, DEFAULT_RESPAWN_SECONDS)
-        dialog = RespawnTimerDialog(name, seconds, self)
+        dialog = RespawnTimerDialog(name, seconds, self, remember_duration=bool(key))
         try:
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
@@ -1208,23 +1210,26 @@ class OverlayWindow(QWidget):
         if not 0 < seconds <= MAX_RESPAWN_SECONDS:
             return
         runner.start_one_time_timer(f"{name} respawn", seconds)
+        if not key:
+            return  # An unknown zone must not share a default with unrelated encounters.
         durations = self._respawn_durations()
         durations[key] = seconds
-        self._settings.setValue("overlay/respawn_durations", json.dumps(durations, ensure_ascii=False))
+        self._settings.setValue("overlay/respawn_zone_durations", json.dumps(durations, ensure_ascii=False))
         self._settings.sync()
 
     def _add_respawn_entries(self, menu: QMenu, names: list[str]) -> dict[Any, Any]:
         if not names or self._timer_panel.runner is None:
             return {}
+        zone = str(getattr(self._snap, "zone", "") or "")
         menu.addSeparator()
         if len(names) == 1:
             action = menu.addAction("Start respawn timer…")
-            return {action: lambda: self.start_respawn_timer(names[0])}
+            return {action: lambda: self.start_respawn_timer(names[0], zone)}
         submenu = menu.addMenu("Start respawn timer…")
         handlers = {}
         for name in names:
             action = submenu.addAction(name.replace("&", "&&"))
-            handlers[action] = lambda name=name: self.start_respawn_timer(name)
+            handlers[action] = lambda name=name: self.start_respawn_timer(name, zone)
         return handlers
 
     def contextMenuEvent(self, event: Any) -> None:  # noqa: N802 - Qt override

@@ -276,7 +276,9 @@ unlocked.
 overlay and choose **Start respawn timer…**. If the fight includes several mobs, pick the
 mob name from the submenu. Enter minutes and seconds, then choose **Start timer** to start
 one countdown immediately. The duration is pre-filled with the last one you confirmed for
-that mob name, including after restarting PNUT; the first timer defaults to five minutes.
+any mob in that encounter's zone, including after restarting PNUT. All mobs in a zone share
+that default; each zone remembers its own duration. The first timer in a zone defaults to
+five minutes.
 Each countdown runs once in the timer panel and can be cancelled there. It does not add
 an automatic chat trigger. Turn off overlay click-through to use the right-click menu.
 
