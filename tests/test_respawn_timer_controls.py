@@ -67,6 +67,7 @@ class RespawnTimerControlsTests(unittest.TestCase):
                  | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.panel = TimerPanel(self.owner, self.settings, flags)
         self.runner = TriggerRunner(TriggerStore(Path(self.tmp.name) / "triggers.json"))
+        self.runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         self.runner.audio = Mock()
         self.clock_patch = patch("mnmparse.app.timer_panel.time.time", return_value=1000.0)
         self.clock = self.clock_patch.start()

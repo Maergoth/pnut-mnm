@@ -25,13 +25,19 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
 import os
 import re
+import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import regex
 
 from .vocab import edit_distance, fold, word_limit
 
@@ -47,8 +53,16 @@ ACTIONS: tuple[str, ...] = ("none", "sound", "file", "speak")
 TIMER_MODES: tuple[str, ...] = ("replace", "retain", "stack")
 _LEGACY_TIMER_MODES = {"restart": "replace", "ignore": "retain"}
 #: Built-in cues (generated as small .wav files the first time they are needed).
-BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling")
+BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling", "Siren")
 STORE_VERSION = 1
+# Each search has an enforceable engine deadline. The store also limits an entire
+# line so many individually expensive expressions cannot monopolize the GUI.
+REGEX_TIMEOUT_S = 0.010
+LINE_MATCH_BUDGET_S = 0.050
+MAX_PATTERN_CHARS = 2048
+MAX_LINE_CHARS = 8192
+_quarantined_patterns: dict[str, str] = {}
+_store_replace_lock = threading.Lock()
 
 _WORD_RX = re.compile(r"[0-9a-z]+")
 
@@ -115,11 +129,12 @@ class Trigger:
         out: list[str] = []
         if not self.pattern.strip():
             out.append("The pattern is empty.")
+        if len(self.pattern) > MAX_PATTERN_CHARS:
+            out.append(f"The pattern is too long (maximum {MAX_PATTERN_CHARS} characters).")
         if self.mode == "regex":
-            try:
-                re.compile(self.pattern)
-            except re.error as exc:
-                out.append(f"The regular expression is invalid: {exc}")
+            problem = regex_problem(self.pattern)
+            if problem:
+                out.append(problem)
         if self.action == "file" and not self.file:
             out.append("Choose a sound file.")
         return out
@@ -147,16 +162,27 @@ def fill_placeholders(template: str, values: dict[str, str]) -> str:
 
 
 # --------------------------------------------------------------------------- matching
-_regex_cache: dict[str, re.Pattern[str] | None] = {}
+@lru_cache(maxsize=256)
+def _compiled(pattern: str) -> Any | None:
+    if len(pattern) > MAX_PATTERN_CHARS:
+        return None
+    try:
+        # VERSION0 keeps compatibility with the Python re expressions accepted
+        # by previous releases, while adding the timeout-capable engine.
+        return regex.compile(pattern, regex.IGNORECASE | regex.VERSION0)
+    except (regex.error, RecursionError, OverflowError):
+        return None
 
 
-def _compiled(pattern: str) -> re.Pattern[str] | None:
-    if pattern not in _regex_cache:
-        try:
-            _regex_cache[pattern] = re.compile(pattern, re.IGNORECASE)
-        except re.error:
-            _regex_cache[pattern] = None
-    return _regex_cache[pattern]
+def regex_problem(pattern: str) -> str:
+    """A safe, source-free explanation suitable for live/editor/import feedback."""
+    if len(pattern) > MAX_PATTERN_CHARS:
+        return f"The pattern is too long (maximum {MAX_PATTERN_CHARS} characters)."
+    if pattern in _quarantined_patterns:
+        return _quarantined_patterns[pattern]
+    if _compiled(pattern) is None:
+        return "The regular expression is invalid."
+    return ""
 
 
 def _words(text: str) -> list[tuple[str, int, int]]:
@@ -174,15 +200,30 @@ def _word_ok(pat: str, word: str, fuzzy: bool) -> bool:
     return limit > 0 and edit_distance(pat, word, limit) <= limit
 
 
-def match_trigger(trigger: Trigger, line: str) -> Match | None:
+def match_trigger(trigger: Trigger, line: str, *, deadline: float | None = None) -> Match | None:
     """``Match`` when ``line`` satisfies ``trigger`` (disabled triggers never match)."""
     if not trigger.enabled or not trigger.pattern.strip() or not line:
         return None
+    if len(trigger.pattern) > MAX_PATTERN_CHARS or len(line) > MAX_LINE_CHARS:
+        return None
+    deadline = time.monotonic() + REGEX_TIMEOUT_S if deadline is None else deadline
+    if time.monotonic() >= deadline:
+        return None
     if trigger.mode == "regex":
+        if trigger.pattern in _quarantined_patterns:
+            return None
         rx = _compiled(trigger.pattern)
         if rx is None:
             return None
-        m = rx.search(line)
+        try:
+            m = rx.search(line, timeout=max(0.0001, min(REGEX_TIMEOUT_S, deadline - time.monotonic())))
+        except TimeoutError:
+            # Repeating an expensive expression on every OCR line would consume
+            # the deadline repeatedly. Quarantine until its pattern is changed.
+            if len(_quarantined_patterns) >= 256:
+                _quarantined_patterns.pop(next(iter(_quarantined_patterns)))
+            _quarantined_patterns[trigger.pattern] = "Regular expression exceeded its time limit; change the pattern before enabling it again."
+            return None
         if m is None:
             return None
         groups = {k: v for k, v in m.groupdict().items() if v is not None}
@@ -203,6 +244,8 @@ def match_trigger(trigger: Trigger, line: str) -> Match | None:
     else:
         starts = range(0, n - k + 1)
     for i in starts:
+        if time.monotonic() >= deadline:
+            return None
         if i + k > n:
             break
         if all(_word_ok(p, words[i + j][0], trigger.fuzzy) for j, p in enumerate(pat)):
@@ -223,26 +266,70 @@ class TriggerStore:
         self.rate = 0.0  #: speech rate -1..1
         self.output_device = ""  #: audio output device description ("" = the default)
         self.installed_presets: set[str] = set()
+        self.match_warnings: dict[str, str] = {}
 
     def load(self) -> bool:
         if self.path is None or not self.path.is_file():
             return False
         try:
+            if self.path.stat().st_size > 8 * 1024 * 1024:
+                raise ValueError("Trigger settings exceed the 8 MB limit")
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
+            self.load_dict(data)
+        except (OSError, ValueError, TypeError, RecursionError, OverflowError) as exc:
             log.warning("could not read %s: %s", self.path, exc)
             return False
-        self.load_dict(data)
         return True
 
     def load_dict(self, data: dict[str, Any]) -> None:
+        """Validate a local store completely before changing in-memory settings.
+
+        Unlike a share, a local row may be an unfinished edit with an empty pattern.
+        Invalid versions/types/nonfinite values are rejected rather than dropped.
+        """
+        if not isinstance(data, dict):
+            raise ValueError("Trigger settings must be an object")
+        if "version" in data and (type(data["version"]) is not int or data["version"] != STORE_VERSION):
+            raise ValueError("Unsupported trigger settings version")
         settings = data.get("settings") or {}
+        if not isinstance(settings, dict):
+            raise ValueError("Trigger audio settings must be an object")
+        for key in ("volume", "rate"):
+            value = settings.get(key, getattr(self, key))
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError(f"Trigger {key} must be a finite number")
+        for key in ("voice", "output_device"):
+            if not isinstance(settings.get(key, getattr(self, key)), str):
+                raise ValueError(f"Trigger {key} must be text")
+        presets = data.get("installed_presets", [])
+        if not isinstance(presets, list) or any(not isinstance(key, str) for key in presets):
+            raise ValueError("Installed trigger presets must be a list of text IDs")
+        rows = data.get("triggers", [])
+        if not isinstance(rows, list) or len(rows) > 5000:
+            raise ValueError("Trigger settings must contain at most 5000 trigger objects")
+        boolean = {"enabled", "fuzzy", "timer"}
+        numbers = {"volume", "cooldown_s", "timer_seconds", "timer_warn_s", "timer_low_s"}
+        known = {f.name for f in dataclasses.fields(Trigger)}
+        validated: list[Trigger] = []
+        for row in rows:
+            if not isinstance(row, dict) or set(row) - known:
+                raise ValueError("Trigger settings contain an invalid or unsupported field")
+            for key, value in row.items():
+                if key in boolean:
+                    if type(value) is not bool:
+                        raise ValueError(f"Trigger {key} must be true or false")
+                elif key in numbers:
+                    if type(value) not in (int, float) or not math.isfinite(value):
+                        raise ValueError(f"Trigger {key} must be a finite number")
+                elif not isinstance(value, str):
+                    raise ValueError(f"Trigger {key} must be text")
+            validated.append(Trigger.from_dict(row))
         self.volume = max(0, min(100, int(settings.get("volume", self.volume))))
-        self.voice = str(settings.get("voice", self.voice) or "")
-        self.rate = max(-1.0, min(1.0, float(settings.get("rate", self.rate) or 0.0)))
-        self.output_device = str(settings.get("output_device", self.output_device) or "")
-        self.installed_presets = {str(key) for key in data.get("installed_presets", [])}
-        self.triggers = [Trigger.from_dict(t) for t in data.get("triggers", []) if isinstance(t, dict)]
+        self.voice = settings.get("voice", self.voice)
+        self.rate = max(-1.0, min(1.0, float(settings.get("rate", self.rate))))
+        self.output_device = settings.get("output_device", self.output_device)
+        self.installed_presets = set(presets)
+        self.triggers = validated
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -309,17 +396,40 @@ class TriggerStore:
         if self.path is None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, self.path)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
+                                             prefix=f".{self.path.name}.", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(self.to_dict(), stream, indent=2, ensure_ascii=False, allow_nan=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # Windows replacement handles can briefly deny sharing when two
+            # writers target the same file. Serialize the final rename in-process.
+            with _store_replace_lock:
+                os.replace(temporary, self.path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def find(self, trigger_id: str) -> Trigger | None:
         return next((t for t in self.triggers if t.id == trigger_id), None)
 
     def matches(self, line: str) -> list[Match]:
         out = []
+        self.match_warnings = {}
+        if len(line) > MAX_LINE_CHARS:
+            self.match_warnings[""] = f"Chat line exceeds the {MAX_LINE_CHARS}-character matching limit."
+            return out
+        deadline = time.monotonic() + LINE_MATCH_BUDGET_S
         for trig in self.triggers:
-            m = match_trigger(trig, line)
+            if time.monotonic() >= deadline:
+                self.match_warnings[""] = "Trigger matching reached the time limit for this line; some triggers were skipped."
+                break
+            m = match_trigger(trig, line, deadline=deadline)
+            if trig.enabled and trig.mode == "regex" and trig.pattern in _quarantined_patterns:
+                self.match_warnings[trig.id] = regex_problem(trig.pattern)
+                trig.enabled = False
             if m is not None:
                 out.append(m)
         return out

@@ -28,7 +28,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from .app.models import EncounterSnapshot, build_snapshot
 from .grammar import DAMAGE_EFFECT_OUTCOMES, Event
@@ -51,6 +51,15 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+
+class ImportCancelled(Exception):
+    """Cooperative cancellation; no partially imported result is published."""
+
+
+def _check_cancel(cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise ImportCancelled("Import cancelled")
 
 LOG_STAMP_FMT = "%a %b %d %H:%M:%S %Y"
 LOG_LINE_RE = re.compile(r"^\[(?P<stamp>[A-Za-z]{3} [A-Za-z]{3} \d{1,2} \d{2}:\d{2}:\d{2} \d{4})\]\s?(?P<text>.*)$")
@@ -77,6 +86,7 @@ class ImportResult:
     replays_dropped: int = 0  #: lines removed as re-read copies of earlier lines (old logs)
     #: opening lines removed as repeats of the previous file's last lines (import_files only)
     backlog_dropped: int = 0
+    session_stats: SessionStats | None = field(default=None, repr=False)
 
     @property
     def name(self) -> str:
@@ -107,7 +117,7 @@ def _iter_log_lines(path: Path) -> Iterator[tuple[float, str]]:
             yield last_ts, text
 
 
-def _iter_jsonl_lines(path: Path) -> Iterator[tuple[float, str]]:
+def _iter_jsonl_lines(path: Path) -> Iterator[tuple[float, str, bool]]:
     """``(ts, text)`` of an events file (the stored classification is not used)."""
     with Path(path).open(encoding="utf-8-sig", errors="replace") as fh:
         for raw in fh:
@@ -125,17 +135,19 @@ def _iter_jsonl_lines(path: Path) -> Iterator[tuple[float, str]]:
                 ts = float(data.get("ts") or 0.0)
             except (TypeError, ValueError):
                 continue
-            yield ts, data["text"]
+            yield ts, data["text"], data.get("estimated_ts") is True
 
 
-def _parse_lines(lines: Iterable[tuple[float, str]], player_name: str) -> Iterator[Event]:
+def _parse_lines(lines: Iterable[tuple[float, str] | tuple[float, str, bool]], player_name: str) -> Iterator[Event]:
     """Parse ``(ts, text)`` lines with today's grammar.
 
     Lines the grammar cannot classify get one repair attempt through
     :class:`~mnmparse.parser.NameCompleter` (names learned from the lines before them).
     """
     names = NameCompleter()
-    for ts, line in lines:
+    for source in lines:
+        ts, line = source[:2]
+        estimated_ts = len(source) > 2 and source[2]
         for text in split_fused(line, player_name):  # two messages the OCR ran together
             ev = parse_line(text, ts, player_name)
             if ev.kind == "unknown":
@@ -144,6 +156,7 @@ def _parse_lines(lines: Iterable[tuple[float, str]], player_name: str) -> Iterat
                     repaired = parse_line(fixed, ts, player_name)
                     if repaired.kind != "unknown":
                         ev = repaired
+            ev.estimated_ts = bool(estimated_ts)
             names.observe(ev)
             yield ev
 
@@ -245,6 +258,8 @@ def import_files(
     drop_replays: bool = True,
     dummy_fix: bool = False,
     pet_owners: dict[str, str] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list[ImportResult]:
     """Import several files as one stretch of play; results in time order (by first stamp).
 
@@ -263,12 +278,18 @@ def import_files(
         if not Path(path).is_file():
             raise FileNotFoundError(path)
     vocab = vocab if vocab is not None else Vocabulary()
-    parsed = [_read(path, player_name) for path in paths]
+    parsed = []
+    for index, path in enumerate(paths):
+        _check_cancel(cancelled)
+        parsed.append(_read(path, player_name, cancelled=cancelled, progress=progress))
+        if progress is not None:
+            progress(index + 1, len(paths))
     order = sorted(range(len(parsed)), key=lambda i: (parsed[i].first is None, parsed[i].first or 0.0, i))
     results: list[ImportResult] = []
     roster: PartyRoster | None = None
     done: list[_Parsed] = []
     for i in order:
+        _check_cancel(cancelled)
         current = parsed[i]
         tail: list[str] = []
         start = current.first
@@ -293,6 +314,7 @@ def import_files(
             pet_owners=pet_owners,
             roster=roster,
             tail=tail,
+            cancelled=cancelled,
         )
         results.append(result)
         roster = result.stats.roster
@@ -312,7 +334,8 @@ class _Parsed:
     replay_aware: bool  #: written by a tracker that suppresses re-shown screens itself
 
 
-def _read(path: str | Path, player_name: str) -> _Parsed:
+def _read(path: str | Path, player_name: str, *, cancelled: Callable[[], bool] | None = None,
+          progress: Callable[[int, int], None] | None = None) -> _Parsed:
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -320,7 +343,14 @@ def _read(path: str | Path, player_name: str) -> _Parsed:
     # Both formats are re-parsed from their text, so files written by older versions get
     # today's grammar (an events file stores the classification of the day it was written).
     lines = _iter_jsonl_lines(path) if kind == "events" else _iter_log_lines(path)
-    events = list(_parse_lines(lines, player_name))
+    events = []
+    for index, event in enumerate(_parse_lines(lines, player_name)):
+        if index % 256 == 0:
+            _check_cancel(cancelled)
+            if progress is not None:
+                progress(index, 0)
+        events.append(event)
+    _check_cancel(cancelled)
     stamps = [float(ev.ts) for ev in events if ev.ts]
     first = stamps[0] if stamps else None
     aware = file_format(path) >= 2 or (first is not None and first >= REPLAY_AWARE_SINCE)
@@ -340,6 +370,7 @@ def _import(
     roster: PartyRoster | None = None,
     pet_owners: dict[str, str] | None = None,
     tail: Sequence[str] = (),
+    cancelled: Callable[[], bool] | None = None,
 ) -> ImportResult:
     """Build an :class:`ImportResult` from ``parsed`` (``roster``: carry on with this party;
     ``tail``: the previous file's last lines, for the restart backlog)."""
@@ -367,6 +398,8 @@ def _import(
     last: float | None = None
     n = 0
     for i, ev in enumerate(all_events):
+        if i % 256 == 0:
+            _check_cancel(cancelled)
         if i in backlog:
             continue  # the roster saw these in the previous file
         if i in replays:
@@ -413,6 +446,7 @@ def _import(
         events=events,
         replays_dropped=len(replays),
         backlog_dropped=len(backlog),
+        session_stats=session,
     )
     log.info("imported %s: %d lines, %d encounters", path.name, n, len(encounters))
     return result

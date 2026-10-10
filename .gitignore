@@ -16,7 +16,9 @@ exports/
 map_cache/
 config.json
 triggers.json
+revenge.json
 vocabulary.json
+*-test-results.txt
 
 # Generated when the app runs
 assets/sounds/

@@ -213,7 +213,7 @@ class LivePageTests(unittest.TestCase):
         from mnmparse.app.main import _MissingEngine
         from mnmparse.app.pages import LivePage
 
-        page = LivePage(_MissingEngine(Config()), Config(), _settings(tmp))
+        page = LivePage(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, ), _settings(tmp))
         if shown:  # an unseen page defers its redraws (see test_off_screen_page_catches_up_when_shown)
             page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             page.show()
@@ -356,7 +356,7 @@ class LivePageTests(unittest.TestCase):
                 page.add_encounter(theirs)
                 self.assertEqual(page.listed_keys(), [ours.key])
                 self.assertIn("1 fight of other groups", page._count.toolTip())
-                page.set_config(Config(show_other_groups=True))
+                page.set_config(Config(casual_mode=False, casual_mode_confirmed=True, show_other_groups=True))
                 self.assertEqual(page.listed_keys(), [theirs.key, ours.key])
             finally:
                 page.deleteLater()
@@ -412,7 +412,7 @@ class CaptureWarningTests(unittest.TestCase):
         from mnmparse.app.main import MainWindow, _MissingEngine
 
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = Config()
+            cfg = Config(casual_mode=False, casual_mode_confirmed=True, )
             win = MainWindow(_MissingEngine(cfg), None, cfg, _settings(tmp))
             win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             try:
@@ -442,7 +442,7 @@ class CaptureWarningTests(unittest.TestCase):
         from mnmparse.app.overlay import OverlayWindow
 
         with tempfile.TemporaryDirectory() as tmp:
-            overlay = OverlayWindow(_settings(tmp), Config())
+            overlay = OverlayWindow(_settings(tmp), Config(casual_mode=False, casual_mode_confirmed=True, ))
             overlay.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             try:
                 overlay.show()
@@ -469,8 +469,8 @@ class SettingsAndDetailsTests(unittest.TestCase):
     def test_empty_window_title_is_a_problem(self) -> None:
         from mnmparse.app.pages import SettingsPage
 
-        self.assertEqual(SettingsPage.problems_for(Config()), [])
-        problems = SettingsPage.problems_for(Config(window_title="   "))
+        self.assertEqual(SettingsPage.problems_for(Config(casual_mode=False, casual_mode_confirmed=True, )), [])
+        problems = SettingsPage.problems_for(Config(casual_mode=False, casual_mode_confirmed=True, window_title="   "))
         self.assertEqual(len(problems), 1)
         self.assertIn("Window title", problems[0])
 
@@ -479,7 +479,7 @@ class SettingsAndDetailsTests(unittest.TestCase):
         from mnmparse.app.pages import SettingsPage
 
         with tempfile.TemporaryDirectory() as tmp:
-            page = SettingsPage(_MissingEngine(Config()), Config(), _settings(tmp))
+            page = SettingsPage(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, ), _settings(tmp))
             try:
                 self.assertTrue(page._save.isEnabled())
                 page.window_title.setText("")
@@ -530,7 +530,7 @@ class SettingsAndDetailsTests(unittest.TestCase):
         from mnmparse.app.crop_picker import CropPicker
         from mnmparse.app.main import _MissingEngine
 
-        picker = CropPicker(_MissingEngine(Config()), Config())
+        picker = CropPicker(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, ))
         try:
             picker.set_crop((0, 60, 700, 600))
             self.assertEqual(picker.crop(), (0, 60, 700, 600))
@@ -574,7 +574,7 @@ class OverlayTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             settings = _settings(tmp)
-            overlay = OverlayWindow(settings, Config())
+            overlay = OverlayWindow(settings, Config(casual_mode=False, casual_mode_confirmed=True, ))
             try:
                 seen: list[bool] = []
                 overlay.visibility_changed.connect(seen.append)
@@ -594,7 +594,7 @@ class OverlayTests(unittest.TestCase):
         from mnmparse.app.overlay import OverlayWindow
 
         with tempfile.TemporaryDirectory() as tmp:
-            overlay = OverlayWindow(_settings(tmp), Config())
+            overlay = OverlayWindow(_settings(tmp), Config(casual_mode=False, casual_mode_confirmed=True, ))
             try:
                 seen: list[bool] = []
                 overlay.visibility_changed.connect(seen.append)

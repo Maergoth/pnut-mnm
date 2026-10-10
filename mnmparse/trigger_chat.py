@@ -29,6 +29,7 @@ import zlib
 
 from .trigger_exchange import TriggerExchangeError, validate_trigger
 from .triggers import Trigger
+from .privacy import safe_trigger_definition
 
 
 MAX_CHAT_LINE = 255
@@ -112,7 +113,7 @@ def _too_large() -> TriggerExchangeError:
 
 
 def encode_trigger(trigger: Trigger) -> str:
-    """Return exactly one pasteable game-chat message, or explain why it cannot fit."""
+    """Serialize one definition; presentation callers use encode_visible_trigger."""
     if not isinstance(trigger, Trigger):
         raise TriggerExchangeError("Select one timer to share in game chat.")
     if set(FIELDS_V1) != {item.name for item in fields(Trigger)}:
@@ -133,6 +134,13 @@ def encode_trigger(trigger: Trigger) -> str:
     if len(message) > MAX_CHAT_LINE:
         raise _too_large()
     return message
+
+
+def encode_visible_trigger(trigger: Trigger, *, cfg: object = None) -> str:
+    """Fail closed before encoding raw definitions for any presentation caller."""
+    if safe_trigger_definition(trigger, cfg) is None:
+        raise TriggerExchangeError("Casual Mode hides timer definitions; sharing is unavailable.")
+    return encode_trigger(trigger)
 
 
 def _decode(compressed: bytes) -> Trigger:

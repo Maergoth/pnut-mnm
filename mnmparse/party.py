@@ -247,11 +247,14 @@ class PartyRoster:
                     "manual_in": sorted(self.manual_in), "manual_out": sorted(self.manual_out),
                     "pet_owners": dict(self._pet_owners)}
 
-    def save(self, path: str | Path) -> None:
+    def save(self, path: str | Path) -> bool:
+        from .storage import atomic_json
         try:
-            Path(path).write_text(json.dumps(self.to_dict(), indent=1), encoding="utf-8")
+            atomic_json(Path(path), self.to_dict())
+            return True
         except OSError as exc:
             log.warning("could not save the party roster: %s", exc)
+            return False
 
     def load(self, path: str | Path, *, max_age_s: float = RELOAD_MAX_AGE_S) -> bool:
         """Restore manual choices and recent explicit members from version 4 rosters.
@@ -263,6 +266,12 @@ class PartyRoster:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
+        if not isinstance(data, dict):
+            return False
+        return self.merge_dict(data, max_age_s=max_age_s)
+
+    def merge_dict(self, data: dict[str, Any], *, max_age_s: float = RELOAD_MAX_AGE_S) -> bool:
+        """Restore a validated JSON roster, including historical archive membership."""
         if not isinstance(data, dict):
             return False
         oldest = time.time() - max_age_s

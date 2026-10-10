@@ -131,7 +131,7 @@ class _EngineCase(unittest.TestCase):
     def cfg(self, **kw: Any) -> Config:
         base = dict(player_name=PLAYER, log_dir=self.tmp, encounter_timeout_s=12.0)
         base.update(kw)
-        return Config(**base)
+        return Config(casual_mode=False, casual_mode_confirmed=True, **base)
 
     def engine(self, cfg: Config | None = None, *, run: bool = True) -> Any:
         """A new Engine (a new app process, as far as the engine knows), started when ``run``."""
@@ -590,7 +590,7 @@ class WindowStateTests(_EngineCase):
         self.assertIn("scrolled up", short)
         self.assertIn("covered", capture_warning({"scrolled_back": True, "occluded_recent": True})[0].lower())
         settings = QSettings(str(Path(self.tmp) / "settings.ini"), QSettings.Format.IniFormat)
-        overlay = OverlayWindow(settings, Config())
+        overlay = OverlayWindow(settings, Config(casual_mode=False, casual_mode_confirmed=True, ))
         try:
             overlay.set_status({"state": "running", "scrolled_back": True})
             self.assertTrue(overlay.warning_visible())
@@ -605,7 +605,7 @@ class WindowStateTests(_EngineCase):
         from mnmparse.app.main import MainWindow, _MissingEngine
 
         settings = QSettings(str(Path(self.tmp) / "settings.ini"), QSettings.Format.IniFormat)
-        win = MainWindow(_MissingEngine(Config()), None, Config(), settings)
+        win = MainWindow(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), None, Config(casual_mode=False, casual_mode_confirmed=True, ), settings)
         try:
             win.on_state("running")
             win.on_status({"state": "running", "scrolled_back": True})
@@ -685,7 +685,7 @@ class AutoCopyTests(unittest.TestCase):
 
         from mnmparse.app.main import App
 
-        app = SimpleNamespace(cfg=Config(), overlay=None, window=None, triggers=None)
+        app = SimpleNamespace(cfg=Config(casual_mode=False, casual_mode_confirmed=True, export_auto=True), overlay=None, window=None, triggers=None)
         app.copy_snapshot = lambda snap, automatic=False: App.copy_snapshot(app, snap, automatic=automatic)
         app.play_sound = lambda name: None
         clipboard = QGuiApplication.clipboard()
@@ -719,7 +719,7 @@ class ViewUpdateTests(_EngineCase):
 
         old, new = self.snaps()
         settings = QSettings(str(Path(self.tmp) / "settings.ini"), QSettings.Format.IniFormat)
-        page = LivePage(_MissingEngine(Config()), Config(), settings)
+        page = LivePage(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, ), settings)
         try:
             page.show()
             page.add_encounter(old)
@@ -741,7 +741,7 @@ class ViewUpdateTests(_EngineCase):
 
         old, new = self.snaps()
         settings = QSettings(str(Path(self.tmp) / "settings.ini"), QSettings.Format.IniFormat)
-        overlay = OverlayWindow(settings, Config())
+        overlay = OverlayWindow(settings, Config(casual_mode=False, casual_mode_confirmed=True, ))
         try:
             overlay.set_snapshot(old)
             overlay._flush_snapshot()
@@ -759,7 +759,7 @@ class ViewUpdateTests(_EngineCase):
         from mnmparse.app.pages import LivePage
 
         settings = QSettings(str(Path(self.tmp) / "settings.ini"), QSettings.Format.IniFormat)
-        page = LivePage(_MissingEngine(Config()), Config(), settings)
+        page = LivePage(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, ), settings)
         try:
             with mock.patch("mnmparse.importer.import_files", return_value=[]) as together, \
                     mock.patch("mnmparse.importer.import_file") as alone:

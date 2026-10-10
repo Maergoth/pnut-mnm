@@ -43,8 +43,9 @@ from PySide6.QtWidgets import (
 from mnmparse.app.pages import _label, _page_qss, _panel
 from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, token
 from mnmparse.config import Config, project_path
-from mnmparse.trigger_exchange import export_trigger_file, external_sound_files, merge_triggers, read_trigger_file
-from mnmparse.triggers import BUILTIN_SOUNDS, MODES, Trigger, fill_placeholders, match_trigger
+from mnmparse.privacy import casual_enabled, safe_trigger_definition, safe_trigger_label
+from mnmparse.trigger_exchange import export_visible_trigger_file, external_sound_files, merge_triggers, read_trigger_file
+from mnmparse.triggers import BUILTIN_SOUNDS, MODES, MAX_LINE_CHARS, MAX_PATTERN_CHARS, Trigger, fill_placeholders, match_trigger, regex_problem
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
@@ -106,6 +107,8 @@ class TriggersPage(QWidget):
         self.runner: "TriggerRunner | None" = None
         self._current: Trigger | None = None
         self._loading = False
+        self._dirty = False
+        self._undo_deleted: list[tuple[int, Trigger]] = []
         self._recent: deque[str] = deque(maxlen=RECENT_LINES)
         self._pending_shares: deque[ReceivedShare] = deque()
         self._seen_shares: deque[tuple[str, str]] = deque(maxlen=128)
@@ -123,6 +126,10 @@ class TriggersPage(QWidget):
         outer.setContentsMargins(20, 18, 20, 18)
         outer.setSpacing(12)
         outer.addWidget(self._build_audio_bar())
+        self.privacy_notice = _label("Casual Mode hides captured chat, custom definitions and sharing. "
+                                     "To edit or share a definition, change Morality Adjustment in Settings.", "Muted")
+        self.privacy_notice.setWordWrap(True)
+        outer.addWidget(self.privacy_notice)
 
         split = QSplitter(Qt.Orientation.Horizontal, self)
         split.setChildrenCollapsible(False)
@@ -133,7 +140,17 @@ class TriggersPage(QWidget):
         split.setStretchFactor(1, 1)
         split.setSizes([320, 760])
         outer.addWidget(split, 1)
+        save_row = QHBoxLayout()
+        self.save_status = _label("Saved", "Muted")
+        self.save_status.setAccessibleName("Trigger save status")
+        save_row.addWidget(self.save_status, 1)
+        self.retry_save = QPushButton("Retry save")
+        self.retry_save.clicked.connect(self._save_now)
+        self.retry_save.hide()
+        save_row.addWidget(self.retry_save)
+        outer.addLayout(save_row)
         self._set_editor_enabled(False)
+        self.set_config(cfg)
 
     # ================================================================ building
     def _build_audio_bar(self) -> QWidget:
@@ -248,7 +265,16 @@ class TriggersPage(QWidget):
             b.setToolTip(tip)
             b.clicked.connect(slot)
             row.addWidget(b)
+            if text == "New":
+                self.new_button = b
+            elif text == "Duplicate":
+                self.duplicate_button = b
         lay.addLayout(row)
+        self.undo_delete = QPushButton("Undo delete")
+        self.undo_delete.setObjectName("Chip")
+        self.undo_delete.setEnabled(False)
+        self.undo_delete.clicked.connect(self._on_undo_delete)
+        lay.addWidget(self.undo_delete)
         starters = QPushButton("Restore starter triggers")
         starters.setObjectName("Chip")
         starters.setToolTip("Add missing Gatekick, Healkick and Invis Break starters; keep existing trigger settings")
@@ -502,7 +528,22 @@ class TriggersPage(QWidget):
 
     def set_runner(self, runner: "TriggerRunner") -> None:
         self.runner = runner
-        runner.fired.connect(self._on_fired)
+        if hasattr(runner, "set_config"):
+            runner.set_config(self._cfg)
+        previous = getattr(self, "_connected_runner", None)
+        if previous is not runner:
+            if previous is not None:
+                for name, callback in (("fired", self._on_fired), ("matching_warning", self._on_matching_warning)):
+                    signal = getattr(previous, name, None)
+                    if signal is not None:
+                        try:
+                            signal.disconnect(callback)
+                        except (RuntimeError, TypeError):
+                            pass
+            runner.fired.connect(self._on_fired)
+            if hasattr(runner, "matching_warning"):
+                runner.matching_warning.connect(self._on_matching_warning)
+            self._connected_runner = runner
         store = runner.store
         self._loading = True
         try:
@@ -522,8 +563,38 @@ class TriggersPage(QWidget):
             self._loading = False
         self._refill_list()
 
+    def set_config(self, cfg: Config) -> None:
+        """Rerender every trigger surface immediately when the mode changes."""
+        self._cfg = cfg
+        private = casual_enabled(cfg)
+        self.privacy_notice.setVisible(private)
+        self.new_button.setEnabled(not private)
+        self.duplicate_button.setEnabled(not private)
+        if private:
+            self._recent.clear()
+            self.recent.clear()
+            self.test_line.clear()
+            self.test_result.setToolTip("")
+            self.search.clear()
+            self.sharing_status.clear()
+            for dialog in (self._chat_dialog, self._chat_export_dialog):
+                if dialog is not None:
+                    dialog.set_config(cfg)
+                    dialog.reject()
+        self._refresh_completions()
+        self._refill_list()
+        self._load_editor(self._current)
+        self._update_chat_notice()
+
+    def _on_matching_warning(self, message: str) -> None:
+        self._sharing_feedback(message, error=True)
+        self._refill_list()
+        self._schedule_save()
+
     def add_recent_line(self, text: str) -> None:
         """A chat line was read (feeds the pattern box's completion)."""
+        if casual_enabled(self._cfg):
+            return
         text = (text or "").strip()
         if text and (not self._recent or self._recent[-1] != text):
             self._recent.append(text)
@@ -533,6 +604,9 @@ class TriggersPage(QWidget):
         self._refresh_completions()
 
     def _refresh_completions(self) -> None:
+        if casual_enabled(self._cfg):
+            self._completer_model.setStringList([])
+            return
         seen: dict[str, None] = {}
         for line in reversed(self._recent):
             seen.setdefault(line, None)
@@ -558,7 +632,9 @@ class TriggersPage(QWidget):
             self.list.clear()
             select = None
             for trig in self._store_triggers():
-                if needle and needle not in trig.name.lower() and needle not in trig.pattern.lower():
+                title = safe_trigger_label(trig.name, self._cfg)
+                pattern = "" if casual_enabled(self._cfg) else trig.pattern
+                if needle and needle not in title.lower() and needle not in pattern.lower():
                     continue
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, trig.id)
@@ -579,14 +655,17 @@ class TriggersPage(QWidget):
         elif self.list.count() and self._current is None:
             self.list.setCurrentRow(0)
 
-    @staticmethod
-    def _fill_item(item: QListWidgetItem, trig: Trigger) -> None:
+    def _fill_item(self, item: QListWidgetItem, trig: Trigger) -> None:
         bits = [ACTION_TITLES.get(trig.action, trig.action).lower()]
         if trig.timer:
             m, s = divmod(int(trig.timer_seconds), 60)
             bits.append(f"timer {m}:{s:02d}")
-        item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
-        item.setToolTip(f"{trig.name}\n{MODE_TITLES.get(trig.mode, trig.mode)}: {trig.pattern}")
+        if casual_enabled(self._cfg):
+            item.setText(f"{safe_trigger_label(trig.name, self._cfg)}\n    Captured chat hidden  ·  {', '.join(bits)}")
+            item.setToolTip("Casual Mode hides custom definitions and captured chat.")
+        else:
+            item.setText(f"{trig.name}\n    “{trig.pattern}”  ·  {', '.join(bits)}")
+            item.setToolTip(f"{trig.name}\n{MODE_TITLES.get(trig.mode, trig.mode)}: {trig.pattern}")
 
     def _on_item_checked(self, item: QListWidgetItem) -> None:
         trig = self.runner.store.find(str(item.data(Qt.ItemDataRole.UserRole))) if self.runner else None
@@ -602,7 +681,7 @@ class TriggersPage(QWidget):
         self._load_editor(trig)
 
     def _on_new(self) -> None:
-        if self.runner is None:
+        if self.runner is None or casual_enabled(self._cfg):
             return
         trig = Trigger(name=f"Trigger {len(self._store_triggers()) + 1}")
         self.runner.store.triggers.append(trig)
@@ -612,7 +691,7 @@ class TriggersPage(QWidget):
         self.pattern.setFocus()
 
     def _on_duplicate(self) -> None:
-        if self.runner is None or self._current is None:
+        if self.runner is None or self._current is None or casual_enabled(self._cfg):
             return
         copy = Trigger.from_dict({**self._current.to_dict(), "id": "", "name": f"{self._current.name} (copy)"})
         copy.id = Trigger().id
@@ -624,10 +703,27 @@ class TriggersPage(QWidget):
     def _on_delete(self) -> None:
         if self.runner is None or self._current is None:
             return
-        self.runner.store.triggers = [t for t in self.runner.store.triggers if t.id != self._current.id]
+        previous = self._current
+        index = self.runner.store.triggers.index(previous)
+        self._undo_deleted.append((index, previous))
+        self.undo_delete.setEnabled(True)
+        self.runner.store.triggers = [t for t in self.runner.store.triggers if t is not previous]
         self._current = None
         self._refill_list()
         self._load_editor(self._current)
+        self._schedule_save()
+
+    def _on_undo_delete(self) -> None:
+        if self.runner is None or not self._undo_deleted:
+            return
+        index, trigger = self._undo_deleted.pop()
+        if self.runner.store.find(trigger.id) is not None:
+            trigger.id = Trigger().id
+        self.runner.store.triggers.insert(min(index, len(self.runner.store.triggers)), trigger)
+        self.undo_delete.setEnabled(bool(self._undo_deleted))
+        self._current = trigger
+        self.search.clear()
+        self._refill_list()
         self._schedule_save()
 
     def _restore_presets(self) -> None:
@@ -652,7 +748,8 @@ class TriggersPage(QWidget):
             incoming = read_trigger_file(path)
         except (OSError, ValueError) as exc:
             log.warning("import failed: %s", exc)
-            self._sharing_feedback(f"Import failed: {exc}", error=True)
+            self._sharing_feedback("Import failed: the timer file is invalid or could not be read." if casual_enabled(self._cfg)
+                                   else f"Import failed: {exc}", error=True)
             return
         self._merge_incoming(incoming)
 
@@ -665,11 +762,12 @@ class TriggersPage(QWidget):
             result = merge_triggers(self.runner.store.triggers, incoming)
         except (OSError, ValueError) as exc:
             log.warning("import failed: %s", exc)
-            self._sharing_feedback(f"Import failed: {exc}", error=True)
+            self._sharing_feedback("Import failed: the timer definition is invalid." if casual_enabled(self._cfg)
+                                   else f"Import failed: {exc}", error=True)
             return False
         if result.added:
             previous = self.runner.store.triggers
-            pending_save = self._save_timer.isActive()
+            pending_save = self._dirty
             self._save_timer.stop()
             self.runner.store.triggers = result.triggers
             try:
@@ -679,8 +777,10 @@ class TriggersPage(QWidget):
                 if pending_save:
                     self._schedule_save()
                 log.warning("could not save imported timers: %s", exc)
-                self._sharing_feedback(f"Import failed: could not save timers. {exc}", error=True)
+                self._sharing_feedback("Import failed: could not save timers. Retry saving before importing." if casual_enabled(self._cfg)
+                                       else f"Import failed: could not save timers. {exc}", error=True)
                 return False
+            self._set_saved()
             previous_ids = {trig.id for trig in previous}
             self._current = next((trig for trig in result.triggers if trig.id not in previous_ids), self._current)
             self.search.clear()
@@ -700,6 +800,11 @@ class TriggersPage(QWidget):
         if (selected and self._current is None) or not triggers:
             self._sharing_feedback("Select a timer to export." if selected else "There are no timers to export.", error=True)
             return
+        if any(safe_trigger_definition(trigger, self._cfg) is None for trigger in triggers):
+            self._sharing_feedback("Casual Mode hides custom timer definitions. Change Morality Adjustment in Settings before exporting.", error=True)
+            return
+        if not self.flush_pending_changes():
+            return
         filename = "PNUT-timer.json" if selected else "PNUT-timers.json"
         path, _ = QFileDialog.getSaveFileName(self, "Export timer" if selected else "Export all timers",
                                              str(project_path(filename)), "Timers and triggers (*.json)")
@@ -711,10 +816,13 @@ class TriggersPage(QWidget):
         try:
             if self.runner.store.path is not None and destination.resolve() == self.runner.store.path.resolve():
                 raise ValueError("Choose another filename; this is PNUT's active timer settings file.")
-            export_trigger_file(destination, triggers)
+            # A native chooser runs a nested event loop; policy may have
+            # changed since the initial button check. Recheck at publication.
+            export_visible_trigger_file(destination, triggers, cfg=self._cfg)
         except (OSError, ValueError) as exc:
             log.warning("export failed: %s", exc)
-            self._sharing_feedback(f"Export failed: {exc}", error=True)
+            self._sharing_feedback("Export unavailable in Casual Mode." if casual_enabled(self._cfg)
+                                   else f"Export failed: {exc}", error=True)
             return
         message = f"Exported {len(triggers)} to {destination.name}."
         if external_sound_files(triggers):
@@ -725,17 +833,22 @@ class TriggersPage(QWidget):
         if self._current is None:
             self._sharing_feedback("Select a timer to share in game chat.", error=True)
             return
+        if safe_trigger_definition(self._current, self._cfg) is None:
+            self._sharing_feedback("Casual Mode hides custom timer definitions. Change Morality Adjustment in Settings before sharing.", error=True)
+            return
+        if not self.flush_pending_changes():
+            return
         from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog
-        from mnmparse.trigger_chat import encode_trigger
+        from mnmparse.trigger_chat import encode_visible_trigger
 
         try:
-            code = encode_trigger(self._current)
+            code = encode_visible_trigger(self._current, cfg=self._cfg)
         except ValueError as exc:
             self._sharing_feedback(f"Could not share this timer: {exc}", error=True)
             return
         if self._chat_export_dialog is not None:
             self._chat_export_dialog.close()
-        dialog = TriggerChatExportDialog(self._current, code, self.window())
+        dialog = TriggerChatExportDialog(self._current, code, self.window(), cfg=self._cfg)
         self._chat_export_dialog = dialog
         dialog.finished.connect(lambda _result: self._finish_chat_export(dialog))
         dialog.show()
@@ -772,7 +885,7 @@ class TriggersPage(QWidget):
         if not count:
             self.chat_share_pending.emit("")
             return
-        name = " ".join(self._pending_shares[0].trigger.name.split()) or "Unnamed timer"
+        name = safe_trigger_label(" ".join(self._pending_shares[0].trigger.name.split()) or "Unnamed timer", self._cfg)
         short_name = name[:77] + "…" if len(name) > 80 else name
         message = f'Shared timer “{short_name}” is ready to review.'
         if count > 1:
@@ -793,7 +906,7 @@ class TriggersPage(QWidget):
         from mnmparse.app.trigger_share_dialog import TriggerSharePrompt
 
         share = self._pending_shares[0]
-        dialog = TriggerSharePrompt(share.trigger, share.sender, self.window())
+        dialog = TriggerSharePrompt(share.trigger, share.sender, self.window(), cfg=self._cfg)
         self._chat_dialog = dialog
         dialog.import_requested.connect(lambda: self._import_chat_share(dialog, share))
         dialog.finished.connect(lambda _result: self._finish_chat_review(dialog, share))
@@ -824,9 +937,15 @@ class TriggersPage(QWidget):
         self.editor.setEnabled(on)
 
     def _load_editor(self, trig: Trigger | None) -> None:
-        self._set_editor_enabled(trig is not None)
-        if trig is None:
-            return
+        hidden = casual_enabled(self._cfg)
+        self._set_editor_enabled(trig is not None and not hidden)
+        if trig is None or hidden:
+            # Clearing the disabled controls matters: hiding/disabling a widget
+            # alone leaves its text available to tooltips, selection and exports.
+            trig = Trigger(name="Timer" if hidden else "", pattern="", speech="", timer_label="",
+                           timer_warn_speech="", timer_end_speech="")
+            self.test_line.clear()
+            self.test_result.setToolTip("")
         self._loading = True
         try:
             self.name.setText(trig.name)
@@ -865,7 +984,7 @@ class TriggersPage(QWidget):
         self._update_test()
 
     def _on_edit(self, *_args: Any) -> None:
-        if self._loading or self._current is None:
+        if self._loading or self._current is None or casual_enabled(self._cfg):
             return
         t = self._current
         t.name = self.name.text().strip() or "Trigger"
@@ -948,6 +1067,10 @@ class TriggersPage(QWidget):
     def _update_test(self, *_args: Any) -> None:
         t = self._current
         line = self.test_line.text()
+        self.test_result.setToolTip("")
+        if casual_enabled(self._cfg):
+            self.test_result.setText("Captured chat and regex groups are hidden in Casual Mode.")
+            return
         if t is None:
             self.test_result.setText("")
             return
@@ -958,10 +1081,14 @@ class TriggersPage(QWidget):
         if not line.strip():
             self.test_result.setText("Paste a line above to see whether it matches.")
             return
+        if len(line) > MAX_LINE_CHARS:
+            self.test_result.setText(f"⚠ Test line is too long (maximum {MAX_LINE_CHARS} characters).")
+            return
         probe = Trigger.from_dict({**t.to_dict(), "enabled": True})
         m = match_trigger(probe, line)
         if m is None:
-            self.test_result.setText("✗ No match")
+            problem = regex_problem(t.pattern) if t.mode == "regex" else ""
+            self.test_result.setText("⚠ " + problem if problem else "✗ No match")
         else:
             values = m.values()
             label = fill_placeholders(t.timer_label or t.name, values)
@@ -983,12 +1110,21 @@ class TriggersPage(QWidget):
             return
         t = self._current
         audio = self.runner.audio
+        if casual_enabled(self._cfg):
+            if which == "sound":
+                audio.play_builtin(t.sound, t.volume)
+            elif which != "file":
+                audio.speak(safe_trigger_label(t.name, self._cfg), t.volume)
+            return
         if which == "sound":
             audio.play_builtin(self.sound.currentText(), t.volume)
         elif which == "file":
             audio.play_file(self.file.text().strip(), t.volume)
         else:
             m = match_trigger(Trigger.from_dict({**t.to_dict(), "enabled": True}), self.test_line.text())
+            if t.mode == "regex" and regex_problem(t.pattern):
+                self._update_test()
+                return
             values = m.values() if m else {"line": t.pattern, "match": t.pattern, "name": t.name}
             audio.speak(fill_placeholders(self.speech.text(), values), t.volume)
 
@@ -998,14 +1134,44 @@ class TriggersPage(QWidget):
 
     # ================================================================ saving
     def _schedule_save(self) -> None:
+        self._dirty = True
+        self.save_status.setText("Unsaved changes…")
         self._save_timer.start()
 
-    def _save_now(self) -> None:
+    def _set_saved(self) -> None:
+        self._dirty = False
+        self.save_status.setText("Saved")
+        self.save_status.setToolTip("")
+        self.retry_save.hide()
+
+    def _save_now(self) -> bool:
+        self._save_timer.stop()
         if self.runner is not None:
             try:
                 self.runner.save()
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
+                self._dirty = True
+                self.save_status.setText("Changes could not be saved. Retry before closing.")
+                self.save_status.setToolTip("The previous file is intact. Your changes remain in memory.")
+                self.retry_save.show()
                 log.warning("could not save the triggers: %s", exc)
+                return False
+        self._set_saved()
+        return True
+
+    def flush_pending_changes(self) -> bool:
+        """Called by window shutdown before destroying a debounced editor."""
+        return self._save_now() if self._dirty or self._save_timer.isActive() else True
+
+    def hideEvent(self, event: Any) -> None:  # noqa: N802
+        self.flush_pending_changes()
+        super().hideEvent(event)
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802
+        if self.flush_pending_changes():
+            super().closeEvent(event)
+        else:
+            event.ignore()
 
     def _on_audio_changed(self, *_args: Any) -> None:
         if self._loading or self.runner is None:
@@ -1019,8 +1185,10 @@ class TriggersPage(QWidget):
 
     def _on_fired(self, m: Any) -> None:
         stamp = time.strftime("%H:%M:%S")
-        item = QListWidgetItem(f"{stamp}  {m.trigger.name}  ·  {m.line}")
-        item.setToolTip(m.line)
+        title = safe_trigger_label(m.trigger.name, self._cfg)
+        line = "Captured chat hidden in Casual Mode" if casual_enabled(self._cfg) else m.line
+        item = QListWidgetItem(f"{stamp}  {title}  ·  {line}")
+        item.setToolTip(line)
         self.recent.insertItem(0, item)
         while self.recent.count() > 50:
             self.recent.takeItem(self.recent.count() - 1)

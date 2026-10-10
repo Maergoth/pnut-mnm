@@ -93,6 +93,11 @@ example = ROOT / "config.example.json"
 if example.is_file():
     datas.append((str(example), "."))
 datas.append((str(ROOT / "legal"), "legal"))
+provenance = ROOT / "build" / "build-info.json"
+if not provenance.is_file():
+    raise RuntimeError("Run build_exe.ps1 to generate current build provenance before freezing")
+datas.append((str(provenance), "."))
+hiddenimports += ["regex", "regex._regex"]
 
 excludes = [
     # Optional OCR fallback (big): set "ocr_engine": "rapid" only in a source checkout.

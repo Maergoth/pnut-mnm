@@ -56,7 +56,12 @@ class LaunchIdentityTests(unittest.TestCase):
         cwd = Path.cwd()
         with self.frozen(), patch.object(identity.subprocess, "Popen", return_value=self.child()) as spawn:
             self.assertEqual(identity.launch_if_needed(args), 0)
-            self.assertEqual(identity.launch_if_needed(args), 0)
+            # A real running image cannot be removed on Windows. Keep the first
+            # mocked child protected while proving a second launch has a new name.
+            first = Path(spawn.call_args.args[0][0])
+            remove = identity._remove_session
+            with patch.object(identity, "_remove_session", side_effect=lambda path: False if path == first else remove(path)):
+                self.assertEqual(identity.launch_if_needed(args), 0)
         paths = [Path(call.args[0][0]) for call in spawn.call_args_list]
         self.assertNotEqual(paths[0], paths[1])
         for path, call in zip(paths, spawn.call_args_list):
@@ -77,17 +82,25 @@ class LaunchIdentityTests(unittest.TestCase):
     def test_child_consumes_handoff_and_does_not_relaunch(self):
         alias = identity._copy_session(self.canonical)
         os.environ[identity._HANDOFF] = str(alias)
-        with self.frozen(alias), patch.object(identity.subprocess, "Popen") as spawn:
+        with self.frozen(alias), patch.object(identity.subprocess, "Popen") as spawn, patch.object(identity.atexit, "register") as register:
             self.assertIsNone(identity.launch_if_needed([]))
         spawn.assert_not_called()
         self.assertNotIn(identity._HANDOFF, os.environ)
         self.assertTrue(identity.is_session_executable(alias))
+        register.assert_called_once_with(identity._schedule_session_cleanup, alias)
 
     def test_direct_alias_launch_cannot_reuse_old_identity(self):
         alias = identity._copy_session(self.canonical)
         with self.frozen(alias):
             with self.assertRaisesRegex(identity.LaunchError, "Start the application using"):
                 identity.launch_if_needed([])
+
+    def test_diagnostic_child_does_not_schedule_a_competing_exit_helper(self):
+        alias = identity._copy_session(self.canonical)
+        os.environ[identity._HANDOFF] = str(alias)
+        with self.frozen(alias), patch.object(identity.atexit, "register") as register:
+            self.assertIsNone(identity.launch_if_needed(["--smoke-test", "--report", "report.json"]))
+        register.assert_not_called()
 
     def test_handoff_for_another_alias_is_rejected_and_consumed(self):
         alias = identity._copy_session(self.canonical)
@@ -184,7 +197,7 @@ class LaunchIdentityTests(unittest.TestCase):
         self.assertEqual(result.stem, second)
         self.assertEqual(collision.read_bytes(), b"unrelated")
 
-    def test_cleanup_removes_only_owned_old_copies_even_after_update(self):
+    def test_cleanup_removes_owned_same_day_copies_even_after_update(self):
         old = identity._copy_session(self.canonical)
         fresh = identity._copy_session(self.canonical)
         unrelated = self.root / ("c" * 24 + ".exe")
@@ -196,7 +209,7 @@ class LaunchIdentityTests(unittest.TestCase):
         identity.cleanup_sessions(self.root, now=now)
         self.assertFalse(old.exists())
         self.assertFalse(identity._marker(old).exists())
-        self.assertTrue(fresh.exists())
+        self.assertFalse(fresh.exists(), "Inactive copies need no one-day delay")
         self.assertTrue(unrelated.exists())
 
     def test_cleanup_keeps_locked_copy_and_ownership_record(self):

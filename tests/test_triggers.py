@@ -186,6 +186,7 @@ class RuntimeTests(unittest.TestCase):
         store = TriggerStore(Path(tmp) / "triggers.json")
         store.triggers = list(triggers)
         runner = TriggerRunner(store)
+        runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         runner.played = []
         runner.audio.run = lambda action, **kw: runner.played.append((action, kw))  # no real sound in tests
         return runner
@@ -289,7 +290,7 @@ class RuntimeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             runner = self._runner(tmp)
-            page = TriggersPage(_MissingEngine(Config()), Config(), QSettings(str(Path(tmp) / "p.ini"), QSettings.Format.IniFormat))
+            page = TriggersPage(_MissingEngine(Config()), Config(casual_mode=False, casual_mode_confirmed=True), QSettings(str(Path(tmp) / "p.ini"), QSettings.Format.IniFormat))
             page.set_runner(runner)
             try:
                 page._on_new()

@@ -84,7 +84,8 @@ def _load_cfg(path: str | None) -> Config:
     from mnmparse.config import load_config
 
     cfg = load_config(path)
-    log.debug("config: %s", cfg)
+    from mnmparse.privacy import casual_enabled, safe_config_data
+    log.debug("config: %s", safe_config_data(dataclasses.asdict(cfg)) if casual_enabled(cfg) else cfg)
     return cfg
 
 
@@ -108,7 +109,39 @@ def _note_encounter(stats: Stats, seen: list[Encounter]) -> None:
         seen.append(enc)
 
 
-def _print_encounters(stats: Stats, seen: list[Encounter]) -> None:
+def _render_encounter(stats: Stats, enc: Encounter, cfg: Config | None = None) -> str:
+    """CLI output boundary: canonical numbers are projected before rendering."""
+    from mnmparse.app.models import build_snapshot
+    from mnmparse.privacy import casual_enabled, project_encounter
+    if not casual_enabled(cfg):
+        return stats.render(enc)
+    snap = project_encounter(build_snapshot(stats, enc, getattr(cfg, "player_name", "")), cfg)
+    lines = [f"{snap.label} - {snap.duration:.1f}s", "Actor                          Damage       DPS     Heals   Utility"]
+    lines.extend(f"{row.name:30} {row.damage:9g} {row.dps:9.2f} {row.heals:9g} {row.utility:9g}" for row in snap.rows)
+    if not snap.rows:
+        lines.append("No own-character data available.")
+    return "\n".join(lines)
+
+
+def _event_output(ev: Event, cfg: Config) -> str | None:
+    from mnmparse.privacy import safe_event_text
+    return safe_event_text(ev, cfg)
+
+
+def _event_export(ev: Event, cfg: Config) -> dict | None:
+    from mnmparse.privacy import casual_enabled
+    if not casual_enabled(cfg):
+        return dataclasses.asdict(ev)
+    text = _event_output(ev, cfg)
+    if text is None:
+        return None
+    # No raw text, target identities, skill strings or arbitrary parser outcomes
+    # cross the Casual export boundary.
+    return dict(ts=ev.ts, kind=ev.kind, text=text, actor=cfg.player_name,
+                amount=ev.amount, estimated=ev.estimated, estimated_ts=ev.estimated_ts)
+
+
+def _print_encounters(stats: Stats, seen: list[Encounter], cfg: Config | None = None) -> None:
     """Render every encounter in ``seen`` as a console table."""
     if not seen:
         print("No encounters found.")
@@ -117,7 +150,7 @@ def _print_encounters(stats: Stats, seen: list[Encounter]) -> None:
         zone = stats.zone_at(enc.start) if hasattr(stats, "zone_at") else ""
         where = f"  [{zone}]" if zone else ""
         print(f"\n--- Encounter {i}{where} ---")
-        print(stats.render(enc))
+        print(_render_encounter(stats, enc, cfg))
 
 
 def _split_log_line(raw: str, fallback_ts: float) -> tuple[float, str]:
@@ -376,11 +409,15 @@ class _RunSession:
             return
         self.writer.write_raw(msg)
         ev = parse_line(msg.text, msg.first_seen, self.cfg.player_name)
+        ev.estimated_ts = bool(getattr(msg, "estimated_ts", False))
         self.writer.write_event(ev)
         self.stats.add(ev)
         _note_encounter(self.stats, self.encounters)
         self.messages += 1
-        line = f"[{_hms(msg.first_seen)}] {msg.text}"
+        text = _event_output(ev, self.cfg)
+        if text is None:
+            return
+        line = f"[{_hms(msg.first_seen)}] {text}"
         print(line, flush=True)
         if self.ui is not None:
             self.ui.append(line)
@@ -389,7 +426,7 @@ class _RunSession:
         closed = self.stats.expire(time.time())
         if closed is not None:
             # The fight simply ended (no kill line): print its final table once.
-            table = "FINAL " + self.stats.render(closed)
+            table = "FINAL " + _render_encounter(self.stats, closed, self.cfg)
             print(table, flush=True)
             if self.ui is not None:
                 self.ui.set_stats(table)
@@ -397,7 +434,7 @@ class _RunSession:
         enc = self.stats.current()
         if enc is None:
             return
-        table = self.stats.render(enc)
+        table = _render_encounter(self.stats, enc, self.cfg)
         print(table, flush=True)
         if self.ui is not None:
             self.ui.set_stats(table)
@@ -418,7 +455,7 @@ class _RunSession:
         if enc is None:
             print("No encounters recorded.")
         else:
-            print(self.stats.render(enc))
+            print(_render_encounter(self.stats, enc, self.cfg))
 
 
 def _install_break_handler() -> None:
@@ -524,6 +561,10 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 def cmd_snapshot(args: argparse.Namespace) -> int:
     """Capture one frame, crop it, OCR it once and print the recognised lines."""
     cfg = _load_cfg(args.config)
+    from mnmparse.privacy import casual_enabled
+    if casual_enabled(cfg):
+        print("Raw screenshots and OCR diagnostics require confirmed full mode in Morality Adjustment.", file=sys.stderr)
+        return EXIT_USAGE
     if not _require_window(cfg):
         return EXIT_NO_WINDOW
     engine = _make_engine_or_none(cfg)
@@ -615,6 +656,7 @@ def cmd_parse(args: argparse.Namespace) -> int:
 
     from mnmparse.importer import import_file, import_files
     from mnmparse.session import format_coin
+    from mnmparse.privacy import casual_enabled, project_session
 
     options = dict(
         player_name=cfg.player_name,
@@ -627,22 +669,30 @@ def cmd_parse(args: argparse.Namespace) -> int:
         if args.jsonl:
             with open(args.jsonl, "a", encoding="utf-8") as jsonl:
                 for ev in result.events:
-                    jsonl.write(json.dumps(dataclasses.asdict(ev)) + "\n")
+                    exported = _event_export(ev, cfg)
+                    if exported is not None:
+                        jsonl.write(json.dumps(exported) + "\n")
             print(f"Events appended to {args.jsonl}")
         if args.events:
             for ev in result.events:
-                print(f"[{_hms(ev.ts)}] {ev.text}")
-                print(_format_event(ev))
+                text = _event_output(ev, cfg)
+                if text is not None:
+                    print(f"[{_hms(ev.ts)}] {text}")
+                    if not casual_enabled(cfg):
+                        print(_format_event(ev))
         counts = Counter(result.counts)
-        summary = ", ".join(f"{kind}={cnt}" for kind, cnt in counts.most_common())
+        summary = ("Casual Mode: own-character output" if casual_enabled(cfg) else
+                   ", ".join(f"{kind}={cnt}" for kind, cnt in counts.most_common()))
         dropped = f" ({result.backlog_dropped} repeated at a restart left out)" if result.backlog_dropped else ""
         print(f"{result.path} ({result.kind}): {result.messages} lines{dropped} -> {summary or 'no events'}")
-        _print_encounters(result.stats, list(result.stats.history))
-        s = result.session
+        _print_encounters(result.stats, list(result.stats.history), cfg)
+        s = project_session(result.session, cfg)
         print(
             f"Session: {s.items} items looted, {format_coin(s.coin_total)} coin, {s.crafts} crafted, "
             f"{s.kills} kills, {s.deaths} deaths, {s.cc_total} CC landed, {len(result.encounters)} encounters"
         )
+        if s.group_averages:
+            print("Group average: " + ", ".join(f"{key}={value:g}" for key, value in s.group_averages.items()))
     return EXIT_OK
 
 
@@ -658,6 +708,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     from mnmparse.parser import parse_line
     from mnmparse.stats import Stats
     from mnmparse.tracker import Tracker
+    from mnmparse.privacy import casual_enabled
 
     data = json.loads(path.read_text(encoding="utf-8"))
     frames = data.get("frames", [])
@@ -671,11 +722,14 @@ def cmd_replay(args: argparse.Namespace) -> int:
         nonlocal emitted
         emitted += 1
         ev = parse_line(msg.text, msg.first_seen, cfg.player_name)
+        ev.estimated_ts = bool(getattr(msg, "estimated_ts", False))
         stats.add(ev)
         _note_encounter(stats, encounters)
-        print(f"[+{msg.first_seen:7.3f}s] {msg.text}")
-        if args.events:
-            print(_format_event(ev))
+        text = _event_output(ev, cfg)
+        if text is not None:
+            print(f"[+{msg.first_seen:7.3f}s] {text}")
+            if args.events and not casual_enabled(cfg):
+                print(_format_event(ev))
 
     now = 0.0
     for fr in frames:
@@ -689,7 +743,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     for msg in tracker.flush(now):
         handle(msg)
     print(f"\n{emitted} messages emitted from {len(frames)} frames.")
-    _print_encounters(stats, encounters)
+    _print_encounters(stats, encounters, cfg)
     return EXIT_OK
 
 
@@ -797,8 +851,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point: parse arguments, configure logging, dispatch; returns the exit code."""
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
+    from mnmparse.privacy import casual_enabled
+    cfg = _load_cfg(args.config)
+    class PrivacyLogFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            if not casual_enabled(cfg) or not record.name.startswith("mnmparse"):
+                return True
+            if record.levelno < logging.WARNING:
+                return False  # parser/tracker diagnostic arguments may include raw chat
+            record.msg = "PNUT reported a diagnostic warning; technical details are withheld in Casual Mode."
+            record.args = ()
+            record.exc_info = record.exc_text = record.stack_info = None
+            return True
+    privacy_filter = PrivacyLogFilter()
+    handlers = list(logging.getLogger().handlers)
+    for handler in handlers:
+        handler.addFilter(privacy_filter)
     func: Callable[[argparse.Namespace], int] = args.func
-    return func(args)
+    try:
+        return func(args)
+    finally:
+        for handler in handlers:
+            handler.removeFilter(privacy_filter)
 
 
 if __name__ == "__main__":

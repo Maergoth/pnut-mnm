@@ -65,8 +65,8 @@ class FormatTests(unittest.TestCase):
     def test_preset_names_and_config(self) -> None:
         self.assertEqual(preset_for(PRESETS["Healing"]), "Healing")
         self.assertEqual(preset_for(ExportFormat("{title}", "{name}")), "Custom")
-        self.assertEqual(format_from_config(Config()), PRESETS["DPS"])
-        cfg = dataclasses.replace(Config(), export_sort="mana", export_max_actors=0, export_line="a\nb")
+        self.assertEqual(format_from_config(Config(casual_mode=False, casual_mode_confirmed=True, )), PRESETS["DPS"])
+        cfg = dataclasses.replace(Config(casual_mode=False, casual_mode_confirmed=True, ), export_sort="mana", export_max_actors=0, export_line="a\nb")
         problems = " ".join(cfg.problems())
         self.assertIn("export_sort", problems)
         self.assertIn("export_max_actors", problems)
@@ -94,7 +94,7 @@ class ExportUiTests(unittest.TestCase):
         from mnmparse.app.overlay import OverlayWindow
 
         with tempfile.TemporaryDirectory() as tmp:
-            ov = OverlayWindow(self._settings(tmp), Config())
+            ov = OverlayWindow(self._settings(tmp), Config(casual_mode=False, casual_mode_confirmed=True, ))
             for w in (ov, ov.attack_bar, ov.timer_panel):
                 w.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             got = []
@@ -134,7 +134,7 @@ class ExportUiTests(unittest.TestCase):
             from test_app_widgets import _actor, _snapshot
 
         with tempfile.TemporaryDirectory() as tmp:
-            page = LivePage(_MissingEngine(Config()), Config(), self._settings(tmp))
+            page = LivePage(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, ), self._settings(tmp))
             page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             page.show()
             try:
@@ -154,7 +154,7 @@ class ExportUiTests(unittest.TestCase):
         from mnmparse.app.pages import SettingsPage
 
         with tempfile.TemporaryDirectory() as tmp:
-            page = SettingsPage(_MissingEngine(Config()), Config(player_name="Maergoth"), self._settings(tmp))
+            page = SettingsPage(_MissingEngine(Config(casual_mode=False, casual_mode_confirmed=True, )), Config(casual_mode=False, casual_mode_confirmed=True, player_name="Maergoth"), self._settings(tmp))
             try:
                 self.assertEqual(page.export_preset.currentText(), "DPS")
                 self.assertIn("Maergoth 24.1", page.export_preview.text())
@@ -177,7 +177,7 @@ class ExportUiTests(unittest.TestCase):
 
         from mnmparse.app.main import App
 
-        app = SimpleNamespace(cfg=Config(), overlay=None, window=None, triggers=None)
+        app = SimpleNamespace(cfg=Config(casual_mode=False, casual_mode_confirmed=True, export_auto=True), overlay=None, window=None, triggers=None)
         app.copy_snapshot = lambda snap, automatic=False: App.copy_snapshot(app, snap, automatic=automatic)
         app.play_sound = lambda name: None
         clipboard = QGuiApplication.clipboard()

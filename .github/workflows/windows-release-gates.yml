@@ -1,0 +1,49 @@
+name: Windows regression and portable release gates
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+      PNUT_NATIVE_UI_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.3'
+      - name: Install tested runtime and build dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+      - name: Run regression suite without game capture
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Regression suite failed' }
+      - name: Clean frozen build and embedded provenance/startup gate
+        shell: pwsh
+        run: ./build_exe.ps1 -Clean
+      - name: Extracted ZIP startup, version, checksum and layout gate
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe scripts/package_release.py
+          if ($LASTEXITCODE -ne 0) { throw 'Extracted portable release gate failed' }
+      - name: Preserve build diagnostics and verified portable artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-gates
+          path: |
+            build/startup-smoke-*.json
+            build/build-info.json
+            dist/releases/*
+          if-no-files-found: warn

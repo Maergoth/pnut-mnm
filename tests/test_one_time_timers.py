@@ -35,6 +35,7 @@ class OneTimeTimerTests(unittest.TestCase):
         self.store.save()
         self.saved_text = self.store.path.read_text(encoding="utf-8")
         self.runner = TriggerRunner(self.store)
+        self.runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         self.runner.audio.run = Mock()
         self.runner.audio.cancel_speech = Mock()
         self.changes = Mock()

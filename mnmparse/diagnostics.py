@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+from contextlib import nullcontext
 import platform
 import tempfile
 import zipfile
@@ -19,6 +20,32 @@ from typing import Any
 
 from mnmparse import __version__
 from mnmparse.config import Config
+from mnmparse.privacy import casual_enabled, safe_config_data
+
+
+def _technical(value: Any) -> Any:
+    """Unknown strings (including OCR evidence) have no place in a Casual report."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, dict):
+        return {key: _technical(item) for key, item in value.items()
+                if isinstance(key, str) and not isinstance(item, str)}
+    if isinstance(value, (list, tuple)):
+        return [_technical(item) for item in value if not isinstance(item, str)]
+    return None
+
+
+def _restrict_report(report: dict[str, Any]) -> dict[str, Any]:
+    allowed = {key: report[key] for key in ("format", "format_version", "created_at_utc", "app_version", "environment", "crop") if key in report}
+    for key in ("saved_settings", "effective_settings", "edited_settings"):
+        allowed[key] = safe_config_data(report.get(key, {}))
+    for key in ("active_ocr", "pending_ocr_settings", "runtime", "tracker", "preview_metadata"):
+        allowed[key] = _technical(report.get(key, {}))
+    allowed["privacy_mode"] = "casual"
+    allowed["capture"] = {"attempted": False, "available": False, "reason": "Screenshots and raw OCR evidence are hidden in Casual Mode."}
+    allowed["export_scope"] = "Technical counters and settings only. Raw source files remain local."
+    allowed["limitations"] = ["This report cannot establish whether invisible chat lines were missed."]
+    return allowed
 
 
 def _config_data(cfg: Config) -> dict[str, Any]:
@@ -94,8 +121,9 @@ def write_ocr_diagnosis(
     ]
     capture = report["capture"]
     png: bytes | None = None
+    restricted = (edited_config is not None and casual_enabled(edited_config)) or casual_enabled(getattr(engine, "config", None))
     try:
-        frame = engine.grab_frame()
+        frame = None if restricted else engine.grab_frame()
     except Exception as exc:  # noqa: BLE001 - useful JSON must survive a failed capture
         capture["reason"] = f"Fresh game capture failed ({type(exc).__name__})."
         capture["failure_type"] = type(exc).__name__
@@ -134,6 +162,9 @@ def write_ocr_diagnosis(
             capture["failure_type"] = type(exc).__name__
 
     target.parent.mkdir(parents=True, exist_ok=True)
+    if restricted or casual_enabled(getattr(engine, "config", None)):
+        report = _restrict_report(report)
+        png = None
     with tempfile.NamedTemporaryFile(prefix=".ocr-diagnosis-", suffix=".tmp", dir=target.parent, delete=False) as temp:
         temp_path = Path(temp.name)
     try:
@@ -141,7 +172,15 @@ def write_ocr_diagnosis(
             archive.writestr("report.json", json.dumps(report, ensure_ascii=False, indent=2))
             if png is not None:
                 archive.writestr("combat-crop.png", png)
-        os.replace(temp_path, target)
+        # Serialize publication with mode changes. A report prepared while full
+        # mode was active must not be published after Casual has taken effect.
+        guard = getattr(engine, "_lock", None)
+        with guard if guard is not None else nullcontext():
+            if casual_enabled(getattr(engine, "config", None)) and not restricted:
+                report = _restrict_report(report)
+                with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    archive.writestr("report.json", json.dumps(report, ensure_ascii=False, indent=2))
+            os.replace(temp_path, target)
     finally:
         temp_path.unlink(missing_ok=True)
     return target

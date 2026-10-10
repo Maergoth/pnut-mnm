@@ -107,6 +107,8 @@ class QtViewTests(unittest.TestCase):
         s.add(parse_line("--Abepulifif loots [Bone Chips] from a skeletal marksman's corpse.--", 0.0, PLAYER))
         s.add(parse_line("a skeletal defender is mesmerized.", 1.0, PLAYER))  # combat: must not appear
         view = SessionView(compact=True)
+        from mnmparse.config import Config
+        view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
         view.set_snapshot(s.snapshot(now=5.0))
         tree = view._tree
         titles = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]

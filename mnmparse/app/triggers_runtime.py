@@ -16,12 +16,14 @@ import time
 import wave
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 
 from mnmparse.config import project_path
-from mnmparse.triggers import BUILTIN_SOUNDS, ActiveTimer, Match, TimerBoard, Trigger, TriggerStore, fill_placeholders, match_trigger
+from mnmparse.privacy import casual_enabled, safe_trigger_label
+from mnmparse.triggers import BUILTIN_SOUNDS, ActiveTimer, Match, TimerBoard, Trigger, TriggerStore, fill_placeholders, match_trigger, regex_problem
 
 log = logging.getLogger(__name__)
 
@@ -82,11 +84,13 @@ _CUES = {
     "Tick": lambda: _tone([(1800, 0.05)], decay=40),
     "Rising": lambda: _glide(400, 1200, 0.45),
     "Falling": lambda: _glide(1200, 400, 0.45),
+    "Siren": lambda: _glide(580, 1060, 0.26) + _glide(1060, 580, 0.26),
 }
 
 
 def builtin_sound_path(name: str) -> Path:
     """The .wav of a built-in cue (written the first time it is asked for)."""
+    name = name if name in _CUES else "Chime"
     folder = project_path("assets") / "sounds"
     path = folder / f"{name.lower().replace(' ', '_')}.wav"
     if not path.exists():
@@ -155,6 +159,7 @@ class AudioOut(QObject):
 
     # -- playback ----------------------------------------------------------------------
     def play_builtin(self, name: str, volume: int = 100) -> None:
+        name = name if name in _CUES else "Chime"
         try:
             from PySide6.QtMultimedia import QSoundEffect
         except Exception:  # noqa: BLE001
@@ -298,21 +303,63 @@ class TriggerRunner(QObject):
     fired = Signal(object)  #: Match
     timers_changed = Signal()
     store_changed = Signal()
+    matching_warning = Signal(str)
 
     def __init__(self, store: TriggerStore, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.store = store
         self.audio = AudioOut(self)
         self.board = TimerBoard()
+        self._casual_mode = True
+        self._muted = False
+        self._privacy_cfg = SimpleNamespace(casual_mode=True, casual_mode_confirmed=False)
         self._last_fired: dict[str, float] = {}
         self._apply_audio_settings()
         self._clock = QTimer(self)
         self._clock.setInterval(TICK_MS)
         self._clock.timeout.connect(self._tick)
 
+    def set_config(self, cfg: Any) -> None:
+        """Apply the confirmed presentation policy without exposing source text."""
+        self.set_casual_mode(casual_enabled(cfg))
+
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    def set_muted(self, muted: bool) -> None:
+        self._muted = bool(muted)
+        if self._muted:
+            self.audio.stop()
+        self._apply_audio_settings()
+
+    def set_casual_mode(self, enabled: bool) -> None:
+        """Root calls the full-mode branch only after the user's confirmation."""
+        self._casual_mode = bool(enabled)
+        self._privacy_cfg = SimpleNamespace(casual_mode=self._casual_mode,
+                                            casual_mode_confirmed=not self._casual_mode)
+        if enabled:
+            # This includes arbitrary audio files as well as current/queued TTS.
+            self.audio.stop()
+            for timer in self.board.timers:
+                timer.label = safe_trigger_label(timer.label, self._privacy_cfg)
+            self.timers_changed.emit()
+
+    def _display_match(self, match: Match) -> Match:
+        if not self._casual_mode:
+            return match
+        t = match.trigger
+        label = safe_trigger_label(t.name, self._privacy_cfg)
+        # Downstream popups/recent lists must never receive the raw definition,
+        # regex captures or line; the internal matcher still has the full source.
+        shown = Trigger(id=t.id, name=label, pattern="", action=t.action, sound=t.sound,
+                        timer=t.timer, timer_seconds=t.timer_seconds, timer_label=label,
+                        timer_mode=t.timer_mode, volume=t.volume)
+        return Match(shown, "Trigger matched · captured chat hidden in Casual Mode", "", {})
+
     def _apply_audio_settings(self) -> None:
         s = self.store
-        self.audio.configure(volume=s.volume, voice=s.voice, rate=s.rate, device=s.output_device)
+        self.audio.configure(volume=0 if self._muted else s.volume, voice=s.voice, rate=s.rate, device=s.output_device)
 
     def save(self) -> None:
         """Persist the store (after an edit on the Triggers page) and apply its audio settings."""
@@ -339,7 +386,16 @@ class TriggerRunner(QObject):
                 continue
             if self.fire(m, now):
                 self._last_fired[trig.id] = now
-                fired.append(m)
+                fired.append(self._display_match(m))
+        if self.store.match_warnings:
+            message = " ".join(dict.fromkeys(self.store.match_warnings.values()))
+            self.matching_warning.emit(message)
+            if any(self.store.match_warnings):
+                try:
+                    self.store.save()
+                except (OSError, ValueError):
+                    self.matching_warning.emit("An unsafe expression was disabled, but the change could not be saved. Retry saving triggers.")
+                self.store_changed.emit()
         return fired
 
     def fire(self, m: Match, now: float | None = None) -> bool:
@@ -349,6 +405,7 @@ class TriggerRunner(QObject):
         scope = ""
         if trig.timer:
             label = fill_placeholders(trig.timer_label or trig.name, values)
+            label = safe_trigger_label(label, self._privacy_cfg)
             previous = list(self.board.timers)
             timer = self.board.start(trig, label, now)
             if timer is None:
@@ -361,9 +418,12 @@ class TriggerRunner(QObject):
             scope = self._timer_scope(timer)
             self._clock.start()
             self.timers_changed.emit()
-        self.audio.run(trig.action, sound=trig.sound, file=trig.file,
-                       speech=fill_placeholders(trig.speech, values), volume=trig.volume, scope=scope)
-        self.fired.emit(m)
+        action = "none" if self._casual_mode and trig.action == "file" else trig.action
+        speech = (safe_trigger_label(trig.name, self._privacy_cfg) if self._casual_mode
+                  else fill_placeholders(trig.speech, values))
+        self.audio.run(action, sound=trig.sound, file="" if self._casual_mode else trig.file,
+                       speech=speech, volume=trig.volume, scope=scope)
+        self.fired.emit(self._display_match(m))
         return True
 
     # -- timers ------------------------------------------------------------------------
@@ -390,7 +450,8 @@ class TriggerRunner(QObject):
                 obsolete = max(ordinary, key=lambda timer: timer.remaining(now))
             self.board.cancel(obsolete.id)
             ordinary.remove(obsolete)
-        timer = self.board.start(trigger, trigger.name, now, keep_until_dismissed=keep_until_dismissed)
+        timer = self.board.start(trigger, safe_trigger_label(trigger.name, self._privacy_cfg), now,
+                                 keep_until_dismissed=keep_until_dismissed)
         assert timer is not None  # A fresh stack timer cannot retain an older instance.
         for old in previous:
             if old not in self.board.timers:
@@ -445,11 +506,13 @@ class TriggerRunner(QObject):
         values = {"label": timer.label, "name": trig.name}
         if which == "warn":
             self.audio.run(trig.timer_warn_action, sound=trig.timer_warn_sound,
-                           speech=fill_placeholders(trig.timer_warn_speech, values), volume=trig.volume,
+                           speech=(f"{timer.label} soon" if self._casual_mode else
+                                   fill_placeholders(trig.timer_warn_speech, values)), volume=trig.volume,
                            scope=self._timer_scope(timer))
         else:
             self.audio.run(trig.timer_end_action, sound=trig.timer_end_sound,
-                           speech=fill_placeholders(trig.timer_end_speech, values), volume=trig.volume,
+                           speech=(f"{timer.label} ended" if self._casual_mode else
+                                   fill_placeholders(trig.timer_end_speech, values)), volume=trig.volume,
                            scope=self._timer_scope(timer))
 
     @staticmethod
@@ -461,6 +524,9 @@ class TriggerRunner(QObject):
         # Explicit previews work even for disabled triggers, but still capture
         # the sample line's regex groups exactly as live matching would.
         matched = match_trigger(replace(trig, enabled=True), line) if line else None
+        if trig.mode == "regex" and regex_problem(trig.pattern):
+            self.matching_warning.emit(regex_problem(trig.pattern))
+            return
         if matched is not None:
             matched.trigger = trig
         self.fire(matched or Match(trig, line or trig.pattern, line or trig.pattern))

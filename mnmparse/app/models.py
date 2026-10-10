@@ -251,6 +251,12 @@ class EncounterSnapshot:
     #: taken at the end (mnmparse.export).  0.0 when unknown (a snapshot built elsewhere).
     active_duration: float = 0.0
     group_members: list[str] = field(default_factory=list)  #: owner choices, including absent members
+    revision: int = 0
+    rate_start: float = 0.0
+    capture_quality: dict[str, Any] = field(default_factory=dict)
+    privacy_mode: str = ""
+    group_average_count: int = 0
+    emitted_at: float = 0.0  #: monotonic signal emission time, for local delivery diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -1057,6 +1063,37 @@ def _fight_label(enc: Encounter, canon: dict[str, str], enemies: set[str], group
 def build_snapshot(
     stats: Stats, enc: Encounter, player_name: str, *, now: float | None = None
 ) -> EncounterSnapshot:
+    """Cache event aggregation; elapsed rate updates do not rescan the encounter."""
+    roster = getattr(stats, "roster", None)
+    vocab = getattr(stats, "vocab", None)
+    dependency = (enc.revision, len(enc.events), enc.end, enc.last_activity, enc.closed,
+                  player_name, id(roster), getattr(roster, "version", 0), id(vocab), getattr(vocab, "_version", 0),
+                  bool(getattr(stats, "others_misses_seen", False)), tuple(stats.zone_changes))
+    cached = getattr(enc, "_snapshot_cache", None)
+    if cached is None or cached[0] != dependency:
+        content = _build_snapshot_content(stats, enc, player_name)
+        revision = getattr(stats, "_snapshot_revision", 0) + 1
+        stats._snapshot_revision = revision
+        content.revision = revision
+        enc._snapshot_cache = (dependency, content)
+    else:
+        content = cached[1]
+    duration = content.active_duration or content.duration
+    end = content.end
+    if now is not None and not content.closed:
+        end = max(end, float(now))
+        duration = max(duration, 1.0, float(now) - content.rate_start)
+    # Fresh top-level rows protect the cached rates from presentation transforms.
+    rows = [dataclasses.replace(row, dps=round(row.damage / duration, 2),
+                                dtps=round(row.taken / duration, 2), hps=round(row.heals / duration, 2))
+            for row in content.rows]
+    return dataclasses.replace(content, rows=rows, end=end, duration=duration,
+                               raid_dps=round(content.total_damage / duration, 2))
+
+
+def _build_snapshot_content(
+    stats: Stats, enc: Encounter, player_name: str, *, now: float | None = None
+) -> EncounterSnapshot:
     """Build the display snapshot of ``enc``.
 
     Args:
@@ -1177,6 +1214,10 @@ def build_snapshot(
         kills=kills,
         active_duration=active_duration,
         group_members=sorted(({you_name} | party) - set(pet_owners), key=str.casefold),
+        rate_start=first,
+        capture_quality=dict(enc.capture_quality, estimated_amounts=sum(bool(e.estimated) for e in enc.events),
+                             delayed_timestamps=sum(bool(e.estimated_ts) for e in enc.events),
+                             unrecognized_messages=sum(e.kind in {"unknown", "ability_partial"} for e in enc.events)),
     )
     owners = {row.pet_owner for row in rows if row.pet_owner}
     if owners:
@@ -1363,7 +1404,22 @@ def merge_snapshots(
         kills=sum(int(getattr(s, "kills", 0) or 0) for s in snaps),
         active_duration=max(1.0, sum(float(getattr(s, "active_duration", 0.0) or s.duration) for s in snaps)),
         group_members=sorted({name for s in snaps for name in s.group_members}, key=str.casefold),
+        revision=sum(s.revision for s in snaps),
+        capture_quality=_merge_quality(s.capture_quality for s in snaps),
+        privacy_mode=snaps[0].privacy_mode if snaps and all(s.privacy_mode == snaps[0].privacy_mode for s in snaps) else "",
+        group_average_count=max((s.group_average_count for s in snaps), default=0),
     )
+
+
+def _merge_quality(parts: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for part in parts:
+        for key, value in part.items():
+            if isinstance(value, (int, float)):
+                merged[key] = merged.get(key, 0) + value
+            elif isinstance(value, list):
+                merged.setdefault(key, []).extend(value)
+    return merged
 
 
 def owner_row(snap: EncounterSnapshot, owner: str, *, you_name: str | None = None) -> ActorRow | None:

@@ -332,6 +332,7 @@ class WgcWindowSource:
         self._full_wanted = threading.Event()  #: the next frame is copied whole (region mode)
         self._full_ready = threading.Event()
         self._frame_count = 0
+        self._full_frame_dimensions: tuple[int, int] | None = None
         self._last_kept = 0.0
         self._frame_event = threading.Event()
         self._control: Any | None = None  # InternalCaptureControl from the callback
@@ -507,6 +508,7 @@ class WgcWindowSource:
             log.warning("Could not read captured frame: %s", exc)
             return
         with self._lock:
+            self._full_frame_dimensions = (int(view.shape[1]), int(view.shape[0]))
             if bgr is not None:
                 self._frame, self._frame_at = bgr, now
             if region == self._region:  # the crop may have changed while this frame was cut
@@ -540,9 +542,24 @@ class WgcWindowSource:
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
             if thread.is_alive():
-                log.warning("Capture thread did not stop within 2 s; it is a daemon and ends with the process")
+                log.warning("Capture cleanup is still running after 2 s; the source remains owned")
+                return
         self._thread = None
         log.info("Capture stopped after %d frame(s)", self._frame_count)
+
+    def wait_stopped(self, timeout: float = 2.0) -> bool:
+        """Wait for requested native cleanup; timed-out threads remain owned."""
+        thread = self._thread
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            return False
+        thread.join(timeout=max(0.0, timeout))
+        if thread.is_alive():
+            return False
+        if self._thread is thread:
+            self._thread = None
+        return True
 
     # -- frames ------------------------------------------------------------
 
@@ -555,6 +572,16 @@ class WgcWindowSource:
     def frame_count(self) -> int:
         """Number of frames kept so far (after throttling)."""
         return self._frame_count
+
+    @property
+    def latest_frame_time(self) -> float:
+        """Monotonic arrival time of the latest retained frame, for local diagnostics."""
+        return self._last_kept
+
+    @property
+    def full_frame_dimensions(self) -> tuple[int, int] | None:
+        """Latest full source bounds, even when only the chat crop is copied."""
+        return self._full_frame_dimensions
 
     def latest(self) -> np.ndarray | None:
         """Return a copy of the newest frame (HxWx3 BGR) or ``None``.

@@ -96,10 +96,12 @@ def _native_probe(scenario: str, output: Path) -> None:
         QTimer.singleShot(75, finish)
     else:
         raise ValueError(f"Unknown native visibility scenario: {scenario}")
+    QTimer.singleShot(3000, app.quit)
     app.exec()
 
 
-@unittest.skipUnless(sys.platform == "win32", "Native launcher visibility requires Windows")
+@unittest.skipUnless(sys.platform == "win32" and os.environ.get("PNUT_NATIVE_UI_TESTS") == "1",
+                     "Native Windows UI checks require explicit PNUT_NATIVE_UI_TESTS=1")
 class NativeWindowVisibilityTests(unittest.TestCase):
     def run_probe(self, scenario: str) -> dict:
         # A venv's pythonw.exe is itself a launcher and may consume or rewrite
@@ -130,13 +132,23 @@ class NativeWindowVisibilityTests(unittest.TestCase):
                 env = dict(os.environ)
                 env["QT_QPA_PLATFORM"] = "windows"
                 env["PYTHONPATH"] = os.pathsep.join(site.getsitepackages())
-                result = subprocess.run(
+                process = subprocess.Popen(
                     [str(pythonw), str(Path(__file__).resolve()), "--native-probe", scenario, str(output)],
                     cwd=folder, env=env, startupinfo=startup,
-                    capture_output=True, text=True, timeout=25,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 )
-                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-                self.assertTrue(output.is_file(), f"Probe produced no result: {result.stderr}")
+                try:
+                    stdout, stderr = process.communicate(timeout=10)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+                    if process.stdout is not None:
+                        process.stdout.close()
+                    if process.stderr is not None:
+                        process.stderr.close()
+                self.assertEqual(process.returncode, 0, stderr or stdout)
+                self.assertTrue(output.is_file(), f"Probe produced no result: {stderr}")
                 return json.loads(output.read_text(encoding="utf-8"))
         finally:
             native.CloseDesktop(desktop)

@@ -32,7 +32,7 @@ def _probe(scenario: str, output: Path) -> None:
     app.map_overlay = MapOverlay(settings)
     app.map_overlay.visibility_changed.connect(app._on_map_visibility)
     app.window.map_toggled.connect(app.set_map_visible)
-    app.app_updates = SimpleNamespace(prepare_restart=lambda: True, shutdown=lambda: None)
+    app.app_updates = SimpleNamespace(prepare_restart=lambda **kwargs: True, shutdown=lambda: None)
     native = ctypes.WinDLL("user32", use_last_error=True)
     native.IsWindowVisible.argtypes = [wintypes.HWND]
     native.IsWindowVisible.restype = wintypes.BOOL
@@ -63,15 +63,17 @@ def _probe(scenario: str, output: Path) -> None:
         if scenario == "quit":
             app.request_quit()
         elif scenario == "restart_failed":
-            app.app_updates.prepare_restart = lambda: False
+            app.app_updates.prepare_restart = lambda **kwargs: False
             app.restart_for_update()
             record("after_failed_restart")
-            app.app_updates.prepare_restart = lambda: True
+            app.app_updates.prepare_restart = lambda **kwargs: True
             app.restart_for_update()
         else:
             app.restart_for_update()
 
     QTimer.singleShot(150, finish)
+    # A broken callback must never leave an interactive test process running.
+    QTimer.singleShot(3000, app.request_quit)
     app.exec()
     record("after_restart")
     settings.sync()
@@ -81,7 +83,8 @@ def _probe(scenario: str, output: Path) -> None:
     output.write_text(json.dumps(observations), encoding="utf-8")
 
 
-@unittest.skipUnless(sys.platform == "win32", "Native map visibility requires Windows")
+@unittest.skipUnless(sys.platform == "win32" and os.environ.get("PNUT_NATIVE_UI_TESTS") == "1",
+                     "Native Windows UI checks require explicit PNUT_NATIVE_UI_TESTS=1")
 class MapRestartVisibilityTests(unittest.TestCase):
     def run_probe(self, scenario: str, *, hidden_launch: bool) -> dict:
         pythonw = Path(getattr(sys, "_base_executable", sys.executable)).with_name("pythonw.exe")
@@ -106,13 +109,23 @@ class MapRestartVisibilityTests(unittest.TestCase):
                 startup.lpDesktop = name
                 env = dict(os.environ, QT_QPA_PLATFORM="windows")
                 env["PYTHONPATH"] = os.pathsep.join(site.getsitepackages())
-                result = subprocess.run(
+                process = subprocess.Popen(
                     [str(pythonw), str(Path(__file__).resolve()), "--probe", scenario, str(output)],
                     cwd=folder, env=env, startupinfo=startup,
-                    capture_output=True, text=True, timeout=25,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 )
-                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-                self.assertTrue(output.is_file(), f"Probe produced no result: {result.stderr}")
+                try:
+                    stdout, stderr = process.communicate(timeout=10)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+                    if process.stdout is not None:
+                        process.stdout.close()
+                    if process.stderr is not None:
+                        process.stderr.close()
+                self.assertEqual(process.returncode, 0, stderr or stdout)
+                self.assertTrue(output.is_file(), f"Probe produced no result: {stderr}")
                 return json.loads(output.read_text(encoding="utf-8"))
         finally:
             native.CloseDesktop(desktop)

@@ -21,6 +21,7 @@ Copyright (c) 2026 PNUT M&M contributors. PNUT is available under the [MIT Licen
 | opencv-python and its OpenCV native code | 5.0.0.93 | MIT for the Python packaging, Apache-2.0 for OpenCV, and additional component licenses; [full wheel and native third-party notices](licenses/opencv-python-5.0.0.93.txt) |
 | Pillow and its bundled image libraries | 12.3.0 | MIT-CMU and additional component licenses; [full Pillow and native notices](licenses/pillow-12.3.0.txt) |
 | MSS | 10.2.0 | MIT; [full license](licenses/mss-10.2.0.txt) |
+| regex | 2026.9.29 | Apache-2.0 AND CNRI-Python; [full license notices](licenses/regex-2026.9.29.txt) |
 | windows-capture | 2.0.1 | MIT; [full license](licenses/windows-capture-2.0.1.txt) and [native Rust dependency notices](licenses/windows-capture-2.0.1-Rust-dependencies.txt) |
 | PyWinRT runtime and Windows Foundation, Foundation.Collections, Globalization, Graphics.Imaging, Media.Ocr, and Storage.Streams projections | 3.2.1 | MIT; [full license](licenses/PyWinRT-3.2.1.txt) |
 | typing_extensions | 4.16.0 | PSF-2.0; [full license](licenses/typing_extensions-4.16.0.txt) |

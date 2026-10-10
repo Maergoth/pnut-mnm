@@ -54,6 +54,7 @@ class TriggerPopupTests(unittest.TestCase):
         self.owner.show()
         self.panel = TimerPanel(self.owner, self.settings, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.runner = TriggerRunner(TriggerStore(Path(self.tmp.name) / "triggers.json"))
+        self.runner.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         self.runner.audio.run = Mock()
         self.panel.set_runner(self.runner)
         self.clock_patch = patch("mnmparse.app.timer_panel.time.monotonic", return_value=100.0)
@@ -254,6 +255,7 @@ class TriggerPopupTests(unittest.TestCase):
 
         self.fire("Before")
         other = TriggerRunner(TriggerStore(Path(self.tmp.name) / "other.json"))
+        other.set_casual_mode(False)  # This fixture exercises confirmed full-mode labels.
         other.audio.run = Mock()
         self.panel.set_runner(other)
         self.panel.set_runner(other)

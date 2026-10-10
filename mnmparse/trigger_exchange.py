@@ -18,6 +18,7 @@ from typing import Iterable
 import uuid
 
 from .triggers import ACTIONS, BUILTIN_SOUNDS, MODES, TIMER_MODES, Trigger
+from .privacy import safe_trigger_definition
 
 
 FORMAT = "pnut-timers"
@@ -225,7 +226,11 @@ def external_sound_files(triggers: Iterable[Trigger]) -> list[str]:
 
 
 def export_trigger_file(path: str | Path, triggers: Iterable[Trigger]) -> None:
-    """Atomically save a public bundle, without voice, device or app settings."""
+    """Serialize complete definitions for storage/protocol tools.
+
+    Presentation callers must use export_visible_trigger_file so that an
+    omitted or unconfirmed presentation policy cannot publish source text.
+    """
     path = Path(path)
     copies = _validated_copies(triggers)
     try:
@@ -255,3 +260,11 @@ def export_trigger_file(path: str | Path, triggers: Iterable[Trigger]) -> None:
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def export_visible_trigger_file(path: str | Path, triggers: Iterable[Trigger], *, cfg: object = None) -> None:
+    """Publish definitions only under an explicitly confirmed full-mode policy."""
+    items = list(triggers)
+    if any(safe_trigger_definition(trigger, cfg) is None for trigger in items):
+        raise TriggerExchangeError("Casual Mode hides timer definitions; exporting is unavailable.")
+    export_trigger_file(path, items)
