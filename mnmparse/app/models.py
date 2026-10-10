@@ -17,15 +17,16 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import zlib
 from dataclasses import dataclass, field
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
-from mnmparse.grammar import is_npc_name
+from mnmparse.grammar import DAMAGE_EFFECT_OUTCOMES, VERB_LEMMAS, is_npc_name, lemmatize
 from mnmparse.stats import name_similar
 from mnmparse.vocab import close_spellings, edit_distance, fold
-from mnmparse.interrupts import CC_CATEGORIES, CREDIT_WINDOW_S, cc_categories, is_debuff_spell, load_cc_table
+from mnmparse.interrupts import CC_CATEGORIES, CREDIT_WINDOW_S, canonical_skill, cc_categories, is_debuff_spell, load_cc_table
 from mnmparse.stats import ACTIVITY_KINDS, DAMAGE_KINDS
 
 if TYPE_CHECKING:
@@ -100,14 +101,12 @@ INTERRUPT_VIA_DEBUFF = {"interdiction": "condemned"}
 #: Area effects the grammar reads as untargeted "casts" but that land at once (no cast time).
 INSTANT_AREA_SKILLS = frozenset({"ground smash"})
 
-#: Debuff type -> ability name fragments that cause it, MOST LIKELY FIRST: in the 2026-10-02
-#: logs 315 of 348 "bleeding out" lines had a Slice next to them and about 310 of 390
-#: "magical resistance frays" lines a Distress hit.  A fragment earlier in the list beats a
-#: closer action matching a later one.
+#: Debuff type -> ability name fragments that cause it, MOST LIKELY FIRST. A fragment
+#: earlier in the list beats a closer action matching a later one. Damage-only effects
+#: such as bleeding are excluded from Utility, including older saved debuff events.
 _DEBUFF_HINTS: dict[str, tuple[str, ...]] = {
     "condemned": ("interdiction", "condemn"),
-    "barbed arrow": ("barbed", "bow"),  # the Barbed Arrow line is often lost; the bow shot stands in
-    "bleeding": ("slice", "rend", "gash", "lacerat", "backstab", "barbed", "bleed"),
+    "weakened": ("omen of enfeeblement", "enfeeblement", "exposing shot", "enfeeble", "weakness", "malady"),
     "tormented": ("torment",),
     "resist down": ("distress", "vocalization", "torment", "shock", "volley", "flash", "surge"),
     "arcane weakened": ("infusion", "arcane"),
@@ -119,6 +118,17 @@ _DEBUFF_HINTS: dict[str, tuple[str, ...]] = {
 #: Kinds whose actions can cause a debuff when no named ability is found (plain melee swings
 #: never do: they were the commonest wrong credit in the audit).
 _DEBUFF_FALLBACK_KINDS = frozenset({"ability_hit", "ability_partial", "ability_miss", "cast"})
+_DAMAGE_ONLY_EFFECTS = frozenset(DAMAGE_EFFECT_OUTCOMES.values())
+_DAMAGE_ACTIONS = frozenset(VERB_LEMMAS.values()) | {
+    "attack", "shoot", "fire", "throw", "uppercut", "backstab", "rend", "gash", "lacerate",
+    "bleed", "barbed arrow", "shield bash", "shield slam", "shield toss", "low blow",
+    "burn", "shock", "blast", "smite", "scorch", "freeze", "chill", "wound", "zap",
+    "drain", "sear", "blight", "lash",
+}
+_NONCOMBAT_ACTIONS = frozenset({
+    "feel", "weave", "lose", "begin", "cast", "look", "break", "heal", "learn", "loot",
+    "receive", "sell", "buy", "train", "say", "hail", "consider", "follow", "invite",
+})
 #: An interrupt is caused after the victim began casting: attempts before its last "begins
 #: casting" line (within this many seconds) are not candidates.
 CAST_MEMORY_S = 12.0
@@ -178,7 +188,7 @@ class ActorRow:
     taken_from: list[SkillRow] = field(default_factory=list)  #: damage taken by "attacker: skill"
     cc_skills: dict[str, int] = field(default_factory=dict)  #: landed effects by ability name
     utility: int = 0  #: Utility score = CC landed + debuffs landed + aggro gained
-    debuffs: dict[str, int] = field(default_factory=dict)  #: debuffs landed by type (condemned, bleeding, ...)
+    debuffs: dict[str, int] = field(default_factory=dict)  #: non-damage effects and other utility actions by type
     debuff_skills: dict[str, int] = field(default_factory=dict)  #: debuffs landed by ability name
     aggro: int = 0  #: times a mob turned on this actor ("X looks angry at Y")
     prevented: int = 0  #: damage prevented on this actor by blocks and absorbs
@@ -383,7 +393,8 @@ def _skill_key(ev: Event) -> str:
 
 
 def _accumulate(
-    events: list[Event], canon: dict[str, str], trace: list[dict[str, Any]] | None = None, *, vocab: Any = None
+    events: list[Event], canon: dict[str, str], trace: list[dict[str, Any]] | None = None, *, vocab: Any = None,
+    utility_credited: set[int] | None = None,
 ) -> dict[str, _Acc]:
     """Scan ``events`` once and return one accumulator per canonical name (insertion order).
 
@@ -397,6 +408,7 @@ def _accumulate(
     a cast may credit several victims (area stuns).  ``vocab`` (the learned spellings) keeps
     two different mobs ("a jackal", "a jackal pup") from passing for the same victim.
     """
+    events = list(events)
     accs: dict[str, _Acc] = {}
     table = load_cc_table()
     attempts: list[_Attempt] = []
@@ -405,6 +417,7 @@ def _accumulate(
     hostile: set[tuple[str, str]] = set()  #: (attacker, victim) pairs that traded damage (PvP)
     debuff_lines: list[tuple[float, str | None, str]] = []  #: (ts, victim, type) of every debuff line
     taunts: list[tuple[float, _Acc, str | None]] = []  #: (ts, taunter, mob)
+    credited_actions = utility_credited if utility_credited is not None else set()
     #: results waiting for the attempts printed after them:
     #: (ts, idx, kind, category, victim, source, victim's cast start at that moment)
     pending: list[tuple[float, int, str, str, str | None, str | None, tuple[float, int] | None]] = []
@@ -526,6 +539,7 @@ def _accumulate(
             trace.append({"result_idx": idx, "category": category, "actor": match.actor.name,
                           "skill": match.title, "attempt_idx": match.idx})
         match.credited += 1
+        credited_actions.add(match.idx)
         if not match.multi:
             match.spent.add(category)
         match.actor.cc_landed += 1
@@ -544,10 +558,12 @@ def _accumulate(
         del actions[:-80]
 
     def credit_debuff(ts: float, idx: int, kind: str, victim: str | None) -> None:
+        if kind in _DAMAGE_ONLY_EFFECTS:
+            return
         recent = [a for a in actions if in_window(ts, a[0], idx, a[4], a[5] == "cast")]
         hints = _DEBUFF_HINTS.get(kind, ())
-        # 1. an ability named like the debuff, the likeliest name first (Slice before Backstab
-        #    for a bleed, Distress before Screaming Vocalization for frayed resistance); aimed at
+        # 1. an ability named like the debuff, the likeliest name first (Distress before
+        #    Screaming Vocalization for frayed resistance); aimed at
         #    the victim first, then at anyone (OCR garbles targets: "Gozif's Slice hits a for 3");
         # 2. an untargeted known debuff spell; 3. the closest ABILITY (not a plain melee swing)
         #    aimed at the victim.  Within a tier the closest in time wins (before or after).
@@ -562,8 +578,7 @@ def _accumulate(
         if group is None:
             return
         _ts, actor, _target, skill, _idx, _kind = closest(group, ts, idx, lambda a: a[0], lambda a: a[4])
-        if skill.endswith(" bow"):
-            skill = "Barbed Arrow" if kind == "barbed arrow" else skill.rsplit(" bow", 1)[0]
+        credited_actions.add(_idx)
         if trace is not None:
             trace.append({"result_idx": idx, "category": kind, "actor": actor.name, "skill": skill, "attempt_idx": _idx})
         actor.debuffs[kind] = actor.debuffs.get(kind, 0) + 1
@@ -598,7 +613,7 @@ def _accumulate(
         if ev.kind == "debuff":
             victim = canon.get(ev.target, ev.target) if ev.target else None
             get(ev.target)
-            if ev.outcome and ev.outcome != "lockout":  # the lockout is part of the interrupt already credited
+            if ev.outcome and ev.outcome not in _DAMAGE_ONLY_EFFECTS | {"lockout"}:
                 pending.append((float(ev.ts), idx, "debuff", ev.outcome, victim, None, None))
             continue
         if ev.kind == "aggro":
@@ -711,6 +726,60 @@ def _accumulate(
     for item in pending:
         resolve(item)
     return accs
+
+
+def _credit_default_utility(
+    events: list[Event], canon: dict[str, str], accs: dict[str, _Acc],
+    enemies: set[str], group: set[str], credited_actions: set[int],
+) -> None:
+    # A named action on an actual enemy is useful even when a new ability has no
+    # dedicated effect rule yet. Damage, failures, and already credited result lines
+    # never earn a second Utility point. Target validation rejects status prose that
+    # merely resembles an NPC name ("You feel the touch of earth", for example).
+    damaging_skills: set[str] = set()
+    combatants: set[str] = set()
+    for ev in events:
+        if ev.skill and ev.kind in DAMAGE_KINDS | {"ability_partial"}:
+            damaging_skills.add(canonical_skill(ev.skill))
+        if ev.kind in ACTIVITY_KINDS and ev.actor and ev.target:
+            actor, target = canon.get(ev.actor, ev.actor), canon.get(ev.target, ev.target)
+            if actor != target:
+                combatants.update((actor, target))
+    for idx, ev in enumerate(events):
+        if ev.kind != "status" or not ev.actor or not ev.target or not ev.skill or idx in credited_actions:
+            continue
+        actor, target = canon.get(ev.actor, ev.actor), canon.get(ev.target, ev.target)
+        key = canonical_skill(ev.skill)
+        if (actor in enemies or (is_npc_name(actor) and actor not in group)
+                or target not in enemies or target not in combatants or ev.amount is not None
+                or lemmatize(key) in _DAMAGE_ACTIONS | _NONCOMBAT_ACTIONS
+                or key in damaging_skills or key in {"taunt", "taunts"}):
+            continue
+        if ev.outcome and any(word in ev.outcome.lower().split() for word in
+                              ("immune", "failed", "fails", "failure", "resisted", "miss", "missed", "cannot", "longer")):
+            continue
+        failed = False
+        for other_idx in range(max(0, idx - RESULT_NEXT_LINES), min(len(events), idx + RESULT_NEXT_LINES + 1)):
+            other = events[other_idx]
+            if abs(float(other.ts) - float(ev.ts)) > RESULT_ADJACENT_S:
+                continue
+            if (other.kind in MISS_KINDS and canon.get(other.actor, other.actor) == actor
+                    and canon.get(other.target, other.target) == target
+                    and canonical_skill(other.skill or "") == key):
+                failed = True
+            if (other.kind == "status" and (other.outcome or "").lower() == "immune"
+                    and canon.get(other.actor, other.actor) == target
+                    and canon.get(other.target, other.target) == actor):
+                source = re.search(r"\bimmune\s+to\s+.+?(?:['’]s|s)\s+(.+?)[.!?]*$", other.text, re.IGNORECASE)
+                if source is None or canonical_skill(source.group(1).strip()) == key:
+                    failed = True
+        if failed:
+            continue
+        acc = accs.get(actor)
+        if acc is not None:
+            acc.debuffs["other utility"] = acc.debuffs.get("other utility", 0) + 1
+            skill = _skill_key(ev)
+            acc.debuff_skills[skill] = acc.debuff_skills.get(skill, 0) + 1
 
 
 def _drop_enemy_heals(acc: _Acc, enemies: set[str]) -> None:
@@ -1027,7 +1096,8 @@ def build_snapshot(
             for name in names:
                 canon[name] = name
     vocab = getattr(stats, "vocab", None)
-    accs = _accumulate(enc.events, canon, vocab=vocab)
+    utility_credited: set[int] = set()
+    accs = _accumulate(enc.events, canon, vocab=vocab, utility_credited=utility_credited)
 
     party = set(getattr(stats, "party", ()) or ())
     if vocab is not None:
@@ -1043,6 +1113,7 @@ def build_snapshot(
             accs[pet].is_pet = True
     excluded = {canon.get(n, n) for n in getattr(roster, "manual_out", ())}
     enemies, group = _classify_sides(enc.events, canon, accs, you_name, party, pet_owners, excluded)
+    _credit_default_utility(enc.events, canon, accs, enemies, group, utility_credited)
     for acc in accs.values():
         _drop_enemy_heals(acc, enemies)
 

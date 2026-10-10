@@ -106,6 +106,7 @@ class _FallbackTheme:
     KIND_COLORS = {
         "melee_hit": TEXT,
         "ability_hit": TEXT,
+        "damage_effect": TEXT,
         "melee_miss": MUTED,
         "ability_miss": MUTED,
         "resist": MUTED,

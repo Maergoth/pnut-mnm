@@ -90,6 +90,7 @@ KIND_COLORS: dict[str, str] = {
     "melee_hit": TEXT,  # other players' hits; the player's own hits use YOU (see feed_color)
     "ability_hit": TEXT,
     "ability_partial": MUTED,
+    "damage_effect": TEXT,
     "env_damage": DANGER,
     "melee_miss": MUTED,
     "ability_miss": MUTED,

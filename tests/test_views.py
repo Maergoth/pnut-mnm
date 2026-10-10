@@ -190,8 +190,10 @@ class UtilityTests(unittest.TestCase):
         snap = build_snapshot(stats, stats.current() or stats.history[-1], PLAYER)
         rows = {r.name: r for r in snap.rows}
         self.assertEqual(rows["Povebizu"].debuffs, {"condemned": 1})
-        self.assertEqual(rows["Sididuzek"].debuffs, {"barbed arrow": 1})
-        self.assertEqual(rows["Pidef"].debuffs, {"bleeding": 1})
+        self.assertEqual((rows["Sididuzek"].damage, rows["Sididuzek"].utility), (3, 0))
+        self.assertEqual((rows["Pidef"].damage, rows["Pidef"].utility), (4, 0))
+        self.assertEqual(rows["Sididuzek"].debuffs, {})
+        self.assertEqual(rows["Pidef"].debuffs, {})
         self.assertEqual((rows["Dogabetarolem"].cc, rows["Dogabetarolem"].utility), (1, 1))
         self.assertEqual((rows["Wululiso"].aggro, rows["Wululiso"].utility), (1, 1))
         self.assertEqual(rows["Wululiso"].prevented, 7)

@@ -66,10 +66,10 @@ class PetRollupTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertEqual(getattr(merged, field), sum(getattr(row, field) for row in sources))
         self.assertEqual((merged.damage, merged.heals, merged.taken), (54, 30, 26))
-        self.assertEqual((merged.cc, merged.taunts, merged.utility, merged.deaths), (1, 2, 4, 2))
-        self.assertEqual(merged.debuffs, {"bleeding": 1})
+        self.assertEqual((merged.cc, merged.taunts, merged.utility, merged.deaths), (1, 2, 3, 2))
+        self.assertEqual(merged.debuffs, {})
         self.assertEqual(merged.cc_skills, {"Fluffy: Stun": 1})
-        self.assertEqual(merged.debuff_skills, {"Fluffy: Slice": 1})
+        self.assertEqual(merged.debuff_skills, {})
         self.assertEqual(merged.killed_by, {"a rat": 2})
         self.assertEqual(merged.max_hit, max(row.max_hit for row in sources))
         self.assertEqual(merged.max_heal, max(row.max_heal for row in sources))

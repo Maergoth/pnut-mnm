@@ -36,6 +36,7 @@ __all__ = [
     "NPC",
     "NAME",
     "RULES",
+    "DAMAGE_EFFECT_OUTCOMES",
     "VERB_LEMMAS",
     "lemmatize",
     "is_npc_name",
@@ -83,6 +84,7 @@ KINDS: tuple[str, ...] = (
     "melee_miss",
     "ability_hit",
     "ability_partial",  # "Gozif's Slice hits a for 3+oints,ofr..." : who used which ability, rest unreadable
+    "damage_effect",  # damage-over-time applied, with no damage amount: "X is bleeding out."
     "env_damage",  # "YOU take 3 damage from falling!": damage taken from the world, no attacker
     "ability_miss",
     "heal",
@@ -116,8 +118,6 @@ KINDS: tuple[str, ...] = (
 
 DEBUFF_OUTCOMES: dict[str, str] = {
     "condemned": "condemned",
-    "bleed": "bleeding",
-    "barbed": "barbed arrow",
     "frays": "resist down",
     "fray": "resist down",
     "weaken": "arcane weakened",  # "X's arcane defenses weaken." (Arcane Infusion)
@@ -127,8 +127,15 @@ DEBUFF_OUTCOMES: dict[str, str] = {
     "irregularly": "faltering pulse",  # "X's heart begins beating irregularly."
     "vigor": "vigor drained",  # "X reels as vigor flows from their body." (Theft of Vigor)
     "chilled": "chilled",  # "X is chilled to the bone."
+    "weak": "weakened",  # "X looks weak."; source is inferred from a recent attempt, not the text
 }
 """Debuff result-line keyword -> type shown in the Utility breakdown."""
+
+DAMAGE_EFFECT_OUTCOMES: dict[str, str] = {
+    "bleed": "bleeding",
+    "barbed": "barbed arrow",
+}
+"""Damage-only application messages; their numbered ticks account for the damage."""
 
 CC_OUTCOMES: dict[str, str] = {
     "stunned": "stun",
@@ -188,6 +195,8 @@ apostrophe the OCR dropped ("Tovozens Heal", "Tovozen s Heal") before matching."
 _DTYPE: str = r"[A-Za-z]+(?:\s+[A-Za-z]+)*"
 _AMOUNT: str = r"(?P<amount>\d+)"
 _POINTS: str = r"points?"
+_COIN_PART: str = r"[\dIlO|]+\s+(?:platinum|gold|silver|copper)(?:\s+coins?)?"
+_MULTI_COIN: str = rf"{_COIN_PART}(?:,?\s+(?:and\s+)?{_COIN_PART})+"
 _TAIL: str = r"""\s*[.!?,:;'"\-]*\s*$"""
 _SENTENCE_END: str = r"\s*[.!?]+\s*$"
 _NOT_FUNCTION_WORD: str = (
@@ -231,17 +240,19 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("kill", rf"^(?P<target>{NAME})\s+(?:has|have)\s+been\s+slain\s+by\s+(?P<actor>{NAME}){_TAIL}"),
     ("kill", rf"^(?P<actor>{NAME})\s+(?:has|have)\s+slain\s+(?P<target>{NAME}){_TAIL}"),
     # ---- EXPERIENCE -----------------------------------------------------
-    ("experience", rf"^You\s+[gz]ain\s+(?:party\s+)?e[xk]perience[!.]?(?:\s*-|e)?{_TAIL}"),
+    ("experience", rf"^You\s+[gz]ain\s+(?:party\s+)?e[xk]perience[!.lI1|]?(?:\s*-|e)?{_TAIL}"),
     ("level_up", rf"^(?P<actor>You|{PLAYER})\s+(?:has|have)\s+leveled\s+up[!lI1|]?(?:\s*They\s+are\s+now\s+level\s+(?P<level>[\dIlO|][\dIlO| ]*!?))?{_TAIL}"),
     ("level_up", rf"^(?P<actor>You)\s+are\s+now\s+level\s+(?P<level>[\dIlO|][\dIlO| ]*!?){_TAIL}"),
     # ---- LOOT / COIN / CRAFT (the "--" frame around loot lines is stripped by the parser) --
     # Your own corpse (after a death): your own things back, not loot.
     ("personal", rf"^You\s+loot\s+(?:(?P<amount>\d+)\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?|[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)JlI|]?)\s+from\s+your\s+(?P<outcome>corpse)\s*[.\-\s]*$"),
+    ("coin", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+(?P<price>{_MULTI_COIN})\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse(?P<split>.*)$"),
     ("coin", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+(?P<amount>\d+)\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse(?P<split>.*)$"),
     # the NPC name and "'s corpse," cut off by the window edge: "Gozif loots 9 copper coins from
     # a risen and you receive 2 copper corpse as your split."
     ("coin", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+(?P<amount>\d+)\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+from\s+(?P<target>(?:a|an|the)\s+[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)*?)(?P<split>,?\s+and\s+(?:you\s+)?rece\w*\s.*)$"),
     # the end of a coin line that wrapped onto its own row (the split may name no denomination)
+    ("coin_split", rf"^(?P<price>{_MULTI_COIN})(?:\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse)?\s+(?:as\s+)?your\s+split{_TAIL}"),
     ("coin_split", rf"^(?P<amount>\d+|O)\s+(?:(?P<dtype>platinum|gold|silver|copper)\s+)?coins?(?:\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse)?\s+(?:as\s+)?your\s+split{_TAIL}"),
     ("loot", rf"^(?P<actor>You|{PLAYER})\s+loots?\s+[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)]?\s+from\s+(?P<target>{NAME})(?:'s|s)?\s+corpse\s*[.\-\s]*$"),
     ("reward", rf"^(?P<actor>You)\s+receive\s+[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)]?(?:\s+from\s+(?P<target>{NAME}))?{_TAIL}"),
@@ -275,7 +286,7 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("consider", rf"^(?P<target>{PLAYER})\s+(?:Battle\s+with\s+them\s+would|You\s+would\s+(?:\w+\s+){{0,3}}(?:be\s+defeated|emerge\s+victorious))\b.*$"),
     ("consider", r"^(?:Would\s+you\s+like\s+to\s+die|You\s+would\s+(?:\w+\s+){0,2}be\s+defeated|be\s+defeated\s+in\s+battle|Battle\s+with\s+them\s+would|What\s+would\s+you\s+like\s+your\s+tombstone)\b.*$"),
     # a corpse: "Gozif is dead. Their corpse will decay in 5 days and 19 hours."
-    ("consider", rf"^(?P<target>{PLAYER})\s+is\s+dead\W+Their\s+corpse\s+will\s+decay\b.*$"),
+    ("consider", rf"^(?P<target>{NAME})\s+is\s+dead\W+Their\s+corpse\s+will\s+decay\b.*$"),
     # ---- ZONE changes --------------------------------------------------------------------
     ("zone", r"^(?:Entering|You\s+have\s+entered)\s+(?P<target>.+?)\.?$"),
     ("zone", r"^Loading,?\s+please\s+wait\b.*$"),
@@ -288,8 +299,9 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("personal", r"^Welcome\s+to\s+Monsters\b.*$"),
     # ---- DEBUFF results / aggro / mez breaks -----------------------------------------
     ("debuff", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>condemned){_TAIL}"),
-    ("debuff", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>bleed)ing\s+out{_TAIL}"),
-    ("debuff", rf"^(?P<target>{NAME})\s+(?:is|are)\s+struck\s+by\s+a\s+(?P<outcome>barbed)\s+arrow{_TAIL}"),
+    ("damage_effect", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>bleed)ing\s+out{_TAIL}"),
+    ("damage_effect", rf"^(?P<target>{NAME})\s+begins?\s+to\s+(?P<outcome>bleed)\s+profusely{_TAIL}"),
+    ("damage_effect", rf"^(?P<target>{NAME})\s+(?:is|are)\s+struck\s+by\s+a\s+(?P<outcome>barbed)\s+arrow{_TAIL}"),
     ("debuff", rf"^(?P<target>{NAME})'s\s+magical\s+resistance\s+(?P<outcome>frays?){_TAIL}"),
     ("debuff", rf"^(?P<target>{NAME})'s\s+arcane\s+defenses\s+(?P<outcome>weaken){_TAIL}"),
     ("debuff", rf"^(?P<target>{NAME})'s\s+mind\s+is\s+(?P<outcome>tormented){_TAIL}"),
@@ -298,18 +310,20 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("debuff", rf"^(?P<target>{NAME})'s\s+heart\s+begins\s+beating\s+(?P<outcome>irregularly){_TAIL}"),
     ("debuff", rf"^(?P<target>{NAME})\s+reels\s+as\s+(?P<outcome>vigor)\s+flows\s+from\s+their\s+body{_TAIL}"),
     ("debuff", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>chilled)\s+to\s+the\s+bone{_TAIL}"),
+    ("debuff", rf"^(?P<target>{NAME})\s+looks?\s+(?P<outcome>weak){_TAIL}"),
     ("aggro", rf"^(?P<actor>{NAME})\s+looks\s+angry\s+at\s+(?P<target>{NAME}){_TAIL}"),
     ("awaken", rf"^(?P<target>{NAME})\s+awakens{_TAIL}"),
     # ---- CROWD CONTROL results -------------------------------------------
     ("cc_fade", rf"^(?P<target>{NAME})\s+(?:is|are)\s+no\s+longer\s+(?P<outcome>{_CC_WORDS})(?:\s+by\s+(?P<skill>[a-z][a-z' ]+?))?{_TAIL}"),
     ("cc_fade", rf"^(?P<target>{NAME})\s+breaks?\s+free\s+from\s+(?P<skill>.+?){_TAIL}"),
+    ("cc_fade", rf"^(?P<target>{NAME})\s+breaks?\s+free\s+of\s+(?P<skill>the\s+webs){_TAIL}"),
     ("cc_fade", rf"^(?P<target>{NAME})\s+comes?\s+(?P<outcome>unstuck){_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>{_CC_WORDS})(?:\s+to\s+the\s+ground)?(?:\s+by\s+(?P<skill>[a-z][a-z' ]+?))?{_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?P<outcome>adhere)s?\s+to\s+the\s+ground{_TAIL}"),
     # ---- CANNOT ATTACK (not a miss) -------------------------------------
     ("cannot_attack", rf"^(?P<actor>{NAME})\s+(?:try|tries)\s+to\s+attack\s*[,.]?\s*but\s+(?P<outcome>[^.!?]+?){_TAIL}"),
-    ("cannot_attack", rf"^You\s+(?P<outcome>must\s+face\s+your\s+target|must\s+be\s+able\s+to\s+see\s+your\s+target|need\s+a\s+target)\s+to\s+use\s+that\s+ability{_TAIL}"),
-    ("cannot_attack", rf"^Your\s+target\s+is\s+(?P<outcome>too\s+far\s+away)\s+to\s+use\s+that\s+ability{_TAIL}"),
+    ("cannot_attack", rf"^You\s+(?P<outcome>must\s+face\s+your\s+target|must\s+be\s+able\s+to\s+see\s+your\s+target|need\s+a\s+target)\s+to\s+use\s+that\s+ability[lI1|]?{_TAIL}"),
+    ("cannot_attack", rf"^Your\s+target\s+is\s+(?P<outcome>too\s+far\s+away)\s+to\s+use\s+that\s+ability[lI1|]?{_TAIL}"),
     # ---- HEAL -----------------------------------------------------------
     # Only the possessive form has been observed ("Tovozen's Heal heals X").  A
     # bare "<Name> heals X" rule is deliberately absent: the clipped fragment
@@ -321,6 +335,8 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("fizzle", rf"^{_POSSESSIVE}\s+spell\s+fizzles{_TAIL}"),
     ("ability_miss", rf"^{_POSSESSIVE}\s+ability\s+misses{_TAIL}"),
     # ---- ABILITY / SPELL / PROC HIT -------------------------------------
+    # Separate numbered damage in addition to the spell's regular hit/tick.
+    ("ability_hit", rf"^{_POSSESSIVE}\s+(?P<skill>.+?)\s+bites\s+deeper\s+into\s+the\s+undead,\s+dealing\s+{_AMOUNT}\s+extra\s+{_POINTS}\s+of\s+(?P<dtype>{_DTYPE})\s+to\s+(?P<target>{NAME}){_MARK}{_TAIL}"),
     ("ability_hit", rf"^{_POSSESSIVE}\s+(?P<skill>.+?)\s+(?P<verb>{_ABILITY_VERBS})\s+(?P<target>{NAME})\s+for\s+{_AMOUNT}\s+{_POINTS}\s+of\s+(?P<dtype>{_DTYPE}){_MARK}{_TAIL}"),
     # ---- MELEE MISS / AVOIDANCE -----------------------------------------
     ("melee_miss", rf"^(?P<actor>{NAME})\s+(?:try|tries)\s+to\s+(?P<skill>[a-z]{{3,}})\s+(?:at\s+)?(?P<target>{NAME}){_MODS}\s*[,.]?\s*but\s+(?P<outcome>miss(?:es)?|they\s+absorb(?:\s+the\s+(?:attack|blow))?|(?:you|{NAME})\s+[a-z]+(?:\s+[a-z]+)*){_TAIL}"),
@@ -337,7 +353,9 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("interrupt", rf"^{_POSSESSIVE}\s+(?:casting|spell)\s+(?:is|was|has\s+been)\s+interrupted{_TAIL}"),
     # ---- STATE / STATUS (no numbers) ------------------------------------
     ("status", rf"^(?:Starting\s+to\s+attack|Stopped\s+attacking){_TAIL}"),
-    ("status", rf"^(?P<actor>{NAME})\s+dispels?\s+magic\s+from\s+(?P<target>{NAME})\s*[.!]?\s*\((?P<outcome>[^()]+)\){_TAIL}"),
+    ("status", rf"^(?P<actor>{NAME})\s+(?P<skill>dispel)s?\s+magic\s+from\s+(?P<target>you|{NAME})(?:\s*[.!]?\s*\((?P<outcome>[^()]+)\))?{_TAIL}"),
+    ("status", rf"^(?P<actor>{NAME})\s+fires?\s+an\s+(?P<skill>exposing)\s+shot\s+at\s+(?P<target>YOU|you|{NAME}){_TAIL}"),
+    ("status", rf"^(?P<actor>{NAME})\s+feels?\s+healthy\s+again[.!]?\s*\((?P<skill>[^()]+)\){_TAIL}"),
     ("status", rf"^(?P<actor>{NAME})\s+places?\s+some\s+more\s+wood\s+on\s+the\s+campfire[.!]?\s+It\s+burns\s+brighter\s+than\s+before{_TAIL}"),
     # "YOU are temporarily IMMUNE to Tozuvek's Snaring Shot!": the attempt landed nothing (outcome
     # "immune", target = the caster; no skill, so it is never counted as an attempt itself)

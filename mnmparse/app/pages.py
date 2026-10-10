@@ -118,7 +118,7 @@ METRIC_TABS: tuple[tuple[str, str], ...] = (
 
 #: Feed filter chips: ``(label, kinds)``.  Together they cover every ``grammar.KINDS`` entry.
 FEED_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Hits", ("melee_hit", "ability_hit", "ability_partial", "env_damage")),
+    ("Hits", ("melee_hit", "ability_hit", "ability_partial", "damage_effect", "env_damage")),
     ("Misses", ("melee_miss", "ability_miss", "resist", "fizzle")),
     ("Heals", ("heal",)),
     ("Kills", ("kill",)),

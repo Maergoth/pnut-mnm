@@ -7,7 +7,8 @@ Two formats are understood, both produced by :class:`mnmparse.logwriter.LogWrite
 * the events file, one JSON object per line as written by ``write_event``.
 
 The raw log is re-parsed with the current grammar, so improvements to the parser apply to
-old sessions; the events file replays exactly what was parsed at the time.
+old sessions; the events file retains the original fields, with compatibility corrections
+for coin ratios and damage-only effects formerly categorized as utility debuffs.
 
 Two kinds of re-read line are left out (see :mod:`mnmparse.replay`): blocks the tracker read
 twice, in logs written before it learned to recognise a re-shown screen (no format header and
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from .app.models import EncounterSnapshot, build_snapshot
-from .grammar import Event
+from .grammar import DAMAGE_EFFECT_OUTCOMES, Event
 from .logwriter import file_format, is_header
 from .parser import NameCompleter, parse_garbled_amount, parse_line, split_fused
 from .party import RELOAD_MAX_AGE_S, PartyRoster
@@ -177,6 +178,8 @@ def iter_jsonl_events(path: Path) -> Iterator[Event]:
                 continue
             if ev.kind == "coin":
                 _recount_coin(ev)
+            elif ev.kind == "debuff" and ev.outcome in DAMAGE_EFFECT_OUTCOMES.values():
+                ev.kind = "damage_effect"
             yield ev
 
 

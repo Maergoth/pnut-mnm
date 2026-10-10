@@ -60,7 +60,7 @@ CATEGORIES: tuple[str, ...] = ("player", "npc", "item", "zone", "skill")
 NAME_KINDS: frozenset[str] = frozenset({
     "melee_hit", "melee_miss", "ability_hit", "ability_partial", "ability_miss", "env_damage",
     "heal", "cast", "interrupt", "resist", "fizzle", "kill", "loot", "coin",
-    "cc", "cc_fade", "debuff", "aggro", "awaken",
+    "cc", "cc_fade", "debuff", "damage_effect", "aggro", "awaken",
 })
 
 #: A rarer spelling conflates into a better one seen at least this many times as often...

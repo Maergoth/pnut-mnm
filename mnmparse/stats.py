@@ -58,7 +58,7 @@ encounter still count.
 
 _NO_TARGET_LABEL = "unknown"
 PREFIGHT_S = 20.0  #: how long before the first hit a cast / debuff / CC line still joins the fight
-PREFIGHT_KINDS = frozenset({"cast", "debuff", "cc", "interrupt", "status", "aggro"})
+PREFIGHT_KINDS = frozenset({"cast", "debuff", "damage_effect", "cc", "interrupt", "status", "aggro"})
 #: "... tries to slash YOU, but misses!": aimed at the viewer (those misses are always shown).
 _AT_YOU_RX = re.compile(r"\bYOU\b")
 

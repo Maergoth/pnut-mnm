@@ -483,7 +483,7 @@ and the actor details scroll instead of overlapping.
 **Overview** shows per actor: DPS, HPS, **Utility** and damage **Taken**. Utility counts
 crowd-control effects that landed (interrupts, stuns, mezzes, roots, silences, snares, fears,
 charms, blinds; "pinned", "bound by a net shot" and "adheres to the ground" are roots, "slowed
-by a snaring shot" is a snare), debuffs that landed (condemned, bleeding, barbed arrow,
+by a snaring shot" is a snare), non-damage debuffs that landed (condemned, weakened,
 resistance frayed, arcane defenses weakened, tormented, slowed movements, an irregular
 heartbeat, drained vigor, chilled to the bone) and aggro (every taunt, plus "a skeletal warrior
 looks angry at Wululiso"; the game never prints that line for the viewer, so your own taunts are
@@ -495,6 +495,16 @@ breakdown: the skill table under damage columns, spells under healing columns, a
 the damage prevented by blocks and absorbs under Taken, and every effect by type and by ability
 under Utility. Tooltips need the mouse, so they work in the main window and in the overlay,
 locked or not, but not while "Overlay ignores mouse" is on.
+
+A named player action on a confirmed enemy defaults to **Utility** when it is not associated
+with damage, even if the ability has no dedicated rule yet. Exposing Shot, Dispel Magic and
+Purge are examples. The breakdown lists the action under its skill name. An explicit CC or
+debuff result replaces that action's fallback credit, so the same action is not counted twice.
+Failed, resisted or immune attempts, effect fades, chat and unidentifiable fragments do not
+receive fallback credit. Cast announcements alone do not establish that an effect landed.
+Bleed, profuse bleeding and Barbed Arrow announcements are **damage effects**, with no Utility
+credit; their numbered damage ticks still count toward damage. This also corrects older
+saved events that categorized Bleed as a debuff.
 
 **Who caused an effect.** The game says "a dunes madman's casting is interrupted." or "a
 skeletal fighter is condemned." without naming who did it, and it usually prints the effect
@@ -508,13 +518,16 @@ rules, checked against 733 effects read independently in the 2026-10-02 logs:
 - an interrupt needs an attempt after the victim began casting (a spell started earlier may
   still land after it); a stun on a caster (uppercut, an NPC's Bash or Slam) also interrupts;
 - an ability named in the effect wins ("stunned by an electric arc" = Electric Arc, "an electric
-  shock" = Electric Infusion); debuffs go to the likeliest named ability first (Slice for bleeds,
-  Distress for frayed resistance, Arcane Infusion for weakened arcane defenses, Interdiction for
-  condemned, Barbed Arrow or the archer's bow shot for barbed arrows), never to a plain melee swing;
+  shock" = Electric Infusion); debuffs go to the likeliest named ability first (Distress for
+  frayed resistance, Arcane Infusion for weakened arcane defenses, Interdiction for
+  condemned, Omen of Enfeeblement or Exposing Shot for weakness), never to a plain melee swing;
 - a cast or debuff in the few seconds before the first hit belongs to the fight it starts (a pull);
 - an ability line too garbled to read the damage ("Gozif's Slice hits a for 3+oints") still
   identifies who used what (it never counts as damage).
 The spell-school lockout line that follows an interrupt is not counted again.
+
+The [October 10 log audit](docs/log-audit-2026-10-10.md) lists the latest damage, Utility,
+loot and status categorization changes, with the remaining unreadable entries.
 
 ### Encounters
 

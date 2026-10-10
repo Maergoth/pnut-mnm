@@ -16,12 +16,13 @@ from __future__ import annotations
 import logging
 import re
 
-from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DEBUFF_OUTCOMES, RULES, Event, is_you, lemmatize, starts_message
+from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, RULES, Event, is_you, lemmatize, starts_message
 
 #: "... and you receive 2 copper coins ... as your split": the number and the word after it (a
 #: denomination, or the OCR's remains of one: "2 coppe", "1 cc", "3 COI", "O coins", "4 cavalier's")
 _SPLIT_RX = re.compile(r"\brece\w*\s+(\d+|O)\b(?:\s+([A-Za-z']+))?", re.IGNORECASE)
 _COIN_PART_RX = re.compile(r"([\dIlO|]+)\s+(platinum|gold|silver|copper)\b")
+_COIN_JOIN_RX = re.compile(r"(?:\s+coins?)?,?\s+(?:and\s+)?")
 
 __all__ = ["Event", "NameCompleter", "parse_line", "normalize_ocr", "map_player", "miss_outcome"]
 
@@ -282,6 +283,7 @@ def miss_outcome(outcome_text: str | None, target: str | None) -> str:
 #: archer's Snaring Shot, Net Shot and Interrupting Shot landing on a player.
 _SKILL_NAMES = {
     "smash": "Ground Smash", "snare": "Snaring Shot", "net": "Net Shot", "interrupt": "Interrupting Shot",
+    "dispel": "Dispel Magic", "exposing": "Exposing Shot",
 }
 
 #: Highest level a "They are now level N" line can name (a misread larger number is a "!" read
@@ -306,6 +308,19 @@ def _split_copper(split_text: str, looted: str, total: int) -> int | None:
     m = _SPLIT_RX.search(split_text)
     if m is None:
         return None
+    # A share can contain several denominations, just like the gross loot. Keep the
+    # old clipped-denomination fallback below when no complete denomination was read.
+    prefix = split_text[m.start(1):]
+    parts = list(_COIN_PART_RX.finditer(prefix))
+    if parts and parts[0].start() == 0:
+        count, end = 1, parts[0].end()
+        for part in parts[1:]:
+            if _COIN_JOIN_RX.fullmatch(prefix[end:part.start()]) is None:
+                break  # A corpse name or another message ends this share's money list.
+            count, end = count + 1, part.end()
+        if count > 1:
+            value = _price_copper(prefix[:end])
+            return value if value is not None and value <= total else None
     count = 0 if m.group(1) in ("O", "o") else int(m.group(1))
     value = count * COIN_IN_COPPER[_denomination(m.group(2)) or looted]
     return value if value <= total else None
@@ -373,12 +388,16 @@ def _build(kind: str, m: re.Match[str], text: str, ts: float, player_name: str) 
     split_copper: int | None = None
     if kind == "coin":
         looted = (dtype or "copper").lower()
-        copper = (amount or 0) * COIN_IN_COPPER.get(looted, 1)
+        copper = _price_copper(g.get("price")) if g.get("price") else (amount or 0) * COIN_IN_COPPER.get(looted, 1)
+        if g.get("price"):
+            first = _COIN_PART_RX.search(g["price"])
+            if first is not None:
+                looted = first.group(2).lower()
         split_copper = _split_copper(g.get("split") or "", looted, copper)
         amount = copper
     elif kind == "coin_split":
         # no denomination printed ("O coins ..."): copper, the only one loot has shown so far
-        split_copper = (amount or 0) * COIN_IN_COPPER.get((dtype or "copper").lower(), 1)
+        split_copper = _price_copper(g.get("price")) if g.get("price") else (amount or 0) * COIN_IN_COPPER.get((dtype or "copper").lower(), 1)
         amount = split_copper
     elif kind == "vendor":
         copper = _price_copper(g.get("price"))
@@ -411,6 +430,8 @@ def _build(kind: str, m: re.Match[str], text: str, ts: float, player_name: str) 
         outcome = CC_OUTCOMES.get((outcome or "").lower(), outcome)
     elif kind == "debuff":
         outcome = DEBUFF_OUTCOMES.get((outcome or "").lower(), outcome)
+    elif kind == "damage_effect":
+        outcome = DAMAGE_EFFECT_OUTCOMES.get((outcome or "").lower(), outcome)
     elif kind in ("personal", "status") and outcome:
         outcome = outcome.lower()  # "YOU are temporarily IMMUNE to ..." -> "immune"
 

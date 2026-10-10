@@ -160,9 +160,11 @@ class AuditRuleTests(unittest.TestCase):
             (8.0, "Hudokara pierces a skeletal marksman with their bow for 8 points of damage."),
             (8.0, "a skeletal marksman is struck by a barbed arrow."),
         ])
-        self.assertEqual(r["Gozif"].debuff_skills, {"Slice": 1}, "not Povebizu's slash")
+        self.assertEqual(r["Gozif"].debuff_skills, {}, "an unreadable damage ability is not Utility")
+        self.assertEqual(r["Gozif"].utility, 0)
         self.assertEqual(r["Povebizu"].debuff_skills, {"Distress": 1}, "Distress, not Screaming Vocalization")
-        self.assertEqual(r["Hudokara"].debuff_skills, {"Barbed Arrow": 1})
+        self.assertEqual(r["Hudokara"].debuff_skills, {})
+        self.assertEqual(r["Hudokara"].utility, 0)
         self.assertEqual(r["Abepulifif"].debuffs, {})
 
     def test_a_pull_debuff_before_the_first_hit_counts(self) -> None:

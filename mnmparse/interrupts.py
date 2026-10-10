@@ -79,7 +79,8 @@ DEFAULT_CC: dict[str, frozenset[str]] = {
 #: ("Povebizu begins casting Interdiction." ... "a skeletal fighter is condemned.").  Not CC;
 #: used only to credit a debuff when no targeted action precedes it.
 DEFAULT_DEBUFF_SPELLS: frozenset[str] = frozenset(
-    {"interdiction", "torment", "distress", "malaise", "enfeeble", "weakness", "curse", "blight", "condemn", "hex"}
+    {"interdiction", "torment", "distress", "malaise", "enfeeble", "omen of enfeeblement",
+     "weakness", "curse", "blight", "condemn", "hex"}
 )
 
 #: The plain Kick skill.
