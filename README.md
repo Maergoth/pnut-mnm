@@ -556,7 +556,8 @@ Older entries without dates remain visible until activity supplies a date.
 
 Each list has its own **Add Guild(s)** or **Add Player(s)** dialog. Enter names manually,
 or choose **CSV from clipboard** to preview that list's entries, then choose **Add** to save.
-Its **Export** copies that list as CSV with `Type,Name` columns. Imports
+Its **Export** copies that list as one comma-separated row of names, such as
+`Peedur,Akias,Hollieght`. Older `Type,Name` CSV imports still work. Imports
 merge entries into the selected list without replacing saved activity dates. Player
 entries can trigger sighting alerts; Guild entries are reminders, since combat chat does
 not identify guild membership.

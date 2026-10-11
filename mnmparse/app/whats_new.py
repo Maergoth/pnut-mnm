@@ -32,6 +32,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Each Revenge pop-out list now has a + button and a clipboard copy icon.",
             "Use + to enter names or choose CSV from clipboard. Preview entries, then choose Add to save.",
+            "CSV now uses one comma-separated row of names. Older CSV imports still work.",
         ),
         settings_label="Revenge settings",
         settings_target="revenge_enabled",

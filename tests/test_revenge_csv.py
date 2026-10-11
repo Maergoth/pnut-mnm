@@ -48,9 +48,14 @@ class RevengeCsvTests(unittest.TestCase):
         entries = parse_csv(SAMPLE)
         self.assertEqual(sum(entry.kind == "Guild" for entry in entries), 6)
         self.assertEqual(sum(entry.kind == "Player" for entry in entries), 16)
-        literal = entries + (CsvEntry('Éowyn 🦋, "quoted"'), CsvEntry("a named NPC"),
-                             CsvEntry("Line\nBreak", "Guild"), CsvEntry("[Symbols]+{name}"))
-        self.assertEqual(parse_csv(format_csv(literal)), literal)
+        for kind in ("Player", "Guild"):
+            with self.subTest(kind=kind):
+                literal = tuple(entry for entry in entries if entry.kind == kind) + (
+                    CsvEntry('Éowyn 🦋, "quoted"', kind), CsvEntry("a named NPC", kind),
+                    CsvEntry("Line\nBreak", kind), CsvEntry("[Symbols]+{name}", kind))
+                self.assertEqual(parse_csv(format_csv(literal), default_kind=kind), literal)
+                simple = (CsvEntry("First", kind), CsvEntry('Second, "quoted"', kind))
+                self.assertEqual(format_csv(simple).rstrip("\r\n"), 'First,"Second, ""quoted"""')
 
     def test_header_bom_case_and_name_only_defaults(self):
         self.assertEqual(parse_csv('\ufeff nAmE , TYPE\r\n"Name, with comma",pLaYeR\r\nGuild Name,gUiLd\r\n'),
@@ -59,9 +64,15 @@ class RevengeCsvTests(unittest.TestCase):
         self.assertEqual(parse_csv("Name\nGuild name\n", default_kind="Guild"), (CsvEntry("Guild name", "Guild"),))
         self.assertEqual(parse_names("Nameless\nName with symbols []\n", kind="Guild"),
                          (CsvEntry("Nameless", "Guild"), CsvEntry("Name with symbols []", "Guild")))
+        self.assertEqual(parse_csv('First, Second,"Name, with comma"', default_kind="Guild"),
+                         (CsvEntry("First", "Guild"), CsvEntry("Second", "Guild"), CsvEntry("Name, with comma", "Guild")))
+        self.assertEqual(parse_csv("Name"), (CsvEntry("Name"),))
+        self.assertEqual(parse_csv("Type,Name"), (CsvEntry("Type"), CsvEntry("Name")))
+        self.assertEqual(parse_csv("First,Second\nThird,Fourth", default_kind="Guild"),
+                         tuple(CsvEntry(name, "Guild") for name in ("First", "Second", "Third", "Fourth")))
 
     def test_malformed_or_oversized_input_is_rejected_as_a_whole(self):
-        for text in ("", "Wrong,Header\nPlayer,Bandit", "Type,Name,Extra\nPlayer,Bandit,x",
+        for text in ("", "Bandit,,Raider", 'Bandit,"unterminated',
                      "Type,Name\nPlayer,Bandit\nOther,Unknown", "Type,Name\nPlayer,Bandit\nPlayer,",
                      "Type,Name\nPlayer,Bandit\nPlayer,Too,Many", 'Type,Name\nPlayer,"unterminated'):
             with self.subTest(text=text):
@@ -107,18 +118,22 @@ class RevengeCsvIntegrationTests(unittest.TestCase):
         self.controller._cfg.revenge_entries = 1
         self.assertEqual(len(self.controller.entries_for("Player")), 1)
         self.assertEqual(len(self.controller.entries_for("Guild")), 1)
-        self.assertEqual(len(parse_csv(self.controller.export_csv("Player"))), 16)
-        self.assertEqual(len(parse_csv(self.controller.export_csv("Guild"))), 6)
+        players = parse_csv(self.controller.export_csv("Player"), default_kind="Player")
+        guilds = parse_csv(self.controller.export_csv("Guild"), default_kind="Guild")
+        self.assertEqual(len(players), 16)
+        self.assertEqual(len(guilds), 6)
+        self.assertTrue(all(entry.kind == "Player" for entry in players))
+        self.assertTrue(all(entry.kind == "Guild" for entry in guilds))
 
     def test_deduplication_and_existing_dates_survive_import_and_reload(self):
         self.controller.save_attacker("Bandit")
         original = self.controller._saved["bandit"]
         self.now += 100
-        self.assertTrue(self.controller.import_csv("Type,Name\nPlayer,BANDIT\nPlayer,New\nPlayer,new\n", "Player"))
+        self.assertTrue(self.controller.import_csv("BANDIT,New,new", "Player"))
         self.assertEqual(self.controller._saved["bandit"], original)
         self.assertEqual(self.controller._saved["new"].added_at, 200)
         self.assertEqual(self.controller.saved_total, 2)
-        self.assertTrue(self.controller.import_csv("Type,Name\nGuild,Bandit\n", "Guild"))
+        self.assertTrue(self.controller.import_csv("Bandit", "Guild"))
         self.assertEqual(self.controller._saved[("Guild", "bandit")].kind, "Guild")
         self.controller._load()
         self.assertEqual(self.controller._saved["bandit"], original)
@@ -139,7 +154,7 @@ class RevengeCsvIntegrationTests(unittest.TestCase):
     def test_invalid_batch_capacity_or_failed_write_never_partially_imports(self):
         self.controller.save_attacker("Original")
         before = self.controller.path.read_bytes()
-        for text in ("Type,Name\nPlayer,New\nWrong,Other", "Wrong,Name\nPlayer,New"):
+        for text in ("Type,Name\nPlayer,New\nWrong,Other", "New,,Other"):
             self.assertFalse(self.controller.import_csv(text, "Player"))
             self.assertEqual(self.controller.path.read_bytes(), before)
             self.assertEqual(self.controller.saved_names, ("Original",))

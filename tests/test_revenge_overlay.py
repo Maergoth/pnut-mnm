@@ -331,11 +331,9 @@ class RevengeOverlayTests(unittest.TestCase):
         previous = clipboard.text()
         try:
             window.header.export_button.click()
-            self.assertIn("Player,Bandit", clipboard.text())
-            self.assertNotIn("Guild,Bandit", clipboard.text())
+            self.assertEqual(clipboard.text().rstrip("\r\n"), "Bandit")
             window.header.guild_export_button.click()
-            self.assertIn("Guild,Bandit", clipboard.text())
-            self.assertNotIn("Player,Bandit", clipboard.text())
+            self.assertEqual(clipboard.text().rstrip("\r\n"), "Bandit")
         finally:
             clipboard.setText(previous)
 
@@ -400,11 +398,11 @@ class RevengeOverlayTests(unittest.TestCase):
         clipboard = self.app.clipboard()
         previous = clipboard.text()
         try:
-            clipboard.setText("Type,Name\nPlayer,Raider\nGuild,Friends\n")
             for add_button, export_button, kind, name in (
                     (window.header.add_button, window.header.export_button, "Player", "Raider"),
                     (window.header.guild_add_button, window.header.guild_export_button, "Guild", "Friends")):
                 with self.subTest(kind=kind):
+                    clipboard.setText(f'{name},"Name, with comma"')
                     self.assertEqual(add_button.text(), "+")
                     self.assertEqual(export_button.toolTip(), "Copy CSV to Clipboard")
                     with patch("mnmparse.app.revenge.QApplication.clipboard",
@@ -419,13 +417,17 @@ class RevengeOverlayTests(unittest.TestCase):
                     self.assertFalse(dialog.add_button.isEnabled())
                     self.assertEqual(dialog.from_clipboard.text(), "CSV from clipboard")
                     dialog.from_clipboard.click()
-                    self.assertEqual(dialog.preview.toPlainText(), name)
+                    self.assertEqual(dialog.preview.toPlainText(), name + "\nName, with comma")
                     key = name if kind == "Player" else (kind, name)
+                    quoted_key = "Name, with comma" if kind == "Player" else (kind, "Name, with comma")
                     self.assertNotIn(key, window.list._rows, "Import preview must wait for Add before saving")
+                    self.assertNotIn(quoted_key, window.list._rows)
                     dialog.accept()
                     self.app.processEvents()
                     self.assertIn(key, window.list._rows)
-            self.assertEqual(set(window.list._rows), {"Raider", ("Guild", "Friends")})
+                    self.assertIn(quoted_key, window.list._rows)
+            self.assertEqual(set(window.list._rows), {"Raider", "Name, with comma", ("Guild", "Friends"),
+                                                     ("Guild", "Name, with comma")})
         finally:
             clipboard.setText(previous)
 

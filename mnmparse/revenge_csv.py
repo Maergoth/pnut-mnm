@@ -1,9 +1,10 @@
-"""Literal Type,Name CSV exchange for PvP players and guild reminders."""
+"""Names-only CSV exchange with legacy typed-list import support."""
 from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
 import io
+from itertools import chain
 from typing import Iterable
 
 MAX_ENTRIES = 1000
@@ -54,7 +55,7 @@ def validate_entries(entries: Iterable[CsvEntry]) -> tuple[CsvEntry, ...]:
 
 
 def parse_csv(text: str, *, default_kind: str = "Player") -> tuple[CsvEntry, ...]:
-    """Read Type,Name (either order) or Name-only CSV with a required header.
+    """Read comma-separated names for one list, or legacy header-based CSV.
 
     Names are literal text. Quoted commas, quotes, Unicode and embedded newlines
     survive a round trip; no player-name detection rules apply to imports.
@@ -65,36 +66,46 @@ def parse_csv(text: str, *, default_kind: str = "Player") -> tuple[CsvEntry, ...
     text = text.lstrip("\ufeff")
     reader = csv.reader(io.StringIO(text, newline=""), strict=True)
     try:
-        header = next((row for row in reader if row), None)
-        if header is None:
-            raise RevengeCsvError("CSV is empty. Use a Type,Name or Name header.")
-        fields = tuple(value.strip().casefold() for value in header)
-        if fields not in (("type", "name"), ("name", "type"), ("name",)):
-            raise RevengeCsvError("CSV header must be Type,Name or Name.")
+        rows = (row for row in reader if row)
+        first = next(rows, None)
+        if first is None:
+            raise RevengeCsvError("CSV is empty. Paste comma-separated names.")
+        fields = tuple(value.strip().casefold() for value in first)
+        if fields in (("type", "name"), ("name", "type"), ("name",)):
+            following = next(rows, None)
+            if following is not None:
+                rows = chain((following,), rows)
+            else:
+                # A lone row can literally contain players called Type or Name.
+                fields = ()
+                rows = iter((first,))
+        else:
+            fields = ()
+            rows = chain((first,), rows)
         entries = []
-        for row in reader:
-            if not row:
-                continue
-            if len(row) != len(fields):
-                raise RevengeCsvError(f"CSV row {reader.line_num} does not match its header.")
-            kind = row[fields.index("type")].strip().title() if "type" in fields else default_kind
-            if kind not in KINDS:
-                raise RevengeCsvError(f"CSV row {reader.line_num} needs a Player or Guild type.")
-            entries.append(CsvEntry(row[fields.index("name")], kind))
-            if len(entries) > MAX_ENTRIES:
+        for row in rows:
+            if len(entries) + (1 if fields else len(row)) > MAX_ENTRIES:
                 raise RevengeCsvError("Import at most 1,000 entries at a time.")
+            if fields:
+                if len(row) != len(fields):
+                    raise RevengeCsvError(f"CSV row {reader.line_num} does not match its header.")
+                kind = row[fields.index("type")].strip().title() if "type" in fields else default_kind
+                if kind not in KINDS:
+                    raise RevengeCsvError(f"CSV row {reader.line_num} needs a Player or Guild type.")
+                entries.append(CsvEntry(row[fields.index("name")], kind))
+            else:
+                entries.extend(CsvEntry(name.strip(), default_kind) for name in row)
         return validate_entries(entries)
     except csv.Error as exc:
         raise RevengeCsvError(f"CSV row {reader.line_num} could not be read: {exc}.") from exc
 
 
 def format_csv(entries: Iterable[CsvEntry]) -> str:
-    """Return portable CSV with only type and name, excluding local dates."""
+    """Return one comma-separated row of names for the caller's chosen list."""
     checked = validate_entries(entries)
     stream = io.StringIO(newline="")
     writer = csv.writer(stream, lineterminator="\r\n")
-    writer.writerow(("Type", "Name"))
-    writer.writerows((entry.kind, entry.name) for entry in checked)
+    writer.writerow(entry.name for entry in checked)
     text = stream.getvalue()
     _check_size(text)
     return text
