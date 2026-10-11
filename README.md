@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.2 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.3 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.2-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.3-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -116,7 +116,9 @@ This removes the usual fixed process/window labels; it does not make PNUT undete
 The launcher appears briefly, and its files, icon and other identifying information remain.
 
 **App updates.** At the top of **Settings**, click **Update** to download the latest stable
-Windows release from GitHub. When it is ready, click **Restart to update**. PNUT verifies the
+Windows release from GitHub. When it is ready, click **Restart to update**, or quit PNUT
+and reopen it to install. Closing to the tray keeps PNUT running; use **Quit** or disable
+**Minimize to tray on close** for a full exit. PNUT verifies the
 download, replaces its application files, and keeps your configuration, triggers, logs and
 map cache, session history and Revenge List. The previous application files are retained
 in a backup folder for recovery; **Restore previous app version** is in Settings.
@@ -124,6 +126,10 @@ The main window reopens after the update, keeping its saved size and maximized s
 **On startup** downloads updates automatically and offers a restart; it is unchecked by
 default. Source checkouts are updated through Git instead. You can also download a newer ZIP
 from Releases, close PNUT, and replace the executable and entire `_internal` folder manually.
+
+Scrolling over settings fields, dropdowns and sliders scrolls the page without changing
+their values. Click, drag, type or use the keyboard to adjust them; opened dropdowns
+still let you scroll their choices.
 
 **Updating from 0.1.0:** replace the entire `_internal` folder, or extract 0.1.1 or later
 into a fresh folder. Merging files alone leaves an incompatible DLL from 0.1.0 behind and

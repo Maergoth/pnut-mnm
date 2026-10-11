@@ -35,6 +35,7 @@ from PySide6.QtCore import (
     QObject,
     QPersistentModelIndex,
     QPoint,
+    QPointF,
     QPropertyAnimation,
     QRect,
     QRectF,
@@ -57,18 +58,25 @@ from PySide6.QtGui import (
     QPen,
     QResizeEvent,
     QShowEvent,
+    QWheelEvent,
     QTextCursor,
     QTextOption,
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QAbstractSlider,
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLayout,
     QLayoutItem,
     QSizePolicy,
+    QScrollArea,
+    QScrollBar,
     QSlider,
     QStyle,
     QStyledItemDelegate,
@@ -80,6 +88,74 @@ from PySide6.QtWidgets import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class _SettingsWheelGuard(QObject):
+    """Let wheel gestures scroll a form without editing a value under the pointer."""
+
+    def __init__(self, root: QWidget) -> None:
+        super().__init__(root)
+        self._root = root
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() != QEvent.Type.Wheel or not isinstance(obj, QWidget):
+            return False
+        current: QWidget | None = obj
+        control: QWidget | None = None
+        while current is not None:
+            if (control is None and isinstance(current, (QAbstractSpinBox, QComboBox, QAbstractSlider))
+                    and not isinstance(current, QScrollBar)):
+                control = current
+            if current is self._root:
+                break
+            current = current.parentWidget()
+        if current is None or control is None:
+            return False
+        # An opened dropdown is an intentional place to scroll its choices.
+        if (isinstance(control, QComboBox) and obj.window() is control.view().window()
+                and obj.window().windowType() == Qt.WindowType.Popup):
+            return False
+        # Ignoring a filtered event alone does not reliably reach the enclosing
+        # scroll area (in particular for a spin box's embedded line edit).
+        # Send the same gesture to its viewport, with the correct local position.
+        current = control.parentWidget()
+        while current is not None:
+            if isinstance(current, QScrollArea):
+                if event.angleDelta().isNull() and not event.pixelDelta().isNull():
+                    # Qt's Windows scroll bars only consume angle deltas. Keep
+                    # a pixel-only trackpad gesture useful over a protected field.
+                    for bar, delta in ((current.horizontalScrollBar(), event.pixelDelta().x()),
+                                       (current.verticalScrollBar(), event.pixelDelta().y())):
+                        bar.setValue(bar.value() - delta)
+                    event.accept()
+                    return True
+                viewport = current.viewport()
+                forwarded = QWheelEvent(
+                    QPointF(viewport.mapFromGlobal(event.globalPosition().toPoint())),
+                    event.globalPosition(), event.pixelDelta(), event.angleDelta(),
+                    event.buttons(), event.modifiers(), event.phase(), event.inverted(),
+                    event.source(), event.pointingDevice(),
+                )
+                QApplication.sendEvent(viewport, forwarded)
+                event.setAccepted(forwarded.isAccepted())
+                return True
+            current = current.parentWidget()
+        event.ignore()
+        return True
+
+
+def prevent_wheel_value_changes(root: QWidget) -> None:
+    """Protect this form's spin boxes, closed dropdowns and sliders, even when focused.
+
+    Clicks, dragging, typing and keyboard adjustment remain available. Wheel
+    gestures go to the containing scroll area; an explicitly opened dropdown
+    retains normal scrolling. The guard follows new/reparented controls and
+    embedded editors, and is removed when the form is destroyed.
+    """
+    if not hasattr(root, "_settings_wheel_guard"):
+        root._settings_wheel_guard = _SettingsWheelGuard(root)
+
 
 # --------------------------------------------------------------------------- theme access
 try:  # the theme module is written concurrently; prefer it, fall back to the spec tokens
@@ -1953,5 +2029,6 @@ __all__ = [
     "make_font",
     "metric_value",
     "qcolor",
+    "prevent_wheel_value_changes",
     "token",
 ]

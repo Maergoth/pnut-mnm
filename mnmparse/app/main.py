@@ -1498,7 +1498,8 @@ class App(QApplication):
                     lambda message: settings_page.set_app_update_status(message, True))
                 self.app_updates.finished.connect(self._on_app_update_status)
                 self.app_updates.ready.connect(
-                    lambda version: self._on_app_update_status(f"Version {version} is ready. Restart to install."))
+                    lambda version: self._on_app_update_status(
+                        f"Version {version} is ready. Restart now or quit and reopen to install. Closing to the tray keeps PNUT running."))
             if self.map_downloads is not None:
                 self._connect_optional(settings_page, "map_download_requested", self.map_downloads.start)
                 self.map_downloads.started.connect(
@@ -1610,6 +1611,8 @@ class App(QApplication):
 
     def stop_capture(self) -> None:
         """Stop the engine worker (flushes the tracker and closes the logs)."""
+        if self.engine is None:
+            return
         try:
             self.engine.stop()
         except Exception:  # noqa: BLE001
@@ -2285,13 +2288,22 @@ def run(argv: Sequence[str] | None = None) -> int:
     else:
         app = App([sys.argv[0]])
     try:
+        update_message = ""
         if args.selftest_seconds is None:
             from mnmparse.app.launch_identity import InstanceCoordinator
             app.instance_coordinator = InstanceCoordinator(project_path("."), Path(args.config or DEFAULT_CONFIG_PATH).resolve(), app)
             app.instance_coordinator.activation.connect(app.show_window)
             if not app.instance_coordinator.acquire():
                 return 0
+            from mnmparse.app.app_updates import prepare_pending_update
+            prepared, update_message = prepare_pending_update(
+                arguments=["--config", str(Path(args.config or DEFAULT_CONFIG_PATH).resolve())])
+            if prepared:
+                app.shutdown()
+                return 0
         app.bootstrap(cfg, selftest_seconds=args.selftest_seconds, config_path=args.config)
+        if update_message:
+            app._on_app_update_status(update_message)
     except Exception:
         log.exception("Startup failed")
         app.shutdown()

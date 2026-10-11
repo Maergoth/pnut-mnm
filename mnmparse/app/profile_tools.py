@@ -11,6 +11,7 @@ from typing import Callable
 from PySide6.QtCore import QRect, Signal
 from PySide6.QtWidgets import QCheckBox, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from mnmparse.app.widgets import prevent_wheel_value_changes
 from mnmparse.backup import BackupError, backup_profile, restore_profile
 from mnmparse.config import Config, load_config, project_path, save_config
 from mnmparse.profiles import apply_profile, capture_profile, validate_profiles
@@ -69,6 +70,7 @@ class ProfileTools(QWidget):
 
     def __init__(self, cfg: Config, config_path: str | Path, settings, engine, parent: QWidget | None = None):
         super().__init__(parent)
+        prevent_wheel_value_changes(self)
         self._cfg, self._path, self._settings, self._engine = cfg, Path(config_path), settings, engine
         self._getter: Callable[[], Config] = lambda: self._cfg
         self._trigger_flush: Callable[[], object] | None = None

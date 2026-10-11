@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSpinBox, QVBoxLayout, QWidget
 
-from mnmparse.app.widgets import ElidedLabel
+from mnmparse.app.widgets import ElidedLabel, prevent_wheel_value_changes
 from mnmparse.app.window_identity import window_title
 
 DEFAULT_RESPAWN_SECONDS = 300
@@ -16,6 +16,7 @@ class RespawnTimerDialog(QDialog):
     def __init__(self, name: str, seconds: int, parent: QWidget | None = None,
                  *, remember_duration: bool = True) -> None:
         super().__init__(parent)
+        prevent_wheel_value_changes(self)
         self.setWindowTitle(window_title("respawn-timer"))
         # Keep normal dialog flags so the duration editor can accept keyboard focus.
         layout = QVBoxLayout(self)

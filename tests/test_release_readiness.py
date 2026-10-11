@@ -27,7 +27,7 @@ from PySide6.QtWidgets import QApplication
 from mnmparse import __version__
 from mnmparse import backup, storage
 from mnmparse.app import app_updates as updates
-from mnmparse.app.launch_identity import InstanceCoordinator, register_update_boot
+from mnmparse.app.launch_identity import InstanceCoordinator, _guard_name, _session_guard, register_update_boot
 from mnmparse.app.map_overlay import _Load
 from mnmparse.config import Config
 from mnmparse.maps import MapImage
@@ -383,6 +383,19 @@ class UpdateRecoveryTests(unittest.TestCase):
         with patch.object(updates, "installed_directory", return_value=self.install), patch.dict(os.environ, {"_PNUT_UPDATE_TOKEN": self.token}):
             self.assertFalse(updates.acknowledge_startup())
 
+    def test_helper_serializes_swaps_with_session_launches_and_releases_before_launch(self):
+        script = updates.make_restart_script(self.install, self.root / "package", 123, self.token)
+        self.assertIn(updates._quote_ps(_guard_name(self.install)), script)
+        guard_calls = [line.strip() for line in script.splitlines()
+                       if line.strip() in {"Enter-SessionGuard", "Leave-SessionGuard"}]
+        self.assertEqual(guard_calls, ["Enter-SessionGuard", "Leave-SessionGuard",
+                                       "Enter-SessionGuard", "Leave-SessionGuard"])
+        self.assertLess(script.index("WaitForExit(120000)"), script.index("    Enter-SessionGuard\n"))
+        self.assertLess(script.index("    Enter-SessionGuard\n"), script.index("    $swapStarted = $true"))
+        self.assertIn("catch [System.Threading.AbandonedMutexException]", script)
+        self.assertIn("try { Leave-SessionGuard } finally", script)
+        self.assertIn("$sessionMutex.Dispose()", script)
+
     def test_pre_qt_boot_registration_records_actual_child_pid(self):
         self.record()
         executable = self.install / ("a" * 24 + ".exe")
@@ -490,7 +503,15 @@ class WindowsHelperTests(unittest.TestCase):
             install.mkdir()
             package.mkdir(parents=True)
             self.powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-            self.compile_probe(install / updates.EXECUTABLE, 'System.Environment.Exit(0);')
+            guard_name = json.dumps(_guard_name(install))
+            guard_start = ('using(var gate=new System.Threading.Mutex(false,' + guard_name + ')) {'
+                           'bool held=false; try { held=gate.WaitOne(750); }'
+                           'catch(System.Threading.AbandonedMutexException) { held=true; }'
+                           'if(!held) { System.Environment.Exit(9); } try {')
+            guard_end = '} finally { gate.ReleaseMutex(); }}'
+            self.compile_probe(install / updates.EXECUTABLE, guard_start +
+                'string dir=System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);'
+                'System.IO.File.WriteAllText(System.IO.Path.Combine(dir,"rollback-started"),"ready");' + guard_end)
             old_bytes = (install / updates.EXECUTABLE).read_bytes()
             if healthy:
                 body = ('string token=System.Environment.GetEnvironmentVariable("_PNUT_UPDATE_TOKEN");'
@@ -499,7 +520,7 @@ class WindowsHelperTests(unittest.TestCase):
                         '"{\\\"schema\\\":1,\\\"token\\\":\\\""+token+"\\\",\\\"version\\\":\\\"9.8.7\\\"}");')
             else:
                 body = 'System.Environment.Exit(7);'
-            self.compile_probe(package / updates.EXECUTABLE, body)
+            self.compile_probe(package / updates.EXECUTABLE, guard_start + body + guard_end)
             for path, content in ((install / "_internal" / "marker", b"old library"),
                                   (package / "_internal" / "marker", b"new library"),
                                   (install / "config.json", b"personal config"), (install / "triggers.json", b"personal triggers"),
@@ -516,8 +537,28 @@ class WindowsHelperTests(unittest.TestCase):
             script = root / "helper.ps1"
             storage.atomic_write(script, updates.make_restart_script(install, package, 2147483647, token,
                                  version="9.8.7", health_timeout=2).encode("utf-8-sig"))
-            process = subprocess.run([str(self.powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
-                                     capture_output=True, text=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+            # A real launcher/copy operation holding its mutex must prevent the
+            # helper from replacing either binary or library files underneath it.
+            with _session_guard(install):
+                helper = subprocess.Popen([str(self.powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                          creationflags=subprocess.CREATE_NO_WINDOW)
+                try:
+                    staged_marker = install / (".pnut-incoming-" + token) / "_internal" / "marker"
+                    deadline = time.monotonic() + 8
+                    while not staged_marker.is_file() and helper.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(staged_marker.is_file(), "The helper did not finish preparing its incoming files")
+                    time.sleep(0.2)
+                    self.assertIsNone(helper.poll())
+                    self.assertEqual((install / updates.EXECUTABLE).read_bytes(), old_bytes)
+                    self.assertEqual((install / "_internal" / "marker").read_bytes(), b"old library")
+                except BaseException:
+                    helper.kill()
+                    helper.communicate(timeout=5)
+                    raise
+            stdout, stderr = helper.communicate(timeout=20)
+            process = subprocess.CompletedProcess(helper.args, helper.returncode, stdout, stderr)
             receipt = json.loads((install / ".pnut-update.json").read_text(encoding="utf-8-sig"))
             self.assertEqual(receipt["status"], "healthy" if healthy else "rolled_back", process.stderr)
             self.assertEqual(receipt["previous_backup"], str(prior_backup))
@@ -527,6 +568,10 @@ class WindowsHelperTests(unittest.TestCase):
             if not healthy:
                 self.assertEqual((install / updates.EXECUTABLE).read_bytes(), old_bytes)
                 self.assertIn("did not acknowledge", receipt["error"])
+                deadline = time.monotonic() + 2
+                while not (install / "rollback-started").is_file() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual((install / "rollback-started").read_text(), "ready")
             for path, expected in (("config.json", b"personal config"), ("triggers.json", b"personal triggers"), ("logs/private.txt", b"personal logs")):
                 self.assertEqual((install / path).read_bytes(), expected)
 
