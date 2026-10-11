@@ -11,8 +11,10 @@ from unittest.mock import patch
 
 from mnmparse.trigger_exchange import (
     FORMAT, VERSION, TriggerExchangeError, export_trigger_file,
-    external_sound_files, merge_triggers, read_trigger_file,
+    export_trigger_json, external_sound_files, merge_triggers, parse_trigger_text,
+    read_trigger_file,
 )
+from mnmparse.trigger_chat import encode_trigger
 from mnmparse.triggers import Trigger, TriggerStore
 
 
@@ -37,6 +39,62 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(set(bundle), {"format", "version", "triggers"})
         self.assertEqual((bundle["format"], bundle["version"]), (FORMAT, VERSION))
         self.assertEqual(read_trigger_file(self.path)[0].to_dict(), self.timer.to_dict())
+
+    def test_clipboard_bundle_is_compact_lossless_and_needs_no_files(self) -> None:
+        timer = replace(self.timer, name="Pacify 日本語", action="file", file="Z:/private/voice.wav",
+                        speech="An inactive speech setting is still preserved.")
+        text = export_trigger_json([timer])
+        self.assertNotIn("\n", text)
+        bundle = json.loads(text)
+        self.assertEqual(set(bundle), {"format", "version", "triggers"})
+        self.assertEqual(parse_trigger_text(text)[0].to_dict(), timer.to_dict())
+        self.assertEqual(list(self.path.parent.iterdir()), [])
+
+    def test_text_import_accepts_single_list_and_old_store_with_bom(self) -> None:
+        for shape in (self.timer.to_dict(), [self.timer.to_dict()],
+                      {"version": 1, "settings": {"volume": 12}, "triggers": [self.timer.to_dict()]}):
+            with self.subTest(shape=type(shape)):
+                self.assertEqual(parse_trigger_text("\ufeff" + json.dumps(shape)), [self.timer])
+
+    def test_text_import_accepts_multiple_wrapped_chat_codes_without_deduplicating_early(self) -> None:
+        timer = Trigger(name="Paci", pattern="Pacify", timer=True, timer_seconds=110, id="paci")
+        other = replace(timer, name="Root", pattern="Root", id="root")
+        code = encode_trigger(timer)
+        text = "\ufeff\n" + code[:40] + "\n" + code[40:] + "\n" + encode_trigger(other) + "\n" + code
+        incoming = parse_trigger_text(text)
+        self.assertEqual(incoming, [timer, other, timer])
+        result = merge_triggers([], incoming)
+        self.assertEqual((result.added, result.skipped), (2, 1))
+
+    def test_text_import_rejects_whole_paste_if_any_definition_is_bad(self) -> None:
+        timer = Trigger(name="Paci", pattern="Pacify", id="paci")
+        code = encode_trigger(timer)
+        words = code.split()
+        words[-2] = "0000" if words[-2] != "0000" else "1111"
+        for text in (json.dumps([self.timer.to_dict(), {"pattern": ""}]),
+                     code + "\n" + " ".join(words), code + "\n" + code[:-4],
+                     code + "\nignored text", code.replace("PNUT1", "PNUT2")):
+            with self.subTest(text=text[:30]):
+                with self.assertRaises(TriggerExchangeError):
+                    parse_trigger_text(text)
+        self.assertEqual(list(self.path.parent.iterdir()), [])
+
+    def test_clipboard_paths_enforce_byte_count_and_definition_limits(self) -> None:
+        timer = Trigger(name="Paci", pattern="Pacify", id="paci")
+        with patch("mnmparse.trigger_exchange.MAX_FILE_BYTES", 20):
+            with self.assertRaisesRegex(TriggerExchangeError, "too large"):
+                parse_trigger_text("日本語" * 3)  # Nine characters, 27 UTF-8 bytes.
+            with self.assertRaisesRegex(TriggerExchangeError, "too large"):
+                export_trigger_json([timer])
+        with patch("mnmparse.trigger_exchange.MAX_TRIGGERS", 1):
+            with self.assertRaisesRegex(TriggerExchangeError, "too many|Too many"):
+                parse_trigger_text(encode_trigger(timer) + "\n" + encode_trigger(timer))
+            with self.assertRaisesRegex(TriggerExchangeError, "Too many"):
+                export_trigger_json([timer, timer])
+        for text in ("", "  \n", "\ud800", '{"pattern":"hit","pattern":"other"}'):
+            with self.subTest(text=repr(text)):
+                with self.assertRaises(TriggerExchangeError):
+                    parse_trigger_text(text)
 
     def test_reads_old_full_store_and_converts_modes_and_defaults(self) -> None:
         self.write({"version": 1, "settings": {"volume": 12, "voice": "Private voice"},

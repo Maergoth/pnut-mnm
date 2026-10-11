@@ -60,6 +60,16 @@ class ChatCodecTests(unittest.TestCase):
                 received = chat.ChatShareAssembler().feed(chat.encode_trigger(trigger))
                 self.assertEqual(received[0].trigger.to_dict(), trigger.to_dict())
 
+    def test_omitting_ocr_grouping_rescues_a_definition_without_changing_settings(self) -> None:
+        trigger = replace(self.trigger, speech="OhbVrpoiVgRVIfLBcbfnoGMbJmTPSIAoCLrZaWZk")
+        compressed = chat._compress(sparse_payload(trigger))
+        self.assertGreater(len(chat._frame(compressed)), chat.MAX_CHAT_LINE)
+        message = chat.encode_trigger(trigger)
+        self.assertLessEqual(len(message), chat.MAX_CHAT_LINE)
+        self.assertEqual(len(message.split()), 4)
+        received = chat.ChatShareAssembler().feed(message)
+        self.assertEqual(received[0].trigger.to_dict(), trigger.to_dict())
+
     def test_multiple_independent_chat_messages_in_one_capture(self) -> None:
         other = replace(self.trigger, name="Root", pattern="Root", id="root")
         text = f'Maergoth says, "{self.message}"\nMaergoth says, "{chat.encode_trigger(other)}"'
@@ -143,7 +153,7 @@ class ChatCodecTests(unittest.TestCase):
         long_speech = "".join(source.choice(string.ascii_letters) for _ in range(600))
         trigger = replace(self.trigger, speech=long_speech)
         before = trigger.to_dict()
-        with self.assertRaisesRegex(TriggerExchangeError, "one 255-character.*JSON export"):
+        with self.assertRaisesRegex(TriggerExchangeError, "one 255-character.*Copy selected"):
             chat.encode_trigger(trigger)
         self.assertEqual(trigger.to_dict(), before)
 

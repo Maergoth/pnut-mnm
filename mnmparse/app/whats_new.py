@@ -19,6 +19,8 @@ SEEN_VERSION_KEY = "app/whats_new_version"
 class ReleaseNotes:
     changes: tuple[str, ...]
     settings_label: str
+    feature_page: str = ""
+    feature_label: str = ""
 
 
 # Every release adds a record here. A regression check keeps a version bump from
@@ -29,14 +31,18 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Players and Guilds now sit side by side in the Revenge List.",
             "Each list has Add, From clipboard, and Export CSV controls.",
             "Pop-out controls appear on hover. Resize it using the six-dot grip.",
+            "Timers share compact codes. Paste text or open a file in the same Import dialog.",
         ),
         settings_label="Revenge settings",
+        feature_page="triggers",
+        feature_label="Timer sharing",
     ),
 }
 
 
 class WhatsNewDialog(QDialog):
     settings_requested = Signal()
+    feature_requested = Signal(str)
 
     def __init__(self, version: str, notes: ReleaseNotes, parent: QWidget | None = None):
         super().__init__(parent)
@@ -91,6 +97,12 @@ class WhatsNewDialog(QDialog):
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.clicked.connect(self._open_settings)
         buttons.addWidget(self.settings_button)
+        self.feature_button = None
+        if notes.feature_page and notes.feature_label:
+            self.feature_button = QPushButton(notes.feature_label, self)
+            self.feature_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.feature_button.clicked.connect(lambda: self._open_feature(notes.feature_page))
+            buttons.addWidget(self.feature_button)
         buttons.addStretch(1)
         self.got_it_button = QPushButton("Got it", self)
         self.got_it_button.setObjectName("GotIt")
@@ -104,12 +116,17 @@ class WhatsNewDialog(QDialog):
         self.accept()
         self.settings_requested.emit()
 
+    def _open_feature(self, page: str) -> None:
+        self.accept()
+        self.feature_requested.emit(page)
+
 
 class WhatsNewController(QObject):
     """Wait for setup and an active main window; acknowledge only a shown dialog."""
 
     def __init__(self, settings: QSettings, window: QWidget, *,
                  eligible: Callable[[], bool], open_settings: Callable[[], None],
+                 open_feature: Callable[[str], None] | None = None,
                  version: str = APP_VERSION):
         super().__init__(window)
         self.settings = settings
@@ -118,6 +135,7 @@ class WhatsNewController(QObject):
         self.dialog: WhatsNewDialog | None = None
         self._eligible = eligible
         self._open_settings = open_settings
+        self._open_feature = open_feature
         self._stopped = False
         self._presented = False
         self._timer = QTimer(self)
@@ -149,6 +167,10 @@ class WhatsNewController(QObject):
         dialog = WhatsNewDialog(self.version, notes, self.window)
         self.dialog = dialog
         dialog.settings_requested.connect(self._open_settings)
+        if self._open_feature is not None:
+            dialog.feature_requested.connect(self._open_feature)
+        elif dialog.feature_button is not None:
+            dialog.feature_button.hide()
         dialog.finished.connect(self._dismissed)
         dialog.open()
         self._presented = dialog.isVisible()

@@ -484,22 +484,24 @@ rather than freezing capture or the editor.
 
 The bar at the top sets the volume, voice, speech rate and audio output for all triggers.
 Triggers are saved as you edit them, in `triggers.json`, with saved/error status and **Retry
-save**. **Undo delete** restores the most recently removed trigger. **Import timers…** accepts shared
-JSON files and older `triggers.json` files, converting legacy overlap settings. Existing
+save**. **Undo delete** restores the most recently removed trigger. **Import timers…** opens a
+data box: paste a timer code or open a shared file, then choose Import. Older JSON and
+`triggers.json` contents are accepted too, converting legacy overlap settings. Existing
 timers stay intact; duplicates are skipped and conflicting versions are added as separate
-copies. **Export timers…** lets you share the selected entry or all entries, including colors,
+copies. **Export timers…** copies the selected entry or all entries as a compact code, including colors,
 duration, speech and overlap settings. Global voice/output preferences stay local. Custom sound
-files must be shared separately and selected on the recipient's computer.
+files must be shared separately and selected on the recipient's computer. Optional **Save
+selected to file…** and **Save all to file…** actions save the same code in a `.pnut` file.
 For in-game sharing, select **one** trigger and choose **Export timers… > Selected timer for
 game chat…**. Copy and paste the single code into a chat channel visible in the recipient's
 capture area while PNUT is running. Each code contains exactly one trigger and preserves its
-settings. Chat export is limited to 255 characters; unusually large definitions use JSON file
-export instead, with no splitting or truncation. After the code is read and passes validation,
+settings. Chat export is limited to 255 characters; larger definitions use the normal compact
+clipboard code instead, with no splitting or truncation. After the code is read and passes validation,
 PNUT shows a **Review timer…** notice. The recipient can inspect it and choose **Import** or
 **Dismiss**; nothing is imported or played automatically. If OCR misreads the code, resend the
-share or use the JSON file instead. File export still supports a whole collection.
+share or paste the normal clipboard code into Import timers. Compact export supports a whole collection.
 Use a clear chat font, such as Arial or Georgia. Some fonts, including Times New Roman, can
-merge encoded characters; if a code is not detected, change the font or use JSON import.
+merge encoded characters; if a code is not detected, change the font or paste the code into Import timers.
 Corrupted codes are rejected rather than imported with changed settings.
 "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.

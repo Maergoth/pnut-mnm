@@ -20,7 +20,7 @@ from mnmparse.app.triggers_page import TriggersPage
 from mnmparse.app.triggers_runtime import TriggerRunner
 from mnmparse.config import Config
 from mnmparse.trigger_chat import ChatShareAssembler, encode_visible_trigger
-from mnmparse.trigger_exchange import read_trigger_file
+from mnmparse.trigger_exchange import parse_trigger_text
 from mnmparse.triggers import Trigger, TriggerStore
 from mnmparse.triggers import Match
 
@@ -129,12 +129,11 @@ class TriggerOwnedSettingsTests(unittest.TestCase):
         self.assertEqual(self.audio.run.call_args.kwargs["speech"], "Boom Boom 42")
         self.assertEqual(self.runner.board.timers[0].label, "DevoProc")
 
-    def test_definition_file_and_chat_export_are_available_in_carebear(self):
-        destination = self.root / "share.json"
+    def test_definition_clipboard_and_chat_export_are_available_in_carebear(self):
         with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName",
-                   return_value=(str(destination), "")):
+                   side_effect=AssertionError("Timer export must not open a file dialog")):
             self.page._on_export(selected=True)
-        exported = read_trigger_file(destination)
+        exported = parse_trigger_text(self.app.clipboard().text())
         self.assertEqual(len(exported), 1)
         self.assertEqual((exported[0].name, exported[0].pattern, exported[0].timer_end_speech),
                          ("Rebuff", "You feel stronger", "Rebuff Rebuff"))

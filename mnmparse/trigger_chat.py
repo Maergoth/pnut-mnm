@@ -6,9 +6,9 @@ the protocol, not to the current Trigger class, so later app defaults cannot
 change an imported setting. The payload is UTF-8, raw DEFLATE and lowercase hex.
 
 The single frame is PNUT1 <payload> <CRC32> END (at most 255 characters).
-Payload hex digits are grouped in sixes and the eight CRC digits in fours to
-help OCR read the code. CRC32 covers the complete compressed payload. O/0, I/1,
-L/1 aliases, letter case and OCR whitespace are tolerated; other damage fails
+Payload hex digits are grouped in sixes and the eight CRC digits in fours when
+they fit; longer definitions omit those spaces. CRC32 covers the complete
+compressed payload. O/0, I/1, L/1 aliases, letter case and OCR whitespace are tolerated; other damage fails
 closed. Checksums detect corruption, not sender identity. A complete frame may
 visually wrap across several OCR messages without becoming multiple chat sends.
 
@@ -101,14 +101,17 @@ def _group(text: str, size: int) -> str:
     return " ".join(text[pos:pos + size] for pos in range(0, len(text), size))
 
 
-def _frame(compressed: bytes) -> str:
-    return f"PNUT1 {_group(compressed.hex(), 6)} {_group(_checksum(compressed), 4)} END"
+def _frame(compressed: bytes, *, grouped: bool = True) -> str:
+    token, checksum = compressed.hex(), _checksum(compressed)
+    if grouped:
+        token, checksum = _group(token, 6), _group(checksum, 4)
+    return f"PNUT1 {token} {checksum} END"
 
 
 def _too_large() -> TriggerExchangeError:
     return TriggerExchangeError(
         f"This timer will not fit in one {MAX_CHAT_LINE}-character game chat message. "
-        "Use JSON export instead; no settings have been removed.")
+        "Use Copy selected instead; no settings have been removed.")
 
 
 def encode_trigger(trigger: Trigger) -> str:
@@ -116,7 +119,7 @@ def encode_trigger(trigger: Trigger) -> str:
     if not isinstance(trigger, Trigger):
         raise TriggerExchangeError("Select one timer to share in game chat.")
     if set(FIELDS_V1) != {item.name for item in fields(Trigger)}:
-        raise TriggerExchangeError("These timer fields require a newer chat format. Use JSON export.")
+        raise TriggerExchangeError("These timer fields require a newer chat format. Use Copy selected instead.")
     data = validate_trigger(trigger.to_dict()).to_dict()
     changed = [(index, data[key]) for index, key in enumerate(FIELDS_V1)
                if data[key] != DEFAULTS_V1[index]]
@@ -130,6 +133,8 @@ def encode_trigger(trigger: Trigger) -> str:
         raise _too_large()
     compressed = _compress(raw)
     message = _frame(compressed)
+    if len(message) > MAX_CHAT_LINE:
+        message = _frame(compressed, grouped=False)
     if len(message) > MAX_CHAT_LINE:
         raise _too_large()
     return message
@@ -180,6 +185,41 @@ def _parse_frame(frame: str) -> tuple[str, Trigger]:
     if len(compressed) > MAX_COMPRESSED_BYTES or _checksum(compressed).upper() != crc:
         raise TriggerExchangeError("The timer chat checksum did not match.")
     return _share_id(compressed), _decode(compressed)
+
+
+def decode_trigger_messages(text: str, *, limit: int) -> list[Trigger]:
+    """Validate a pasted sequence of complete codes, including visual line wraps.
+
+    Captured chat uses the tolerant assembler below. An explicit import must
+    reject every damaged or unfinished code rather than silently importing the
+    remaining valid definitions. Only whitespace may separate pasted frames.
+    """
+    triggers: list[Trigger] = []
+    position = 0
+    while position < len(text):
+        if text[position].isspace():
+            position += 1
+            continue
+        index = len(triggers) + 1
+        start = _START.match(text, position)
+        if start is None:
+            raise TriggerExchangeError(f"Timer code {index}: paste a complete PNUT1 code.")
+        if start.group("version").upper() not in ("1", "I", "L"):
+            raise TriggerExchangeError(f"Timer code {index} uses an unsupported version. Update PNUT and try again.")
+        end = _END.search(text, start.end())
+        if end is None:
+            raise TriggerExchangeError(f"Timer code {index} is incomplete.")
+        if len(triggers) >= limit:
+            raise TriggerExchangeError(f"Too many timers (maximum {limit}).")
+        try:
+            _share, trigger = _parse_frame(text[position:end.end()])
+        except (ValueError, TypeError, OverflowError, RecursionError, zlib.error) as exc:
+            raise TriggerExchangeError(f"Timer code {index} is damaged or invalid. Copy it again.") from exc
+        triggers.append(trigger)
+        position = end.end()
+    if not triggers:
+        raise TriggerExchangeError("Paste timer JSON or a PNUT1 timer code.")
+    return triggers
 
 
 class ChatShareAssembler:

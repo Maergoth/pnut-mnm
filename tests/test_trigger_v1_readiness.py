@@ -250,31 +250,27 @@ class TriggerPresentationTests(unittest.TestCase):
         dialog.deleteLater()
 
     def test_carebear_exports_owned_definitions(self):
+        from mnmparse.trigger_exchange import parse_trigger_text
+
         self.trigger = Trigger(name="Rebuff", pattern="You feel stronger", timer=True)
         self.store.triggers = [self.trigger]
         page = self.make_page()
-        destination = Path(self.tmp.name) / "my-timers.json"
-        with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", return_value=(str(destination), "")):
+        with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName") as chooser:
             page._on_export()
-        self.assertTrue(destination.exists())
-        self.assertIn(self.trigger.name, destination.read_text())
+        chooser.assert_not_called()
+        self.assertEqual(parse_trigger_text(QApplication.clipboard().text())[0].to_dict(), self.trigger.to_dict())
         page._on_export_chat()
         self.assertIsNotNone(page._chat_export_dialog)
         page._chat_export_dialog.close()
 
-    def test_export_rechecks_policy_after_nested_chooser(self):
+    def test_export_preserves_definitions_after_mode_change(self):
+        from mnmparse.trigger_exchange import parse_trigger_text
+
         page = self.make_page(full=True)
-        destination = Path(self.tmp.name) / "Peer99-timers.json"
-
-        def choose(*_args, **_kwargs):
-            page.set_config(Config())
-            return str(destination), ""
-
-        with patch("mnmparse.app.triggers_page.QFileDialog.getSaveFileName", side_effect=choose):
-            page._on_export()
-        self.assertTrue(destination.exists())
-        self.assertIn(self.trigger.name, destination.read_text())
-        self.assertIn("Exported", page.sharing_status.text())
+        page.set_config(Config())
+        page._on_export()
+        self.assertEqual(parse_trigger_text(QApplication.clipboard().text())[0].to_dict(), self.trigger.to_dict())
+        self.assertIn("Copied", page.sharing_status.text())
 
     def test_trigger_sharing_is_available_in_every_mode(self):
         from mnmparse.trigger_chat import encode_visible_trigger
