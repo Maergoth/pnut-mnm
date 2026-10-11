@@ -89,14 +89,15 @@ from PySide6.QtWidgets import (
 
 log = logging.getLogger(__name__)
 
+_WHEEL_PROTECTED_FORM = "pnutWheelProtectedForm"
+
 
 class _SettingsWheelGuard(QObject):
-    """Let wheel gestures scroll a form without editing a value under the pointer."""
+    """One app-owned filter protects marked forms without keeping them alive."""
 
-    def __init__(self, root: QWidget) -> None:
-        super().__init__(root)
-        self._root = root
-        QApplication.instance().installEventFilter(self)
+    def __init__(self, app: QApplication) -> None:
+        super().__init__(app)
+        app.installEventFilter(self)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         if event.type() != QEvent.Type.Wheel or not isinstance(obj, QWidget):
@@ -107,7 +108,7 @@ class _SettingsWheelGuard(QObject):
             if (control is None and isinstance(current, (QAbstractSpinBox, QComboBox, QAbstractSlider))
                     and not isinstance(current, QScrollBar)):
                 control = current
-            if current is self._root:
+            if current.property(_WHEEL_PROTECTED_FORM):
                 break
             current = current.parentWidget()
         if current is None or control is None:
@@ -151,10 +152,14 @@ def prevent_wheel_value_changes(root: QWidget) -> None:
     Clicks, dragging, typing and keyboard adjustment remain available. Wheel
     gestures go to the containing scroll area; an explicitly opened dropdown
     retains normal scrolling. The guard follows new/reparented controls and
-    embedded editors, and is removed when the form is destroyed.
+    embedded editors. Forms share one application-owned filter; their protection
+    ends when they are destroyed, without the filter retaining their roots.
     """
-    if not hasattr(root, "_settings_wheel_guard"):
-        root._settings_wheel_guard = _SettingsWheelGuard(root)
+    app = QApplication.instance()
+    if not hasattr(app, "_settings_wheel_guard"):
+        app._settings_wheel_guard = _SettingsWheelGuard(app)
+    root.setProperty(_WHEEL_PROTECTED_FORM, True)
+    root._settings_wheel_guard = app._settings_wheel_guard
 
 
 # --------------------------------------------------------------------------- theme access

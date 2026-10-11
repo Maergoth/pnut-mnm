@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import weakref
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -215,3 +216,20 @@ class SettingsWheelTests(unittest.TestCase):
         self.windows.append(outside)
         self.wheel(outside)
         self.assertEqual(outside.value(), 49, "The guard must not change unrelated windows")
+
+    def test_forms_share_one_app_owned_guard_without_retaining_closed_roots(self):
+        from mnmparse.app.widgets import _SettingsWheelGuard, prevent_wheel_value_changes
+
+        references = []
+        guards = []
+        for _ in range(100):
+            root = QWidget()
+            prevent_wheel_value_changes(root)
+            references.append(weakref.ref(root))
+            guards.append(root._settings_wheel_guard)
+            root.close()
+            del root
+        self.assertTrue(all(reference() is None for reference in references))
+        self.assertTrue(all(guard is guards[0] for guard in guards))
+        self.assertIs(guards[0].parent(), self.app)
+        self.assertEqual(self.app.findChildren(_SettingsWheelGuard), [guards[0]])
