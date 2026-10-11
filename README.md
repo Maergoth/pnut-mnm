@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.3 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.4 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.3-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.4-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -540,9 +540,16 @@ name. **Add** accepts any nonempty name or label, including spaces, symbols and 
 **Remove** deletes a saved entry. Names and activity dates persist between sessions.
 
 The main panel and overlay both offer **Pop out**, opening one synchronized passive window.
+The pop-out shares the overlay's colors, background opacity, text size and move/resize lock.
 All three lists show newest activity first. Settings limits the display to **30 days / 100
 entries** by default; choose **All** for either limit. Filters never delete saved entries.
 Older entries without dates remain visible until activity supplies a date.
+
+**Combat log alerts** show a fading notification when a saved name appears, with a soft
+flash and quiet tone. Customize the flash, sound, volume, display time and repeat delay
+under **Settings > Revenge List**. By default, notifications last four seconds and a name
+must be absent from the log for 30 seconds before alerting again. Display limits do not
+exclude names from alerts. Trigger master volume and mute also apply.
 
 **Map overlay.** The separate always-on-top map opens by default on a fresh install. After
 that, PNUT remembers whether you left it open or closed. Click **Map** in the top bar to

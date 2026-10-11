@@ -11,9 +11,9 @@ import re
 import time
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QPoint, QTimer, Signal, Slot, Qt
-from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLayout, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QPoint, QRectF, QTimer, Signal, Slot, Qt
+from PySide6.QtGui import QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLayout, QLineEdit, QPushButton, QScrollArea, QSizeGrip, QVBoxLayout, QWidget
 
 from mnmparse.app import theme
 from mnmparse.app.crop_picker import button_qss
@@ -40,6 +40,19 @@ def plausible_attacker(name: object, player_name: str = "") -> bool:
 def _valid_saved_name(name: object) -> bool:
     """Manual/storage names are unrestricted text; detection has separate rules."""
     return isinstance(name, str) and bool(name.strip()) and len(name) <= MAX_NAME_LENGTH
+
+
+def _contains_name(text: str, name: str) -> bool:
+    """Match literal, folded names without treating substrings as people."""
+    start = text.find(name)
+    while start >= 0:
+        end = start + len(name)
+        before = text[start - 1] if start else ""
+        after = text[end] if end < len(text) else ""
+        if not (before.isalnum() or before == "_" or after.isalnum() or after == "_"):
+            return True
+        start = text.find(name, start + 1)
+    return False
 
 
 @dataclass(frozen=True)
@@ -87,21 +100,28 @@ class RevengeController(QObject):
     """Store names only after an explicit + action; a prompt expires after 30 s.
 
     Candidate detection is a name heuristic, not an authoritative PvP classifier.
-    The feature requires an explicit PvP opt-in and confirmed full presentation.
-    Unknown identity fails closed. Source text and damage values are never kept.
+    The feature requires an explicit PvP opt-in. Automatic recruitment requires
+    a known identity; saved-name sightings do not. Source text and damage values
+    are never kept.
     """
 
     prompts_changed = Signal()
     saved_changed = Signal()
     error = Signal(str)
     pop_out_requested = Signal()
+    alert_requested = Signal(str)  #: saved display name only, never combat source text
 
     def __init__(self, cfg: Any, path: str | Path | None = None, parent: QObject | None = None,
-                 *, clock: Callable[[], float] = time.time):
+                 *, clock: Callable[[], float] = time.time,
+                 monotonic_clock: Callable[[], float] = time.monotonic):
         super().__init__(parent)
         self._cfg = cfg
         self.path = Path(path) if path is not None else project_path("revenge.json")
         self._clock = clock
+        self._monotonic_clock = monotonic_clock
+        self._alert_last_seen: dict[str, float] = {}
+        self._alerts_available = self.alerts_available
+        self._alert_delivery_cutoff: float | None = None
         self._seen: set[str] = set()
         self._pending: dict[str, AttackerCandidate] = {}
         self._saved: dict[str, RevengeEntry] = {}
@@ -134,6 +154,10 @@ class RevengeController(QObject):
     @property
     def available(self) -> bool:
         return self.enabled
+
+    @property
+    def alerts_available(self) -> bool:
+        return self.enabled and bool(getattr(self._cfg, "revenge_alert_enabled", True))
 
     @property
     def pending_candidates(self) -> tuple[AttackerCandidate, ...]:
@@ -173,6 +197,11 @@ class RevengeController(QObject):
             # disabled attacks must not appear when the feature is enabled.
             self._delivery_cutoff = self._clock()
         self._presentation_available = self.available
+        if self.alerts_available and not self._alerts_available:
+            self._alert_delivery_cutoff = self._clock()
+        self._alerts_available = self.alerts_available
+        if not self.alerts_available:
+            self._alert_last_seen.clear()
         if self.available and not self._display_timer.isActive():
             self._display_timer.start()
         elif not self.available:
@@ -186,8 +215,10 @@ class RevengeController(QObject):
         self.saved_changed.emit()
 
     @Slot(object, object)
-    def on_message(self, _message: Any, event: Any) -> None:
+    def on_message(self, message: Any, event: Any) -> None:
         """QObject receiver for worker emissions; AutoConnection runs it on the GUI thread."""
+        if bool(getattr(message, "backlog", False)):
+            return
         if self._delivery_cutoff is not None:
             try:
                 timestamp = float(getattr(event, "ts", float("nan")))
@@ -199,6 +230,63 @@ class RevengeController(QObject):
                     self._seen.add(attacker.casefold())
                 return
         self.observe(event)
+        if self._alert_delivery_cutoff is not None:
+            try:
+                timestamp = float(getattr(event, "ts", float("nan")))
+            except (TypeError, ValueError, OverflowError):
+                timestamp = float("nan")
+            if not math.isfinite(timestamp) or timestamp <= self._alert_delivery_cutoff:
+                return
+        self.observe_saved(event, text=getattr(message, "text", ""))
+
+    def observe_saved(self, event_or_text: Any, now: float | None = None, *, text: str = "") -> tuple[str, ...]:
+        """Alert once on appearance, then only after this name has gone quiet.
+
+        Matching uses every saved name, independently of display limits and
+        automatic recruitment. Repeated combat lines refresh the quiet interval
+        without restarting the visible notification or sounding again.
+        """
+        if not self.enabled or not self._saved:
+            return ()
+        event = event_or_text
+        source = event if isinstance(event, str) else text or getattr(event, "text", "")
+        source = source.casefold() if isinstance(source, str) else ""
+        participants = {name.casefold() for field in ("actor", "raw_actor", "target")
+                        if isinstance(name := getattr(event, field, None), str)}
+        keys = [key for key in self._saved if key in participants or _contains_name(source, key)]
+        if not keys:
+            return ()
+        activity_now = self._clock()
+        for key in keys:
+            self._record_activity(key, activity_now)
+        if not self.alerts_available:
+            return ()
+        now = self._monotonic_clock() if now is None else now
+        if type(now) not in (int, float) or not math.isfinite(now):
+            return ()
+        cooldown = getattr(self._cfg, "revenge_alert_cooldown", 30.0)
+        if type(cooldown) not in (int, float) or not math.isfinite(cooldown) or not 0 <= cooldown <= 3600:
+            cooldown = 30.0
+        alerts = []
+        for key in keys:
+            previous = self._alert_last_seen.get(key)
+            self._alert_last_seen[key] = now
+            if previous is None or now - previous >= cooldown:
+                name = self._saved[key].name
+                alerts.append(name)
+                self.alert_requested.emit(name)
+        return tuple(alerts)
+
+    def _record_activity(self, key: str, now: float | None) -> None:
+        entry = self._saved[key]
+        if _valid_time(now) and now is not None and (entry.last_activity is None or now > entry.last_activity):
+            self._saved[key] = RevengeEntry(entry.name, entry.added_at, float(now))
+            self._dirty = True
+            # Coalesce sustained combat into bounded two-second checkpoints.
+            if not self._save_timer.isActive():
+                self._save_timer.start()
+            if not self._activity_refresh.isActive():
+                self._activity_refresh.start()
 
     def _eligible_attacker(self, event: Any) -> str | None:
         player = str(getattr(self._cfg, "player_name", "") or "").strip()
@@ -230,16 +318,7 @@ class RevengeController(QObject):
         key = attacker.casefold()
         if key in self._saved:
             self._seen.add(key)
-            entry = self._saved[key]
-            if _valid_time(now) and now is not None and (entry.last_activity is None or now > entry.last_activity):
-                self._saved[key] = RevengeEntry(entry.name, entry.added_at, float(now))
-                self._dirty = True
-                # Coalesce a sustained fight into bounded two-second checkpoints,
-                # and retain the newest value for shutdown/backup flushes.
-                if not self._save_timer.isActive():
-                    self._save_timer.start()
-                if not self._activity_refresh.isActive():
-                    self._activity_refresh.start()
+            self._record_activity(key, now)
             return False
         if key in self._seen:
             return False
@@ -305,6 +384,7 @@ class RevengeController(QObject):
         if not self._persist(updated):
             return False
         self._saved = updated
+        self._alert_last_seen.pop(name.casefold(), None)
         self._set_clean()
         self.saved_changed.emit()
         return True
@@ -312,8 +392,10 @@ class RevengeController(QObject):
     def new_session(self) -> None:
         self._seen.clear()
         self._pending.clear()
+        self._alert_last_seen.clear()
         if self.available:
             self._delivery_cutoff = self._clock()
+            self._alert_delivery_cutoff = self._delivery_cutoff
         self._timer.stop()
         self.prompts_changed.emit()
 
@@ -356,6 +438,7 @@ class RevengeController(QObject):
             else:
                 raise ValueError("Unsupported revenge schema")
             self._saved = saved
+            self._alert_last_seen.clear()
             self._last_error = ""
         except (OSError, ValueError, RecursionError):
             self._report_error("The revenge list could not be read. The existing file has been preserved.")
@@ -561,6 +644,7 @@ class RevengeList(QFrame):
         # can accept keyboard input without changing the overlay's window flags.
         dialog = QInputDialog(self.window())
         dialog.setWindowTitle(window_title("revenge-add"))
+        dialog.setStyleSheet(theme.main_qss() + button_qss())
         dialog.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, False)
         dialog.setInputMode(QInputDialog.InputMode.TextInput)
         dialog.setLabelText("")
@@ -643,28 +727,33 @@ class _PopoutHeader(QFrame):
         super().__init__(owner)
         self._owner = owner
         self._drag: QPoint | None = None
-        self.setCursor(Qt.CursorShape.SizeAllCursor)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 8, 4)
-        heading = QLabel("Revenge List · PvP")
-        heading.setTextFormat(Qt.TextFormat.PlainText)
-        layout.addWidget(heading, 1)
-        close = QPushButton("×")
-        close.setObjectName("Chip")
-        close.setAccessibleName("Close revenge list popout")
-        close.setFixedWidth(32)
-        close.clicked.connect(owner.hide)
-        layout.addWidget(close)
+        self.heading = QLabel("Revenge List · PvP")
+        self.heading.setTextFormat(Qt.TextFormat.PlainText)
+        self.heading.setProperty("class", "title")
+        layout.addWidget(self.heading, 1)
+        self.close_button = QPushButton("×")
+        self.close_button.setObjectName("Chip")
+        self.close_button.setAccessibleName("Close revenge list popout")
+        self.close_button.setFixedWidth(32)
+        self.close_button.clicked.connect(owner.hide)
+        layout.addWidget(self.close_button)
+
+    def update_cursor(self) -> None:
+        if self._owner.locked:
+            self._drag = None
+        self.setCursor(Qt.CursorShape.ArrowCursor if self._owner.locked else Qt.CursorShape.SizeAllCursor)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
+        if not self._owner.locked and event.button() == Qt.MouseButton.LeftButton:
             self._drag = event.globalPosition().toPoint() - self._owner.pos()
             event.accept()
         else:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if self._drag is not None and event.buttons() & Qt.MouseButton.LeftButton:
+        if not self._owner.locked and self._drag is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self._owner.move(event.globalPosition().toPoint() - self._drag)
             event.accept()
         else:
@@ -676,33 +765,97 @@ class _PopoutHeader(QFrame):
 
 
 class RevengePopoutWindow(QWidget):
-    """One root-owned passive window, synced to the same protected controller."""
+    """A passive list with the combat overlay's glass, text scale and move lock."""
 
     def __init__(self, controller: RevengeController, settings: Any = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.controller = controller
+        self._locked = True
+        self._opacity = 0.85
+        self._font_scale = 1.0
         self.setObjectName("RevengePopout")
         self.setWindowTitle(window_title("revenge-popout"))
         self.setAccessibleName("Revenge List popout")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        self.setAutoFillBackground(False)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setPalette(theme._build_palette())
-        self.setStyleSheet(f"QWidget#RevengePopout {{ background: {theme.BG0}; border: 1px solid {theme.LINE}; }}"
-                          f"QLabel {{ color: {theme.TEXT}; background: transparent; }}" + button_qss())
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setContentsMargins(2, 2, 2, 8)
         layout.setSpacing(0)
         self.header = _PopoutHeader(self)
         layout.addWidget(self.header)
         self.list = RevengeList(controller, compact=True, allow_popout=False)
         self.list.rows_scroll.setMaximumHeight(320)
         layout.addWidget(self.list, 1)
+        self._grip = QSizeGrip(self)
+        self._grip.setAccessibleName("Resize revenge list popout")
         self.setMinimumSize(360, 200)
         self.resize(460, 380)
+        cfg = controller._cfg
+        locked = bool(getattr(cfg, "overlay_locked", True))
+        opacity = float(getattr(cfg, "overlay_opacity", 0.85))
+        font_scale = float(getattr(cfg, "overlay_font_scale", 1.0))
+        if settings is not None:
+            locked = settings.value("overlay/locked", locked, type=bool)
+            opacity = settings.value("overlay/opacity", opacity, type=float)
+            font_scale = settings.value("overlay/font_scale", font_scale, type=float)
+        self.set_appearance(opacity, font_scale)
+        self.set_locked(locked)
         controller.saved_changed.connect(self._sync_visibility)
         controller.prompts_changed.connect(self._sync_visibility)
         self.hide()
+
+    @property
+    def locked(self) -> bool:
+        return self._locked
+
+    @property
+    def opacity(self) -> float:
+        return self._opacity
+
+    @property
+    def font_scale(self) -> float:
+        return self._font_scale
+
+    def set_locked(self, locked: bool) -> None:
+        """Prevent moving and resizing while keeping list controls interactive."""
+        self._locked = bool(locked)
+        self.header.update_cursor()
+        self._grip.setVisible(not self._locked)
+
+    def set_appearance(self, opacity: float, font_scale: float) -> None:
+        """Match the overlay's background alpha without fading its text."""
+        self._opacity = min(1.0, max(0.2, float(opacity)))
+        self._font_scale = min(2.0, max(0.6, float(font_scale)))
+        px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
+        self.setStyleSheet(theme.overlay_qss(self._opacity) + button_qss()
+                          + f"QWidget {{ font-size: {px}px; }}")
+        self.header.close_button.setFixedWidth(max(32, round(px * 2.5)))
+        self.setMinimumWidth(max(360, round(360 * self._font_scale)))
+        self._position_grip()
+        self.update()
+
+    def _position_grip(self) -> None:
+        self._grip.resize(16, 16)
+        self._grip.move(self.width() - self._grip.width() - 2,
+                        self.height() - self._grip.height() - 2)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setPen(QPen(theme.qcolor("#ffffff", 0.14), 1))
+        painter.setBrush(theme.qcolor(theme.BG0, self._opacity))
+        painter.drawRoundedRect(rect, 12, 12)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_grip"):
+            self._position_grip()
 
     def _sync_visibility(self):
         if not self.controller.enabled:

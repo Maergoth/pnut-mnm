@@ -898,7 +898,8 @@ class OverlayWindow(QWidget):
         self._stack.addWidget(self._feed)
         self._stack.addWidget(self._session)
         self._revenge = QWidget(self._stack)
-        self._stack.addWidget(self._revenge)
+        self._revenge_page = self._revenge
+        self._stack.addWidget(self._revenge_page)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 4, 10, 8)
@@ -1545,16 +1546,23 @@ class OverlayWindow(QWidget):
         if tab == "session":
             return self._session
         if tab == "revenge":
-            return self._revenge
+            return self._revenge_page
         return self._table
 
     def set_revenge_controller(self, controller: Any) -> None:
         from mnmparse.app.revenge import RevengeList
-        old = self._revenge
-        self._revenge = RevengeList(controller, compact=True)
+        old = self._revenge_page
+        # Only the stack controls this page's visibility. The list refreshes its
+        # own feature visibility, which must not re-show a hidden stack page.
+        self._revenge_page = QWidget(self._stack)
+        layout = QVBoxLayout(self._revenge_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._revenge = RevengeList(controller, self._revenge_page, compact=True)
+        layout.addWidget(self._revenge)
         self._stack.removeWidget(old)
+        old.hide()
         old.deleteLater()
-        self._stack.addWidget(self._revenge)
+        self._stack.addWidget(self._revenge_page)
         self._stack.setCurrentWidget(self._widget_for_tab(self._tab))
 
     def set_session(self, snap: Any | None) -> None:

@@ -1,4 +1,4 @@
-"""The map shares the overlay lock and appearance through every application control."""
+"""Map and Revenge popout share overlay settings through application controls."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -68,14 +68,14 @@ class _DownloadController(QObject):
 class _AppHarness:
     """Run real bootstrap/wiring without trying to create a second QApplication."""
 
-    def __init__(self, settings, *, combat_available=True):
+    def __init__(self, settings, *, combat_available=True, trigger_runner=None):
         self.settings = settings
         self.icon = QIcon()
         self._selftest = False
         self._shut_down = False
         self._make_engine = lambda cfg: _MissingEngine(cfg)
         self._make_overlay = lambda cfg: OverlayWindow(settings, cfg) if combat_available else None
-        self._make_trigger_runner = lambda: None
+        self._make_trigger_runner = lambda: trigger_runner
         self.request_quit = Mock()
 
     def __getattr__(self, name):
@@ -99,35 +99,49 @@ class MapLockWiringTests(unittest.TestCase):
         if self.host is not None:
             self.host._shut_down = True
             self.host.window.prepare_quit()
-            for widget in (self.host.window, self.host.overlay, self.host.map_overlay):
+            for widget in (self.host.window, self.host.overlay, self.host.map_overlay, self.host.revenge_popout):
                 if widget is not None:
                     widget.close()
                     widget.deleteLater()
             self.host.tray.hide()
             self.host.tray.deleteLater()
+            for name in ("_timer", "_save_timer", "_activity_refresh", "_display_timer"):
+                getattr(self.host.revenge, name).stop()
+            self.host.revenge.deleteLater()
+            if self.host.triggers is not None:
+                self.host.triggers._clock.stop()
+                self.host.triggers.audio.stop()
+                self.host.triggers.deleteLater()
         self.qt_app.processEvents()
         self.temp.cleanup()
 
-    def bootstrap(self, cfg=None, *, combat_available=True):
-        self.host = _AppHarness(self.settings, combat_available=combat_available)
+    def bootstrap(self, cfg=None, *, combat_available=True, trigger_runner=None):
+        self.host = _AppHarness(self.settings, combat_available=combat_available, trigger_runner=trigger_runner)
         with patch("mnmparse.app.main.app_icon.ensure_icon_file"), \
              patch("mnmparse.app.main.QSystemTrayIcon.isSystemTrayAvailable", return_value=False), \
              patch("mnmparse.app.main.TrayIcon", side_effect=lambda icon, _parent: TrayIcon(icon)), \
              patch("mnmparse.app.map_overlay.MapOverlay", _MapWindow), \
              patch("mnmparse.app.map_downloads.MapDownloadController", side_effect=lambda *_: _DownloadController()), \
              patch("mnmparse.app.app_updates.AppUpdateController", side_effect=lambda *_: _DownloadController()):
-            self.host.bootstrap(replace(cfg or Config(), start_capture_on_launch=False))
+            self.host.bootstrap(replace(cfg or Config(), start_capture_on_launch=False, setup_complete=True),
+                                config_path=Path(self.temp.name) / "config.json")
         return self.host
 
     def assert_locked(self, locked):
         host = self.host
         self.assertEqual(host.map_overlay.locked, locked)
+        self.assertEqual(host.revenge_popout.locked, locked)
         if host.overlay is not None:
             self.assertEqual(host.overlay.locked, locked)
         self.assertEqual(host.window._lock_switch.isChecked(), locked)
         self.assertEqual(host.window.page("settings").overlay_locked.isChecked(), locked)
         self.assertEqual(host.tray._overlay_locked, locked)
         self.assertEqual(self.settings.value("overlay/locked", type=bool), locked)
+
+    def assert_appearance(self, opacity, font_scale):
+        self.assertEqual(self.host.map_overlay.appearance, (opacity, font_scale))
+        self.assertEqual((self.host.revenge_popout.opacity, self.host.revenge_popout.font_scale),
+                         (opacity, font_scale))
 
     def test_fresh_install_opens_map_and_quit_keeps_open_preference(self):
         host = self.bootstrap()
@@ -161,7 +175,7 @@ class MapLockWiringTests(unittest.TestCase):
         self.settings.setValue("overlay/font_scale", 1.3)
         host = self.bootstrap(Config(overlay_locked=False, overlay_opacity=0.8))
         self.assert_locked(True)
-        self.assertEqual(host.map_overlay.appearance, (0.54, 1.3))
+        self.assert_appearance(0.54, 1.3)
 
     def test_main_tray_settings_and_combat_header_share_the_lock(self):
         host = self.bootstrap()
@@ -181,19 +195,19 @@ class MapLockWiringTests(unittest.TestCase):
         page = host.window.page("settings")
         page.overlay_opacity.set_value(47, emit=True)
         page.overlay_font_scale.set_value(125, emit=True)
-        self.assertEqual(host.map_overlay.appearance, (0.47, 1.25))
+        self.assert_appearance(0.47, 1.25)
         host.overlay.set_opacity(0.64)
         host.overlay.set_font_scale(1.4)
-        self.assertEqual(host.map_overlay.appearance, (0.64, 1.4))
+        self.assert_appearance(0.64, 1.4)
         host.on_config_changed(replace(host.cfg, overlay_opacity=0.72, overlay_font_scale=1.15))
-        self.assertEqual(host.map_overlay.appearance, (0.72, 1.15))
+        self.assert_appearance(0.72, 1.15)
 
     def test_map_controls_work_when_combat_overlay_is_unavailable(self):
         self.settings.setValue("overlay/locked", False)
         self.settings.setValue("overlay/opacity", 0.6)
         host = self.bootstrap(combat_available=False)
         self.assert_locked(False)
-        self.assertEqual(host.map_overlay.appearance, (0.6, 1.0))
+        self.assert_appearance(0.6, 1.0)
         self.assertTrue(host.window._lock_switch.isEnabled())
         self.assertTrue(host.tray._lock_action.isEnabled())
         self.assertFalse(host.window._overlay_switch.isEnabled())
@@ -207,10 +221,52 @@ class MapLockWiringTests(unittest.TestCase):
         self.assert_locked(True)
         page.overlay_opacity.set_value(35, emit=True)
         page.overlay_font_scale.set_value(150, emit=True)
-        self.assertEqual(host.map_overlay.appearance, (0.35, 1.5))
+        self.assert_appearance(0.35, 1.5)
         host.on_config_changed(replace(host.cfg, overlay_locked=False, overlay_opacity=0.72, overlay_font_scale=1.1))
         self.assert_locked(False)
-        self.assertEqual(host.map_overlay.appearance, (0.72, 1.1))
+        self.assert_appearance(0.72, 1.1)
+
+    def test_revenge_sighting_uses_wired_trigger_notifications_and_settings_preview(self):
+        from mnmparse.app.triggers_runtime import TriggerRunner
+        from mnmparse.grammar import Event
+        from mnmparse.tracker import Message
+        from mnmparse.triggers import TriggerStore
+
+        store = TriggerStore(Path(self.temp.name) / "triggers.json")
+        store.save()
+        saved = store.path.read_bytes()
+        runner = TriggerRunner(store)
+        runner.audio.run = Mock()
+        runner.audio.voices = Mock(return_value=[])
+        runner.audio.devices = Mock(return_value=[])
+        cfg = Config(player_name="Hero", revenge_enabled=True, revenge_alert_volume=17,
+                     revenge_alert_duration=6, revenge_alert_flash=True)
+        host = self.bootstrap(cfg, trigger_runner=runner)
+        matches = []
+        runner.fired.connect(matches.append)
+        self.assertTrue(host.revenge.save_attacker("{line}"))
+        source = "{line} hits Hero for 99 damage."
+        with patch("mnmparse.app.morality.reduced_motion", return_value=False):
+            host.engine.message.emit(Message(source, 1, 1),
+                                     Event(1, "melee_hit", source, actor="{line}", target="Hero", amount=99))
+
+        self.assertEqual(len(matches), 1)
+        popup = host.overlay._timer_panel._popups[-1]
+        self.assertEqual((popup.label, popup.seconds, popup.flash), ("Revenge: {line} spotted", 6, True))
+        recent = host.window.page("triggers").recent.item(0)
+        self.assertIn("Revenge sighting", recent.text())
+        self.assertEqual(recent.toolTip(), "{line}")
+        self.assertEqual(runner.board.timers, [])
+        self.assertEqual(store.triggers, [])
+        self.assertEqual(store.path.read_bytes(), saved)
+        runner.audio.run.assert_called_once_with("sound", sound="Dink", file="", speech="{line}",
+                                                 volume=17, scope="")
+
+        page = host.window.page("settings")
+        page.revenge_alert_volume.set_value(27, emit=True)
+        page.revenge_alert_preview.click()
+        runner.audio.run.assert_called_with("sound", sound="Dink", volume=27)
+        self.assertEqual(store.path.read_bytes(), saved)
 
 
 if __name__ == "__main__":

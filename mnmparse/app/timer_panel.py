@@ -39,6 +39,7 @@ MAX_ROWS = 8
 MAX_POPUPS = 4
 POPUP_SECONDS = 4.0
 POPUP_FADE_SECONDS = 1.0
+POPUP_FLASH_SECONDS = 0.7
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,17 @@ class TriggerPopup:
     label: str
     created_at: float
     color: str
+    seconds: float = POPUP_SECONDS
+    flash: bool = False
 
     def opacity(self, now: float) -> float:
-        return max(0.0, min(1.0, (POPUP_SECONDS - (now - self.created_at)) / POPUP_FADE_SECONDS))
+        return max(0.0, min(1.0, (self.seconds - (now - self.created_at)) / POPUP_FADE_SECONDS))
+
+    def flash_strength(self, now: float) -> float:
+        age = now - self.created_at
+        if not self.flash or not 0 < age < POPUP_FLASH_SECONDS:
+            return 0.0
+        return math.sin(math.pi * age / POPUP_FLASH_SECONDS)
 
 
 def format_remaining(seconds: float) -> str:
@@ -161,14 +170,20 @@ class TimerPanel(DockedPanel):
         if trigger.timer:
             return
         label = fill_placeholders(trigger.timer_label or trigger.name, match.values())
-        self._popups.append(TriggerPopup(label, time.monotonic(), trigger.timer_color or token("ACCENT")))
+        seconds = match.notification_seconds
+        if type(seconds) not in (int, float) or not math.isfinite(seconds) or not 1 <= seconds <= 60:
+            seconds = POPUP_SECONDS
+        from mnmparse.app.morality import reduced_motion
+
+        flash = bool(match.notification_flash) and not reduced_motion(getattr(self._owner, "_cfg", None))
+        self._popups.append(TriggerPopup(label, time.monotonic(), trigger.timer_color or token("ACCENT"), seconds, flash))
         self._popups = self._popups[-MAX_POPUPS:]
         self.refresh()
 
     def _prune_popups(self) -> bool:
         now = time.monotonic()
         before = len(self._popups)
-        self._popups = [popup for popup in self._popups if now - popup.created_at < POPUP_SECONDS]
+        self._popups = [popup for popup in self._popups if now - popup.created_at < popup.seconds]
         return len(self._popups) != before
 
     def timers(self) -> list[ActiveTimer]:
@@ -388,8 +403,14 @@ class TimerPanel(DockedPanel):
             p.save()
             p.setOpacity(popup.opacity(popup_now))
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(qcolor(popup.color, 0.15))
+            flash = popup.flash_strength(popup_now)
+            p.setBrush(qcolor(popup.color, 0.15 + flash * 0.14))
             p.drawRoundedRect(row, 5, 5)
+            if flash:
+                p.setPen(QPen(qcolor(popup.color, flash * 0.35), 1))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(row, 5, 5)
+                p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(qcolor(popup.color))
             p.drawRoundedRect(QRectF(row.left() + 2, row.top() + 6, 3, row.height() - 12), 1.5, 1.5)
             p.setFont(self._f_label)

@@ -29,6 +29,13 @@ Installed copies are updated through PNUT's **Update** feature. Development and 
 tasks must not replace binaries or change files in a user's installed App folder; publish
 the tested release to GitHub so the app can download it.
 
+Use focused tests while editing, then the PR's complete Windows regression and portable
+release gate on the final commit. Do not repeat the full suite after it passes unless code
+changes or a new failure warrants it. CI runs on pull requests and main pushes; branch
+pushes and release tags do not duplicate the PR gate, and superseded runs are cancelled.
+After squash merging, build and verify the clean merged commit once for publication;
+the released package's embedded provenance must identify that exact commit.
+
 `tests/test_native_window_visibility.py` also exercises the real Windows Qt platform on
 an isolated desktop that is never displayed. It reproduces the hidden launch used by
 older updaters and checks startup recovery and tray restoration. Keep the updater helper
