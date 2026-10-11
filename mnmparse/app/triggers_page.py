@@ -15,10 +15,11 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QSettings, QSize, QStringListModel, Qt, QTimer, Signal
+from PySide6.QtCore import QIODevice, QSaveFile, QSettings, QSize, QStringListModel, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCompleter,
     QComboBox,
     QColorDialog,
@@ -45,14 +46,14 @@ from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, prevent_w
 from mnmparse.config import Config, project_path
 from mnmparse.privacy import (safe_static_trigger_title,
                              safe_trigger_label, safe_trigger_match)
-from mnmparse.trigger_exchange import export_visible_trigger_file, external_sound_files, merge_triggers, read_trigger_file
+from mnmparse.trigger_exchange import export_trigger_code, external_sound_files, merge_triggers, parse_trigger_text
 from mnmparse.triggers import BUILTIN_SOUNDS, MODES, MAX_LINE_CHARS, MAX_PATTERN_CHARS, Trigger, fill_placeholders, match_trigger, regex_problem
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
     from mnmparse.app.triggers_runtime import TriggerRunner
     from mnmparse.trigger_chat import ReceivedShare
-    from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt
+    from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt, TriggerTextImportDialog
     from mnmparse.app.trigger_help import TriggerHelpDialog
 
 log = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ class TriggersPage(QWidget):
         self._seen_shares: deque[tuple[str, str]] = deque(maxlen=128)
         self._chat_dialog: TriggerSharePrompt | None = None
         self._chat_export_dialog: TriggerChatExportDialog | None = None
+        self._import_dialog: TriggerTextImportDialog | None = None
         self._help_dialog: TriggerHelpDialog | None = None
         self.setStyleSheet(_page_qss())
 
@@ -208,24 +210,31 @@ class TriggersPage(QWidget):
         self.import_timers = QPushButton("Import timers…")
         self.import_timers.setObjectName("Chip")
         self.import_timers.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.import_timers.setToolTip("Add shared timers or triggers from a JSON file, including older PNUT files")
+        self.import_timers.setToolTip("Paste timer data or open a shared file, including older JSON definitions")
         self.import_timers.clicked.connect(self._on_import)
         lay.addWidget(self.import_timers)
         self.export_timers = QPushButton("Export timers…")
         self.export_timers.setObjectName("Chip")
         self.export_timers.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.export_timers.setToolTip("Share the selected timer or all timers and triggers")
+        self.export_timers.setToolTip("Copy timer data or save it as a file to share")
         menu = QMenu(self.export_timers)
-        self.export_selected = menu.addAction("Selected timer")
+        self.export_selected = menu.addAction("Copy selected")
         self.export_selected.triggered.connect(lambda: self._on_export(selected=True))
-        self.export_all = menu.addAction("All timers")
+        self.export_all = menu.addAction("Copy all")
         self.export_all.triggered.connect(lambda: self._on_export())
+        menu.addSeparator()
+        self.save_selected = menu.addAction("Save selected to file…")
+        self.save_selected.triggered.connect(lambda: self._on_export(selected=True, to_file=True))
+        self.save_all = menu.addAction("Save all to file…")
+        self.save_all.triggered.connect(lambda: self._on_export(to_file=True))
         menu.addSeparator()
         self.export_chat = menu.addAction("Selected timer for game chat…")
         self.export_chat.triggered.connect(self._on_export_chat)
         self.export_timers.setMenu(menu)
         self.export_selected.setEnabled(False)
         self.export_all.setEnabled(False)
+        self.save_selected.setEnabled(False)
+        self.save_all.setEnabled(False)
         self.export_chat.setEnabled(False)
         lay.addWidget(self.export_timers)
         self.sharing_status = QLabel()
@@ -641,7 +650,9 @@ class TriggersPage(QWidget):
         self.new_button.setEnabled(self.runner is not None)
         self.duplicate_button.setEnabled(self._current is not None)
         self.export_all.setEnabled(bool(self._store_triggers()))
+        self.save_all.setEnabled(bool(self._store_triggers()))
         self.export_selected.setEnabled(self._current is not None)
+        self.save_selected.setEnabled(self._current is not None)
         self.export_chat.setEnabled(self._current is not None)
         if select is not None:
             self.list.setCurrentItem(select)
@@ -667,6 +678,7 @@ class TriggersPage(QWidget):
         self._current = trig
         self.duplicate_button.setEnabled(trig is not None)
         self.export_selected.setEnabled(trig is not None)
+        self.save_selected.setEnabled(trig is not None)
         self.export_chat.setEnabled(trig is not None)
         self._load_editor(trig)
 
@@ -731,19 +743,38 @@ class TriggersPage(QWidget):
     def _on_import(self) -> None:
         if self.runner is None:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Import timers", str(project_path(".")), "Timers and triggers (*.json)")
-        if not path:
+        if self._import_dialog is not None:
+            self._import_dialog.raise_()
+            self._import_dialog.activateWindow()
             return
+        from mnmparse.app.trigger_share_dialog import TriggerTextImportDialog
+
+        dialog = TriggerTextImportDialog(self.window())
+        self._import_dialog = dialog
+        dialog.import_requested.connect(lambda text: self._import_text(dialog, text))
+        dialog.finished.connect(lambda _result: self._finish_text_import(dialog))
+        dialog.open()
+
+    def _import_text(self, dialog: TriggerTextImportDialog, text: str) -> None:
         try:
-            incoming = read_trigger_file(path)
+            incoming = parse_trigger_text(text)
         except (OSError, ValueError) as exc:
             log.warning("import failed: %s", exc)
             self._sharing_feedback(f"Import failed: {exc}", error=True)
+            dialog.set_error(self.sharing_status.text())
             return
-        self._merge_incoming(incoming)
+        if self._merge_incoming(incoming):
+            dialog.accept()
+        else:
+            dialog.set_error(self.sharing_status.text())
+
+    def _finish_text_import(self, dialog: TriggerTextImportDialog) -> None:
+        if self._import_dialog is dialog:
+            self._import_dialog = None
+        dialog.deleteLater()
 
     def _merge_incoming(self, incoming: list[Trigger]) -> bool:
-        """Validate and atomically persist either a file import or an accepted chat share."""
+        """Validate and persist pasted definitions or an accepted chat share."""
         if self.runner is None:
             self._sharing_feedback("Import failed: timers are unavailable.", error=True)
             return False
@@ -780,7 +811,7 @@ class TriggersPage(QWidget):
         self._sharing_feedback(message)
         return True
 
-    def _on_export(self, *, selected: bool = False) -> None:
+    def _on_export(self, *, selected: bool = False, to_file: bool = False) -> None:
         if self.runner is None:
             return
         triggers = [self._current] if selected and self._current is not None else self._store_triggers()
@@ -789,23 +820,34 @@ class TriggersPage(QWidget):
             return
         if not self.flush_pending_changes():
             return
-        filename = "PNUT-timer.json" if selected else "PNUT-timers.json"
-        path, _ = QFileDialog.getSaveFileName(self, "Export timer" if selected else "Export all timers",
-                                             str(project_path(filename)), "Timers and triggers (*.json)")
-        if not path:
-            return
-        destination = Path(path)
-        if not destination.suffix:
-            destination = destination.with_suffix(".json")
         try:
-            if self.runner.store.path is not None and destination.resolve() == self.runner.store.path.resolve():
-                raise ValueError("Choose another filename; this is PNUT's active timer settings file.")
-            export_visible_trigger_file(destination, triggers, cfg=self._cfg)
+            payload = export_trigger_code(triggers)
+            if to_file:
+                filename, _filter = QFileDialog.getSaveFileName(
+                    self, "Save timer data", "timers.pnut", "PNUT timer data (*.pnut);;Text files (*.txt)")
+                if not filename:
+                    return
+                destination = Path(filename)
+                if not destination.suffix:
+                    destination = destination.with_suffix(".pnut")
+                if self.runner.store.path is not None and destination.resolve() == self.runner.store.path.resolve():
+                    raise ValueError("Choose a different file; this is your active timer settings file.")
+                output = QSaveFile(str(destination))
+                if not output.open(QIODevice.OpenModeFlag.WriteOnly):
+                    raise OSError(output.errorString())
+                raw = payload.encode("utf-8")
+                if output.write(raw) != len(raw):
+                    output.cancelWriting()
+                    raise OSError(output.errorString())
+                if not output.commit():
+                    raise OSError(output.errorString())
+            else:
+                QApplication.clipboard().setText(payload)
         except (OSError, ValueError) as exc:
             log.warning("export failed: %s", exc)
             self._sharing_feedback(f"Export failed: {exc}", error=True)
             return
-        message = f"Exported {len(triggers)} to {destination.name}."
+        message = f"{'Saved' if to_file else 'Copied'} {len(triggers)} {'timer' if len(triggers) == 1 else 'timers'}."
         if external_sound_files(triggers):
             message += " Sound files are not included; share them separately and choose their locations after importing."
         self._sharing_feedback(message)

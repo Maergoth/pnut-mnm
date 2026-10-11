@@ -2,21 +2,116 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
+    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from mnmparse.app import theme
 from mnmparse.app.widgets import ElidedLabel, token
 from mnmparse.app.window_identity import window_title
-from mnmparse.trigger_exchange import external_sound_files
+from mnmparse.trigger_exchange import MAX_FILE_BYTES, external_sound_files
 from mnmparse.triggers import Trigger
+
+
+class TriggerTextImportDialog(QDialog):
+    """Paste definitions without changing the live store until Import succeeds."""
+
+    import_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(window_title("trigger-text-import"))
+        self.setObjectName("TimerTextImport")
+        self.resize(680, 460)
+        self.setMinimumSize(440, 340)
+        self.setStyleSheet(f"""
+            QDialog#TimerTextImport {{ background: {theme.BG0}; color: {theme.TEXT}; }}
+            QDialog#TimerTextImport QLabel {{ color: {theme.TEXT}; background: transparent; }}
+            QDialog#TimerTextImport QLabel#Heading {{ font-size: 22px; font-weight: 600; }}
+            QDialog#TimerTextImport QPlainTextEdit {{
+                background: {theme.BG1}; color: {theme.TEXT};
+                border: 1px solid {theme.LINE}; border-radius: 6px; padding: 8px;
+                selection-background-color: {theme.ACCENT}; selection-color: {theme.BG0};
+            }}
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+        heading = QLabel("Import timers", self)
+        heading.setObjectName("Heading")
+        layout.addWidget(heading)
+        hint = QLabel("Paste timer data or open a shared file, then choose Import.", self)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        sources = QHBoxLayout()
+        self.from_clipboard = QPushButton("Paste from clipboard", self)
+        self.from_clipboard.clicked.connect(self._paste)
+        sources.addWidget(self.from_clipboard)
+        self.open_file = QPushButton("Open file…", self)
+        self.open_file.clicked.connect(self._open_file)
+        sources.addWidget(self.open_file)
+        sources.addStretch(1)
+        layout.addLayout(sources)
+        self.text = QPlainTextEdit(self)
+        self.text.setPlaceholderText("Paste timer codes or JSON here")
+        self.text.setAccessibleName("Timers to import")
+        self.text.setTabChangesFocus(True)
+        self.text.textChanged.connect(self._on_text_changed)
+        layout.addWidget(self.text, 1)
+        self.error = QLabel(self)
+        self.error.setWordWrap(True)
+        self.error.setTextFormat(Qt.TextFormat.PlainText)
+        self.error.setStyleSheet(f"color: {token('DANGER')};")
+        self.error.hide()
+        layout.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        self.import_button = buttons.addButton("Import", QDialogButtonBox.ButtonRole.ActionRole)
+        self.import_button.setProperty("class", "primary")
+        self.import_button.setEnabled(False)
+        self.import_button.clicked.connect(lambda: self.import_requested.emit(self.text.toPlainText()))
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _paste(self) -> None:
+        self.text.setPlainText(QApplication.clipboard().text())
+        self.text.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _open_file(self) -> None:
+        filename, _filter = QFileDialog.getOpenFileName(
+            self, "Open timer data", "", "Timer data (*.pnut *.txt *.json);;All files (*)")
+        if not filename:
+            return
+        try:
+            with Path(filename).open("rb") as stream:
+                raw = stream.read(MAX_FILE_BYTES + 1)
+            if len(raw) > MAX_FILE_BYTES:
+                raise ValueError("The timer file is too large (maximum 8 MB).")
+            text = raw.decode("utf-8-sig")
+        except (OSError, ValueError) as exc:
+            self.set_error(f"Could not open timer data: {exc}")
+            return
+        self.text.setPlainText(text)
+        self.text.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _on_text_changed(self) -> None:
+        self.import_button.setEnabled(bool(self.text.toPlainText().strip()))
+        self.error.hide()
+
+    def set_error(self, text: str) -> None:
+        self.error.setText(text)
+        self.error.show()
 
 
 class TriggerChatExportDialog(QDialog):
@@ -26,8 +121,11 @@ class TriggerChatExportDialog(QDialog):
         super().__init__(parent)
         self._cfg = cfg
         self._trigger = trigger
-        if not isinstance(code, str) or not code or "\n" in code or "\r" in code:
-            raise ValueError("A timer must be shared as one chat line.")
+        from mnmparse.trigger_chat import MAX_CHAT_LINE
+
+        if (not isinstance(code, str) or not code or "\n" in code or "\r" in code
+                or len(code) > MAX_CHAT_LINE):
+            raise ValueError("A timer must be shared as one chat line of at most 255 characters.")
         self.code = code
         self.setWindowTitle(window_title("trigger-export"))
         self.setModal(False)

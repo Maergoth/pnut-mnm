@@ -1,12 +1,15 @@
 """Read, merge and share timer definitions without changing local audio settings.
 
-The public bundle contains only triggers.  Older ``triggers.json`` stores, a list
-of triggers, and an individual trigger are accepted too.  External sound files
-remain references; importing a bundle never opens or copies those files.
+The public bundle contains only triggers. Older ``triggers.json`` stores, a list
+of triggers, an individual trigger, and pasted game-chat codes are accepted too.
+External sound files remain references; importing a bundle never opens or copies
+those files.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass, fields, replace
 import json
 import math
@@ -16,6 +19,7 @@ import re
 import tempfile
 from typing import Iterable
 import uuid
+import zlib
 
 from .triggers import ACTIONS, BUILTIN_SOUNDS, MODES, TIMER_MODES, Trigger
 
@@ -24,6 +28,8 @@ FORMAT = "pnut-timers"
 VERSION = 1
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_TRIGGERS = 5000
+# Clipboard code version freezes both the collection frame and the binary fields.
+CODE_MARKER = "PNUTT1"
 # The editor uses Qt integer spin boxes for some time values.
 MAX_SECONDS = 2 ** 31 - 1
 _LEGACY_MODES = {"restart": "replace", "ignore": "retain"}
@@ -44,7 +50,7 @@ _ENUM_FIELDS = {
 
 
 class TriggerExchangeError(ValueError):
-    """An invalid bundle or a file that could not safely be read or written."""
+    """An invalid bundle or definitions that could not safely be read or written."""
 
 
 @dataclass(frozen=True)
@@ -121,26 +127,36 @@ def _reject_constant(value: str) -> None:
     raise TriggerExchangeError(f"The JSON contains {value}; numbers must be finite.")
 
 
-def read_trigger_file(path: str | Path) -> list[Trigger]:
-    """Validate a complete JSON file and return converted, independent triggers."""
-    path = Path(path)
+def parse_trigger_text(text: str) -> list[Trigger]:
+    """Validate an entire clipboard bundle, JSON, or chat codes without files."""
+    if not isinstance(text, str):
+        raise TriggerExchangeError("Paste a timer code or timer JSON.")
     try:
-        with path.open("rb") as stream:
-            raw = stream.read(MAX_FILE_BYTES + 1)
-        if len(raw) > MAX_FILE_BYTES:
-            raise TriggerExchangeError("The timer file is too large (maximum 8 MB).")
-        data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_no_duplicate_keys,
-                          parse_constant=_reject_constant)
+        if len(text) > MAX_FILE_BYTES or len(text.encode("utf-8")) > MAX_FILE_BYTES:
+            raise TriggerExchangeError("The timer text is too large (maximum 8 MB).")
+    except UnicodeError as exc:
+        raise TriggerExchangeError("The timer text contains invalid Unicode.") from exc
+    text = text.lstrip("\ufeff \t\r\n")
+    if not text:
+        raise TriggerExchangeError("Paste a timer code or timer JSON.")
+    if text[:5].upper() == "PNUTT":
+        return _decode_trigger_code(text)
+    if text[:4].upper() == "PNUT":
+        # Local import keeps the chat codec's schema validation dependency acyclic.
+        from .trigger_chat import decode_trigger_messages
+        return decode_trigger_messages(text, limit=MAX_TRIGGERS)
+    try:
+        data = json.loads(text, object_pairs_hook=_no_duplicate_keys, parse_constant=_reject_constant)
     except TriggerExchangeError:
         raise
-    except (OSError, ValueError, RecursionError) as exc:
-        raise TriggerExchangeError(f"Could not read {path.name}: {exc}") from exc
+    except (ValueError, RecursionError) as exc:
+        raise TriggerExchangeError(f"Could not read timer JSON: {exc}") from exc
 
     if isinstance(data, dict) and "triggers" in data:
         if "format" in data and data["format"] != FORMAT:
             raise TriggerExchangeError("This is not a PNUT timer bundle.")
         if "version" in data and (type(data["version"]) is not int or data["version"] != VERSION):
-            raise TriggerExchangeError("This timer file uses an unsupported version. Update PNUT and try again.")
+            raise TriggerExchangeError("This timer bundle uses an unsupported version. Update PNUT and try again.")
         if data.get("format") == FORMAT and "version" not in data:
             raise TriggerExchangeError("The timer bundle is missing its version.")
         items = data["triggers"]
@@ -149,10 +165,25 @@ def read_trigger_file(path: str | Path) -> list[Trigger]:
     else:
         items = data
     if not isinstance(items, list):
-        raise TriggerExchangeError("Choose a timer bundle, a triggers.json store, or a JSON list of timers.")
+        raise TriggerExchangeError("Paste a timer, a timer bundle, or a JSON list of timers.")
     if len(items) > MAX_TRIGGERS:
-        raise TriggerExchangeError(f"The file contains too many timers (maximum {MAX_TRIGGERS}).")
+        raise TriggerExchangeError(f"The text contains too many timers (maximum {MAX_TRIGGERS}).")
     return [_validate_trigger(item, index) for index, item in enumerate(items, 1)]
+
+
+def read_trigger_file(path: str | Path) -> list[Trigger]:
+    """Read a bounded legacy file through the same complete-import validator."""
+    path = Path(path)
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_FILE_BYTES + 1)
+        if len(raw) > MAX_FILE_BYTES:
+            raise TriggerExchangeError("The timer file is too large (maximum 8 MB).")
+        return parse_trigger_text(raw.decode("utf-8-sig"))
+    except TriggerExchangeError:
+        raise
+    except (OSError, ValueError, RecursionError) as exc:
+        raise TriggerExchangeError(f"Could not read {path.name}: {exc}") from exc
 
 
 def _validated_copies(triggers: Iterable[Trigger]) -> list[Trigger]:
@@ -222,6 +253,119 @@ def external_sound_files(triggers: Iterable[Trigger]) -> list[str]:
     """Sound references to mention to recipients; their contents stay private."""
     return sorted({trigger.file for trigger in triggers if trigger.file and "file" in
                    (trigger.action, trigger.timer_warn_action, trigger.timer_end_action)})
+
+
+def _write_code_varint(value: int) -> bytes:
+    encoded = bytearray()
+    while value >= 128:
+        encoded.append((value & 127) | 128)
+        value >>= 7
+    encoded.append(value)
+    return bytes(encoded)
+
+
+def _read_code_varint(raw: bytes, position: int) -> tuple[int, int]:
+    value = 0
+    for shift in range(0, 35, 7):
+        if position >= len(raw):
+            raise TriggerExchangeError("The timer code is incomplete.")
+        byte = raw[position]
+        position += 1
+        value |= (byte & 127) << shift
+        if not byte & 128:
+            if (shift and byte == 0) or value > MAX_FILE_BYTES:
+                raise TriggerExchangeError("The timer code has an invalid length.")
+            return value, position
+    raise TriggerExchangeError("The timer code has an invalid length.")
+
+
+def export_trigger_code(triggers: Iterable[Trigger]) -> str:
+    """Return one dense, lossless code for a single timer or an entire library.
+
+    PNUTT1 is a clipboard/file format. Its decoded bytes contain a canonical
+    varint count followed by length-prefixed frozen binary definitions. Raw
+    DEFLATE, URL-safe Base64, and CRC32 preserve every setting without imposing
+    game chat's separate 255-character limit.
+    """
+    from .trigger_binary import encode_binary
+
+    originals = list(triggers)
+    _validated_copies(originals)
+    # The legacy model normalizes numeric types on load. The binary encoder
+    # validates separately and preserves the authored types and negative zero.
+    raw = bytearray(_write_code_varint(len(originals)))
+    for trigger in originals:
+        definition = encode_binary(trigger)
+        length = _write_code_varint(len(definition))
+        if len(raw) + len(length) + len(definition) > MAX_FILE_BYTES:
+            raise TriggerExchangeError("The timer bundle is too large (maximum 8 MB). Copy fewer timers.")
+        raw.extend(length)
+        raw.extend(definition)
+    compressor = zlib.compressobj(9, wbits=-15)
+    compressed = compressor.compress(raw) + compressor.flush()
+    token = base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
+    text = f"{CODE_MARKER} {token} {zlib.crc32(compressed):08x} END"
+    if len(text) > MAX_FILE_BYTES:
+        raise TriggerExchangeError("The timer code is too large (maximum 8 MB). Copy fewer timers.")
+    return text
+
+
+def _decode_trigger_code(text: str) -> list[Trigger]:
+    from .trigger_binary import decode_binary
+
+    words = text.split()
+    if not words or words[0].upper() != CODE_MARKER:
+        raise TriggerExchangeError("This timer code uses an unsupported version. Update PNUT and try again.")
+    if len(words) < 4 or words[-1].upper() != "END":
+        raise TriggerExchangeError("The timer code is incomplete. Copy it again.")
+    token, checksum = "".join(words[1:-2]), words[-2]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token) or not re.fullmatch(r"[a-fA-F0-9]{8}", checksum):
+        raise TriggerExchangeError("The timer code is damaged. Copy it again.")
+    try:
+        compressed = base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise TriggerExchangeError("The timer code is damaged. Copy it again.") from exc
+    if zlib.crc32(compressed) != int(checksum, 16):
+        raise TriggerExchangeError("The timer code checksum did not match. Copy it again.")
+    try:
+        inflater = zlib.decompressobj(wbits=-15)
+        raw = inflater.decompress(compressed, MAX_FILE_BYTES + 1)
+    except zlib.error as exc:
+        raise TriggerExchangeError("The timer code is damaged. Copy it again.") from exc
+    if (len(raw) > MAX_FILE_BYTES or inflater.unconsumed_tail or
+            not inflater.eof or inflater.unused_data):
+        raise TriggerExchangeError("The timer code is invalid or too large (maximum 8 MB).")
+    count, position = _read_code_varint(raw, 0)
+    if count > MAX_TRIGGERS:
+        raise TriggerExchangeError(f"Too many timers (maximum {MAX_TRIGGERS}).")
+    triggers: list[Trigger] = []
+    for index in range(1, count + 1):
+        length, position = _read_code_varint(raw, position)
+        if length == 0 or length > len(raw) - position:
+            raise TriggerExchangeError(f"Timer {index} in the timer code is incomplete.")
+        try:
+            triggers.append(decode_binary(raw[position:position + length]))
+        except TriggerExchangeError as exc:
+            raise TriggerExchangeError(f"Timer {index} in the timer code is invalid: {exc}") from exc
+        position += length
+    if position != len(raw):
+        raise TriggerExchangeError("The timer code has unexpected trailing data.")
+    return triggers
+
+
+def export_trigger_json(triggers: Iterable[Trigger]) -> str:
+    """Return a compact, lossless clipboard bundle with no global settings."""
+    copies = _validated_copies(triggers)
+    try:
+        text = json.dumps({"format": FORMAT, "version": VERSION,
+                           "triggers": [trigger.to_dict() for trigger in copies]},
+                          separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        size = len(text.encode("utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise TriggerExchangeError(f"Could not export timers: {exc}") from exc
+    if size > MAX_FILE_BYTES:
+        raise TriggerExchangeError("The timer bundle is too large (maximum 8 MB). Copy fewer timers.")
+    return text
 
 
 def export_trigger_file(path: str | Path, triggers: Iterable[Trigger]) -> None:

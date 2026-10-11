@@ -296,21 +296,23 @@ rank, or OCR typo can make a good-looking pattern fail. Capture should include t
 relevant message. For regex, allow only the variations you have actually observed.</p>
 
 <a name="sharing"></a><h2>10. Import, export and in-game sharing</h2>
-<p><b>Import timers…</b> accepts shared JSON files and older triggers.json files. Existing
+<p><b>Import timers…</b> opens one text box. Paste timer data or choose <b>Open file…</b>,
+then press <b>Import</b>. Shared codes and older JSON definitions are accepted. Existing
 definitions stay intact; duplicates are skipped and conflicting versions are added as separate
-entries. Review and test imported triggers before relying on them. Export timers… can save
-the selected entry or all entries, including label, matching, duration, colors and speech.</p>
+entries. <b>Export timers… → Copy selected</b> or <b>Copy all</b> copies compact timer data
+to the clipboard. <b>Save selected to file…</b> or <b>Save all to file…</b> saves the same data
+as a shareable .pnut file. Every setting is kept, including label, matching, duration, colors and speech.</p>
 <p>For game chat, select <b>one</b> trigger and choose <b>Export timers… → Selected timer for
 game chat…</b>. Copy its one-line code and paste it into game chat. The receiver needs PNUT
 capture running on chat that includes that message. PNUT offers a review before importing;
 receiving a code does not automatically install or fire it.</p>
 <p>The chat code is limited to 255 characters and never split into multiple messages. Complex
-regex recipes or long labels may not fit. Use JSON export for those, or for a collection.
+regex recipes or long labels may not fit. Use <b>Copy selected</b> or <b>Save selected to file…</b>
+for those, or <b>Copy all</b> for a collection.
 All trigger fields are kept rather than silently truncated. Global voice/output choices
 remain local. Custom audio files must be shared separately and selected on the receiving computer.</p>
 <p>If a code is not recognized, use a clear chat font or resend it. If OCR changes its contents,
-validation can reject it; a JSON file is the dependable fallback. Importing from your older
-development folder uses the same Import timers… flow.</p>
+validation can reject it; use the copied data or shared file through <b>Import timers…</b> instead.</p>
 
 <a name="organizing"></a><h2>11. Organize, save and restore triggers</h2>
 <p>Use descriptive names and search to keep related triggers together. Edits save

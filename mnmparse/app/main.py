@@ -1382,7 +1382,8 @@ class App(QApplication):
         self._whats_new_waiting_setup = wait_for_setup
         self._whats_new = WhatsNewController(
             self.settings, self.window, eligible=self._whats_new_eligible,
-            open_settings=self.window.open_revenge_settings, version=APP_VERSION)
+            open_settings=self.window.open_revenge_settings,
+            open_feature=self.window.show_page, version=APP_VERSION)
         self._whats_new.request()
 
     def _whats_new_eligible(self) -> bool:

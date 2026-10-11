@@ -175,6 +175,14 @@ class WhatsNewTests(unittest.TestCase):
         self.assertLess(y, page._scroll.viewport().height())
         self.assertEqual(self.settings.value(SEEN_VERSION_KEY), APP_VERSION)
 
+        self.settings.setValue(SEEN_VERSION_KEY, "1.0.4")
+        controller = self.controller(open_feature=window.show_page)
+        self.assertTrue(controller.show_if_needed())
+        controller.dialog.feature_button.click()
+        self.app.processEvents()
+        self.assertIs(window._stack.currentWidget(), window.page("triggers"))
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), APP_VERSION)
+
     def test_dialog_renders_dark_readable_content_and_random_native_caption(self):
         palette, stylesheet = self.app.palette(), self.app.styleSheet()
         try:
