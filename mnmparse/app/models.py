@@ -39,6 +39,7 @@ __all__ = [
     "SkillRow",
     "build_snapshot",
     "snapshot_rows_for_tab",
+    "is_outsider",
     "actor_color",
 ]
 
@@ -1468,25 +1469,38 @@ def owner_row(snap: EncounterSnapshot, owner: str, *, you_name: str | None = Non
     )
 
 
-def snapshot_rows_for_tab(snap: EncounterSnapshot, tab: str) -> list[ActorRow]:
+def is_outsider(row: Any) -> bool:
+    """An unconfirmed friendly combatant, including an unassigned named pet."""
+    return (
+        row is not None
+        and not getattr(row, "in_group", True)
+        and not getattr(row, "is_enemy", False)
+        and not getattr(row, "is_npc", False)
+    )
+
+
+def snapshot_rows_for_tab(snap: EncounterSnapshot, tab: str, *,
+                          show_other_groups: bool = True) -> list[ActorRow]:
     """Rows relevant to a meter tab, in the order a meter shows them.
 
     ``"damage"``: actors that dealt damage or swung (sorted by damage desc);
     ``"healing"``: actors with heals (sorted by heals desc);
     ``"taken"``: actors that took damage (sorted by taken desc).
-    Unknown tabs return every row.
+    Unknown tabs return every visible row. Hiding outsiders is presentation-only;
+    the complete snapshot stays available for ownership corrections.
     """
+    rows = snap.rows if show_other_groups else [r for r in snap.rows if not is_outsider(r)]
     if tab == "overview":
         active = [
-            r for r in snap.rows
+            r for r in rows
             if r.damage > 0 or r.swings > 0 or r.heals > 0 or r.taken > 0 or r.utility > 0 or r.cc_attempts > 0 or r.average_counts
         ]
         return sorted(active, key=lambda r: (-r.dps, -r.hps, -r.utility, r.name))
     if tab == "damage":
-        return [r for r in snap.rows if r.damage > 0 or r.swings > 0 or "damage" in r.average_counts]
+        return [r for r in rows if r.damage > 0 or r.swings > 0 or "damage" in r.average_counts]
     if tab == "healing":
-        return sorted((r for r in snap.rows if r.heals > 0 or "heals" in r.average_counts), key=lambda r: (-r.heals, r.name))
+        return sorted((r for r in rows if r.heals > 0 or "heals" in r.average_counts), key=lambda r: (-r.heals, r.name))
     if tab == "taken":
-        return sorted((r for r in snap.rows if r.taken > 0), key=lambda r: (-r.taken, r.name))
+        return sorted((r for r in rows if r.taken > 0), key=lambda r: (-r.taken, r.name))
     log.debug("snapshot_rows_for_tab: unknown tab %r; returning all rows", tab)
-    return list(snap.rows)
+    return list(rows)

@@ -133,6 +133,28 @@ class PetRollupUiTests(unittest.TestCase):
         self.assertEqual(calls, [("a charmed rat", "Wenna")])
         self.assertEqual(actor_display_name(row), "a charmed rat")
 
+    def test_group_owner_can_add_hidden_outsider_without_selecting_that_row(self) -> None:
+        snap = attributed_fight()
+        owner = next(row for row in snap.rows if row.name == "Tamsin")
+        outsider = replace(owner, name="UnassignedPet", in_group=False)
+        snap = replace(snap, rows=snap.rows + [outsider,
+            replace(outsider, name="PvPFoe", is_enemy=True),
+            replace(outsider, name="a nearby rat", is_npc=True),
+            replace(outsider, name="AssignedPet", pet_owner=PLAYER),
+            replace(outsider, name="Kulepu"),  # already folded into your row in another fight
+        ])
+        menu = self.keep(QMenu())
+        calls = []
+        handlers = add_pet_entries(menu, owner, snap, lambda *args: calls.append(args))
+        submenu = next(action.menu() for action in menu.actions() if action.text() == "Add pet")
+        candidate = next(action for action in submenu.actions() if action.text() == "UnassignedPet")
+        self.assertTrue(candidate.font().italic())
+        self.assertEqual({action.text() for action in submenu.actions() if action.font().italic()},
+                         {"UnassignedPet"})
+        handlers[candidate]()
+        self.assertEqual(calls, [("UnassignedPet", "Tamsin")])
+        self.assertFalse(any(action.text() == "Assign pet to group member" for action in menu.actions()))
+
     def test_tooltips_and_csv_name_the_combined_parse_json_keeps_identity(self) -> None:
         snap = attributed_fight(two_pets=True)
         row = next(row for row in snap.rows if row.name == PLAYER)

@@ -81,6 +81,7 @@ from mnmparse.app.widgets import (
     fmt_int,
     fmt_mmss,
     fmt_rate,
+    is_outsider,
     make_font,
     qcolor,
     token,
@@ -104,8 +105,10 @@ except Exception:  # pragma: no cover - only while models.py does not exist yet
     def _self_rows(snap: Any, tab: str, player_name: str) -> list[Any]:
         return []
 
-    def _rows_for_tab(snap: Any, tab: str) -> list[Any]:
+    def _rows_for_tab(snap: Any, tab: str, *, show_other_groups: bool = True) -> list[Any]:
         rows = list(getattr(snap, "rows", []) or [])
+        if not show_other_groups:
+            rows = [r for r in rows if not is_outsider(r)]
         if tab == "overview":
             return rows
         if tab == "healing":
@@ -242,16 +245,53 @@ def add_group_entries(menu: QMenu, row: Any, emit: Any) -> dict[Any, Any]:
     return handlers
 
 
+def _add_pet_candidates(menu: QMenu, owner: str, rows: Sequence[Any], emit: Any) -> dict[Any, Any]:
+    """Offer captured outsider identities without putting their performance in the meter."""
+    submenu = menu.addMenu("Add pet")
+    handlers: dict[Any, Any] = {}
+    # A zone summary can include older rows: never offer an actor already recognized as
+    # a member, an enemy or an assigned pet in another part of the selected visit.
+    known = {str(getattr(row, "name", "") or "").casefold() for row in rows
+             if not is_outsider(row) or getattr(row, "pet_owner", "")}
+    known.update(str(pet).casefold() for row in rows for pet in getattr(row, "attributed_pets", ()) or ())
+    names = {str(getattr(row, "name", "") or "") for row in rows if is_outsider(row)
+             and not getattr(row, "pet_owner", "") and not getattr(row, "is_you", False)}
+    names = {name for name in names if name and name.casefold() != owner.casefold()
+             and name.casefold() not in known}
+    seen: set[str] = set()
+    for name in sorted(names, key=str.casefold):
+        if name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        action = submenu.addAction(name.replace("&", "&&"))
+        font = action.font()
+        font.setItalic(True)
+        action.setFont(font)
+        handlers[action] = lambda pet=name: emit(pet, owner)
+    if not seen:
+        submenu.addAction("No unassigned combatants in this fight").setEnabled(False)
+    submenu.addSeparator()
+    manual = submenu.addAction("Enter pet name…")
+
+    def enter_name() -> None:
+        name, accepted = QInputDialog.getText(menu.parentWidget(), window_title("pet-assignment"), "Pet name")
+        if accepted and name.strip():
+            emit(name.strip(), owner)
+
+    handlers[manual] = enter_name
+    return handlers
+
+
 def add_pet_entries(menu: QMenu, row: Any, snap: Any, emit: Any) -> dict[Any, Any]:
-    """Assign a combatant, or manage each pet already included in an owner's row."""
+    """Add a hidden outsider to an owner's pets, or manage existing attribution."""
     if row is None or snap is None:
         return {}
     name = str(getattr(row, "name", "") or "")
     if not name:
         return {}
     pets = list(dict.fromkeys(getattr(row, "attributed_pets", ()) or ()))
-    if getattr(row, "is_you", False) and not pets:
-        return {}
+    owner_row = bool(getattr(row, "in_group", True)) and not any(
+        getattr(row, key, False) for key in ("is_npc", "is_enemy", "is_pet"))
     members = set(getattr(snap, "group_members", ()) or ())
     members.update(r.name for r in getattr(snap, "rows", ()) if
                    getattr(r, "in_group", True) and not any(getattr(r, k, False) for k in ("is_npc", "is_enemy", "is_pet")))
@@ -278,27 +318,23 @@ def add_pet_entries(menu: QMenu, row: Any, snap: Any, emit: Any) -> dict[Any, An
         submenu = menu.addMenu("Manage included pets")
         for pet in pets:
             choices(submenu.addMenu(pet), pet, name)
-    else:
+    if owner_row:
+        handlers.update(_add_pet_candidates(menu, name, list(getattr(snap, "rows", ()) or ()), emit))
+    elif not pets:
         owner = str(getattr(row, "pet_owner", "") or "")
         choices(menu.addMenu("Assign pet to group member"), name, owner)
     return handlers
 
 
-def add_own_pet_entries(menu: QMenu, row: Any, player: str, emit: Any) -> dict[Any, Any]:
-    """Carebear ownership controls use only your identity and your included pets."""
+def add_own_pet_entries(menu: QMenu, row: Any, player: str, emit: Any, *,
+                        candidate_rows: Sequence[Any] = ()) -> dict[Any, Any]:
+    """Carebear can assign captured outsider identities only to your own parse."""
     player = str(player or "").strip()
     if row is None or not player or not (getattr(row, "is_you", False)
             or str(getattr(row, "pet_owner", "") or "").casefold() == player.casefold()):
         return {}
     menu.addSeparator()
-    assign = menu.addAction("Assign a pet to me…")
-
-    def assign_to_self() -> None:
-        name, accepted = QInputDialog.getText(menu.parentWidget(), window_title("pet-assignment"), "Pet name")
-        if accepted and name.strip():
-            emit(name.strip(), player)
-
-    handlers = {assign: assign_to_self}
+    handlers = _add_pet_candidates(menu, player, candidate_rows, emit)
     pets = list(dict.fromkeys(getattr(row, "attributed_pets", ()) or ()))
     if getattr(row, "is_pet", False) and getattr(row, "pet_owner", ""):
         pets.append(row.name)
@@ -996,7 +1032,7 @@ class OverlayWindow(QWidget):
         return self._table
 
     def set_show_other_groups(self, show: bool) -> None:
-        """Whether fights nobody in the party took part in replace the meter."""
+        """Show nearby players in the meter and list their unrelated fights."""
         show = bool(show)
         if show == self._show_others:
             return
@@ -1312,7 +1348,15 @@ class OverlayWindow(QWidget):
             handlers.update(add_group_entries(menu, row, self.group_override_requested.emit))
             handlers.update(add_pet_entries(menu, row, self._snap, self.pet_owner_requested.emit))
         else:
-            handlers.update(add_own_pet_entries(menu, row, self._cfg.player_name, self.pet_owner_requested.emit))
+            sources = self._visit_snaps(self._snap) if self._snap is not None and str(
+                self._snap.key).startswith("zone:") else [self._snap]
+            raw_history = getattr(self, "_raw_history", {})
+            raw_live = getattr(self, "_raw_live", None)
+            raw = [raw_live if raw_live is not None and source.key == raw_live.key
+                   else raw_history.get(source.key, source) for source in sources if source is not None]
+            handlers.update(add_own_pet_entries(
+                menu, row, self._cfg.player_name, self.pet_owner_requested.emit,
+                candidate_rows=[actor for source in raw for actor in source.rows]))
         chosen = menu.exec(event.globalPos())
         menu.deleteLater()
         action = handlers.get(chosen)
@@ -1391,6 +1435,7 @@ class OverlayWindow(QWidget):
 
     def set_config(self, cfg: Any) -> None:
         self._cfg = cfg
+        self._show_others = bool(getattr(cfg, "show_other_groups", False))
         if self._tab == "revenge" and not bool(getattr(cfg, "revenge_enabled", False)):
             self.set_tab("damage")
         self._tabs.update()
@@ -1406,8 +1451,7 @@ class OverlayWindow(QWidget):
         self._timer_panel.sync()
         self._session.set_config(cfg)
         self._session.set_snapshot(project_session(getattr(self, "_raw_session", None), cfg))
-        self._refresh_header()
-        self._refresh_rows()
+        self._refresh_filtered_selection()
         self._attack_bar.set_player_name(str(getattr(cfg, "player_name", "") or ""))
         self.set_attack_bar_enabled(bool(getattr(cfg, "attack_bar", True)))
 
@@ -1695,7 +1739,7 @@ class OverlayWindow(QWidget):
         elif self._view_mode == "self":
             rows = _self_rows(self._snap, self._tab, str(getattr(self._cfg, "player_name", "") or ""))
         else:
-            rows = _rows_for_tab(self._snap, self._tab)
+            rows = _rows_for_tab(self._snap, self._tab, show_other_groups=self._show_others)
         self._table.set_rows(rows, self._tab)
 
     # ------------------------------------------------------------------ Qt events

@@ -881,6 +881,7 @@ class _MeterPane(QWidget):
         self._snap: EncounterSnapshot | None = None
         self._selected_name: str | None = None
         self._details_below = details_below
+        self._show_others = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -965,10 +966,14 @@ class _MeterPane(QWidget):
     def snapshot(self) -> EncounterSnapshot | None:
         return self._snap
 
+    def set_show_other_groups(self, show: bool) -> None:
+        self._show_others = bool(show)
+        self._render()
+
     # -- internals -------------------------------------------------------------------
     def _render(self) -> None:
         metric = self.tabs.current()
-        rows = snapshot_rows_for_tab(self._snap, metric) if self._snap is not None else []
+        rows = snapshot_rows_for_tab(self._snap, metric, show_other_groups=self._show_others) if self._snap is not None else []
         self.table.set_rows(rows, metric)
         selected = next((r for r in rows if r.name == self._selected_name), None)
         if selected is None:
@@ -1316,6 +1321,7 @@ class LivePage(QWidget):
         self._header.add_action(self._reset)
         right_layout.addWidget(header_panel)
         self._pane = _MeterPane("live", settings, details_below=True)
+        self._pane.set_show_other_groups(self._show_others)
         self._pane.metric_changed.connect(self.metric_changed)
         right_layout.addWidget(self._pane, 1)
         self._splitter.addWidget(right)
@@ -1560,6 +1566,8 @@ class LivePage(QWidget):
         self._summary_cache.clear()
         self._pane.details.set_actor(None)
         self._pane.table.clear_selection()
+        self._pane.set_snapshot(None)
+        self._pane.set_show_other_groups(self._show_others)
         self._rebuild()
 
     def _listed(self, snap: EncounterSnapshot) -> bool:
@@ -1816,8 +1824,15 @@ class LivePage(QWidget):
             handlers.update(add_pet_entries(menu, self._pane.table.row_at(event.globalPos()), snap,
                                             self.pet_owner_requested.emit))
         else:
-            handlers.update(add_own_pet_entries(menu, self._pane.table.row_at(event.globalPos()),
-                                                self._cfg.player_name, self.pet_owner_requested.emit))
+            raw = self._raw_snaps.get(snap.key)
+            sources = [raw] if raw is not None else []
+            if not sources and self._selection and self._selection[0] == "zone":
+                visit = self._visit_by_key(self._selection[1])
+                sources = [self._raw_snaps[key] for key in visit.keys if key in self._raw_snaps
+                           and self._listed(self._snaps[key])] if visit is not None else []
+            handlers.update(add_own_pet_entries(
+                menu, self._pane.table.row_at(event.globalPos()), self._cfg.player_name,
+                self.pet_owner_requested.emit, candidate_rows=[actor for source in sources for actor in source.rows]))
         chosen = menu.exec(event.globalPos())
         menu.deleteLater()
         action = handlers.get(chosen)
@@ -2895,8 +2910,8 @@ class SettingsPage(QWidget):
     def _build_encounter(self) -> None:
         form = self._section("Combat & session")
         self.show_other_groups = ToggleSwitch()
-        self._row(form, "Show other groups' fights", self.show_other_groups,
-                  "Include fights without you, your pets or known group members.")
+        self._row(form, "Show other groups", self.show_other_groups,
+                  "Show nearby players and their fights. Off: hide italicized outsiders from the meters.")
         self.include_personal = ToggleSwitch()
         self._row(form, "Count personal lines in Session", self.include_personal,
                   "Skill-ups, faction, XP and consider lines.")
