@@ -28,6 +28,22 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.11": ReleaseNotes(
+        changes=(
+            "XP/hour uses a rolling hour, updating every 30 seconds. Idle before your first gain is excluded.",
+            "XP readings survive unreadable HP and brief OCR misses.",
+            "Mini stats always use at least 1.5× OCR for clearer HP.",
+            "New overlays start unlocked; new maps open at the top-left.",
+            "Mez awakenings show targets and times, without guessed breakers.",
+            "Revenge's compact header makes more room for names.",
+            "Revenge alerts match participants, avoiding item names like Wolf Tooth.",
+            "Session honors your current group filter; its header indicates all zones.",
+        ),
+        settings_label="Mini stat settings",
+        settings_target="player_status_enabled",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.10": ReleaseNotes(
         changes=(
             "Setup now selects Combat chat and optional Mini stats from one frame; new setups use a separate stats region.",

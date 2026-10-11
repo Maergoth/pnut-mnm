@@ -216,9 +216,9 @@ class ConfigRoundTripTests(unittest.TestCase):
         self.assertEqual(cfg.preprocess, "maxchannel")
         self.assertEqual(cfg.ocr_scale, 1.0)
         self.assertEqual(cfg.problems(), [])
-        # APP_SPEC section 9: desktop-app defaults (overlay off and locked).
+        # APP_SPEC section 9: desktop-app defaults (overlay off and unlocked).
         self.assertFalse(cfg.overlay_enabled)
-        self.assertTrue(cfg.overlay_locked)
+        self.assertFalse(cfg.overlay_locked)
         self.assertEqual(cfg.overlay_opacity, 0.85)
         self.assertEqual(cfg.overlay_font_scale, 1.0)
         self.assertEqual(cfg.overlay_tab, "damage")
@@ -248,7 +248,7 @@ class ConfigRoundTripTests(unittest.TestCase):
                 loaded = load_config(path)
         self.assertIs(loaded.overlay_enabled, True)
         self.assertIs(loaded.minimize_to_tray, False)
-        self.assertIs(loaded.overlay_locked, True)  # bad value -> default kept
+        self.assertIs(loaded.overlay_locked, False)  # bad value -> default kept
 
     def test_missing_file_gives_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

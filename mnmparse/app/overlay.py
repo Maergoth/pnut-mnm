@@ -444,6 +444,10 @@ class _HeaderBar(QWidget):
         self._base_tip = tip
 
     def _mode_tip(self) -> str:
+        if self._owner.tab == "session":
+            if self._owner.view_mode == "self":
+                return "Showing just your session activity. Click to show your group."
+            return "Showing your group's session activity. Click to show just you."
         if self._owner.view_mode == "self":
             return "Showing just you (your own damage, healing and taken). Click to show your group."
         return "Showing your group. Click to show just you (your own damage, healing and taken)."
@@ -470,7 +474,8 @@ class _HeaderBar(QWidget):
         QTimer.singleShot(int(COPIED_FLASH_S * 1000) + 50, self.update)
 
     def _on_copy(self, pos: QPointF) -> bool:
-        return self.has_data and not self._copy_rect.isEmpty() and self._copy_rect.contains(pos)
+        return (self._owner.tab != "session" and self.has_data
+                and not self._copy_rect.isEmpty() and self._copy_rect.contains(pos))
 
     # drag to move ------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
@@ -495,7 +500,8 @@ class _HeaderBar(QWidget):
 
     def update_cursor(self, pos: QPointF | None = None) -> None:
         """Hand over the encounter name (a dropdown) and the copy glyph; move cursor only while unlocked."""
-        if pos is not None and (self._label_rect.contains(pos) or self._on_copy(pos) or self._on_mode(pos)):
+        if pos is not None and ((self._owner.tab != "session" and self._label_rect.contains(pos))
+                                or self._on_copy(pos) or self._on_mode(pos)):
             shape = Qt.CursorShape.PointingHandCursor
         elif self._owner.locked:
             shape = Qt.CursorShape.ArrowCursor
@@ -542,7 +548,7 @@ class _HeaderBar(QWidget):
         if self._press_pos is not None and event.button() == Qt.MouseButton.LeftButton:
             if self._dragged:
                 self._owner.persist_geometry()
-            elif self._label_rect.contains(event.position()):
+            elif self._owner.tab != "session" and self._label_rect.contains(event.position()):
                 self._owner.open_encounter_menu(self.mapToGlobal(QPoint(int(self._label_rect.left()), self.height())))
             else:
                 self._owner.toggle_view_mode()
@@ -567,12 +573,14 @@ class _HeaderBar(QWidget):
 
         self._copy_rect = QRectF()
         self._mode_rect = QRectF()
-        glyphs_w = 2 * (self._px * 0.95 + self._px * 0.7)
+        combat_context = self._owner.tab != "session"
+        glyphs_w = (2 if combat_context else 1) * (self._px * 0.95 + self._px * 0.7)
         min_label = self._px * 3.5  # an elided name plus its chevron stays clickable
         if self.has_data and right - glyphs_w >= r.left() + 2 + min_label:
-            right = self._draw_copy(p, right, r)
+            if combat_context:
+                right = self._draw_copy(p, right, r)
             right = self._draw_mode(p, right, r)
-        if not self.has_data or self._reserved_right:
+        if not self.has_data or self._reserved_right or not combat_context:
             # no data, or the toolbar covers the stats: label only
             p.setFont(self._f_label)
             p.setPen(muted if (not self.has_data or self.ended) else text)
@@ -686,6 +694,12 @@ class _HeaderBar(QWidget):
 
     def _draw_label(self, p: QPainter, fm: QFontMetricsF, rect: QRectF, txt: str, color: QColor) -> None:
         """The encounter name with a small chevron: a click on it opens the encounter list."""
+        if self._owner.tab == "session":
+            self._label_rect = QRectF()
+            p.setPen(color)
+            p.drawText(rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                       fm.elidedText(txt, Qt.TextElideMode.ElideRight, rect.width()))
+            return
         chevron_w = self._px * 0.9
         avail = max(10.0, rect.width() - chevron_w - 4)
         elided = fm.elidedText(txt, Qt.TextElideMode.ElideRight, avail)
@@ -891,7 +905,7 @@ class OverlayWindow(QWidget):
         self._pending: Any | None = None
         self._pending_set = False
         self._ended = False
-        self._locked = True
+        self._locked = False
         self._click_through = False
         self._view_mode = "group"
         self._opacity = 0.85
@@ -1251,7 +1265,7 @@ class OverlayWindow(QWidget):
 
     def copy_current(self) -> None:
         """Ask for the shown fight (live or picked from the dropdown) to be copied."""
-        if self._snap is not None:
+        if self._tab != "session" and self._snap is not None:
             self.copy_requested.emit(self._snap)
 
     def flash_copied(self) -> None:
@@ -1267,6 +1281,8 @@ class OverlayWindow(QWidget):
         return str(getattr(row, "name", "") or "").strip()
 
     def _respawn_names_at(self, global_pos: QPoint, row: Any) -> list[str]:
+        if self._tab == "session":
+            return []
         name = self._respawn_mob(row)
         if name:
             return [name]
@@ -1293,6 +1309,8 @@ class OverlayWindow(QWidget):
 
     def start_respawn_timer(self, name: str, zone: str | None = None) -> None:
         """Start one countdown and remember the confirmed duration for its zone."""
+        if self._tab == "session":
+            return
         runner = self._timer_panel.runner
         if runner is None or not name.strip():
             return
@@ -1336,9 +1354,10 @@ class OverlayWindow(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(self.menu_qss())
         copy = menu.addAction("Copy this fight to the clipboard")
-        copy.setEnabled(self._snap is not None)
+        copy.setEnabled(self._tab != "session" and self._snap is not None)
         mode = menu.addAction("Show your group" if self._view_mode == "self" else "Show just you")
         browse = menu.addAction("Earlier fights…")
+        browse.setEnabled(self._tab != "session")
         handlers = {copy: self.copy_current, mode: self.toggle_view_mode,
                     browse: lambda: self.open_encounter_menu(event.globalPos())}
         row = self._table.row_at(event.globalPos()) if self._tab not in ("feed", "session") and (
@@ -1365,6 +1384,8 @@ class OverlayWindow(QWidget):
 
     def open_encounter_menu(self, global_pos: QPoint) -> None:
         """The encounter name's dropdown: the live fight, earlier fights by zone, zone summaries."""
+        if self._tab == "session":
+            return
         menu = QMenu(self)
         menu.setStyleSheet(self.menu_qss())
         menu.setToolTipsVisible(True)
@@ -1476,6 +1497,7 @@ class OverlayWindow(QWidget):
         self._tab = tab
         self._tabs.set_current(tab)
         self._stack.setCurrentWidget(self._widget_for_tab(tab))
+        self._refresh_header()
         self._refresh_rows()
         self._settings.setValue(f"{SETTINGS_GROUP}/tab", tab)
         if changed:
@@ -1546,7 +1568,7 @@ class OverlayWindow(QWidget):
         s = self._settings
         g = f"{SETTINGS_GROUP}/"
         cfg = self._cfg
-        self._locked = bool(s.value(g + "locked", bool(getattr(cfg, "overlay_locked", True)), type=bool))
+        self._locked = bool(s.value(g + "locked", bool(getattr(cfg, "overlay_locked", False)), type=bool))
         self._click_through = bool(s.value(g + "click_through", bool(getattr(cfg, "overlay_click_through", False)), type=bool))
         self._view_mode = "self" if str(s.value(g + "view_mode", "group")) == "self" else "group"
         self._opacity = _clamp(float(s.value(g + "opacity", float(getattr(cfg, "overlay_opacity", 0.85)), type=float)), *OPACITY_RANGE)
@@ -1702,6 +1724,12 @@ class OverlayWindow(QWidget):
         self._refresh_rows()
 
     def _refresh_header(self) -> None:
+        if self._tab == "session":
+            self._header.set_data(label="Whole session · all zones", duration=0.0, total=0,
+                                  raid_dps=0.0, ended=False, has_data=True)
+            self._header.set_base_tip("All zones in this session. Click the group/self icon to switch views.")
+            self._header.update_cursor()
+            return
         snap = self._snap
         if snap is None:
             self._header.set_data(label="", duration=0.0, total=0, raid_dps=0.0, ended=False, has_data=False)

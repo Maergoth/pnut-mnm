@@ -21,6 +21,7 @@ from mnmparse.app.timer_panel import TimerPanel, TriggerPopup
 from mnmparse.app.triggers_runtime import TriggerRunner
 from mnmparse.config import Config, load_config, save_config
 from mnmparse.grammar import Event
+from mnmparse.parser import parse_line
 from mnmparse.triggers import Match, Trigger, TriggerStore
 
 
@@ -64,7 +65,8 @@ class RevengeAlertTests(unittest.TestCase):
 
     def test_names_are_case_insensitive_literal_whole_names_not_substrings(self):
         self.save("Bandit")
-        for line in ("OtherBandit attacks.", "Bandits attack.", "Bandit_name attacks.", "Bendit attacks."):
+        for line in ("OtherBandit attacks.", "Bandits attack.", "Bandit_name attacks.", "Bendit attacks.",
+                     "You saw Bandit attacks.", "Someone loots a Bandit mask."):
             self.assertEqual(self.controller.observe_saved(line), ())
         self.assertEqual(self.controller.observe_saved("bAnDiT's spell lands."), ("Bandit",))
 
@@ -108,7 +110,8 @@ class RevengeAlertTests(unittest.TestCase):
         self.save("Recent", "Newest")
         self.controller.set_config(dataclasses.replace(self.cfg, revenge_days=1, revenge_entries=1))
         self.assertNotIn("Old", self.controller.saved_names)
-        self.assertEqual(self.controller.observe_saved("Old attacks Recent."), ("Old", "Recent"))
+        self.assertEqual(self.controller.observe_saved(self.event("Old attacks Recent.", actor="Old", target="Recent")),
+                         ("Old", "Recent"))
         self.assertEqual(self.controller.saved_total, 3)
 
     def test_disabling_alerts_keeps_recruitment_and_saved_activity(self):
@@ -125,7 +128,7 @@ class RevengeAlertTests(unittest.TestCase):
 
     def test_backlog_and_pre_enable_queued_messages_cannot_alert(self):
         self.save("Bandit")
-        event = self.event("Bandit attacks.")
+        event = self.event("Bandit attacks.", actor="Bandit")
         self.controller.on_message(SimpleNamespace(backlog=True), event)
         self.controller.set_config(dataclasses.replace(self.cfg, revenge_alert_enabled=False))
         self.now += 1
@@ -133,7 +136,7 @@ class RevengeAlertTests(unittest.TestCase):
         self.controller.on_message(None, event)
         self.assertEqual(self.alerts, [])
         self.now += 1
-        self.controller.on_message(None, self.event("Bandit attacks."))
+        self.controller.on_message(None, self.event("Bandit attacks.", actor="Bandit"))
         self.assertEqual(self.alerts, ["Bandit"])
 
     def test_new_session_removal_and_reload_reset_sighting_state(self):
@@ -141,7 +144,7 @@ class RevengeAlertTests(unittest.TestCase):
         self.controller.observe_saved("Bandit attacks.")
         self.controller.new_session()
         self.now += 1
-        self.controller.on_message(None, self.event("Bandit attacks."))
+        self.controller.on_message(None, self.event("Bandit attacks.", actor="Bandit"))
         self.assertEqual(self.alerts, ["Bandit", "Bandit"])
         self.assertTrue(self.controller.remove_saved("Bandit"))
         self.assertNotIn("bandit", self.controller._alert_last_seen)
@@ -164,6 +167,47 @@ class RevengeAlertTests(unittest.TestCase):
         self.assertEqual(set(json.loads(self.controller.path.read_text())["entries"][0]),
                          {"name", "added_at", "last_activity"})
 
+    def test_loot_items_and_spell_names_do_not_refresh_or_alert_for_saved_players(self):
+        self.save("Tooth", "Nice")
+        before = {name: entry.last_activity for name, entry in self.controller._saved.items()}
+        self.now += 1
+        lines = (
+            "--Shillelagh loots [Wolf Tooth) from a dismal cur's corpse.--",
+            "You loot [Nice Tooth] from a dismal cur's corpse.",
+            "Someone begins casting Nice Tooth.",
+            "Someone's Nice Tooth hits YOU for 17 points of Fire Damage.",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                event = parse_line(line, self.now, "Hero")
+                self.assertNotEqual(event.kind, "unknown")
+                self.controller.on_message(SimpleNamespace(text=line), event)
+        self.assertEqual(self.alerts, [])
+        self.assertEqual({name: entry.last_activity for name, entry in self.controller._saved.items()}, before)
+        attack = parse_line("Tooth's Flameburst hits YOU for 17 points of Fire Damage.", self.now, "Hero")
+        self.assertEqual(self.controller.observe_saved(attack), ("Tooth",))
+
+    def test_parsed_events_never_fall_back_to_text_when_participants_do_not_match(self):
+        self.save("Tooth", "Nice")
+        for event in (
+            Event(self.now, "cast", "Tooth's spell lands.", actor="Someone", skill="Nice Tooth"),
+            Event(self.now, "reward", "Tooth appears.", item="Tooth"),
+            Event(self.now, "unknown", "Tooth's spell lands.", actor="Someone"),
+        ):
+            with self.subTest(kind=event.kind):
+                self.assertEqual(self.controller.observe_saved(event), ())
+        event = SimpleNamespace(kind="melee_hit", text="Someone hits YOU.", raw_target="nIcE")
+        self.assertEqual(self.controller.observe_saved(event), ("Nice",))
+
+    def test_unreadable_fragments_only_match_literal_leading_subjects(self):
+        self.save("Tooth", "Nice")
+        for line in ("Wolf Tooth", "You loot [Tooth]", "Someone casts Nice Tooth", "Tooth Fairy attacks.",
+                     "Tooth of the wolf", "Nice work!", "Tooth_name attacks."):
+            with self.subTest(line=line):
+                self.assertEqual(self.controller.observe_saved(line), ())
+        self.assertEqual(self.controller.observe_saved("  tOoTh’s spell lands."), ("Tooth",))
+        self.assertEqual(self.controller.observe_saved("Nice attacks."), ("Nice",))
+
     def test_worker_sightings_are_delivered_on_gui_thread(self):
         class Feed(QObject):
             message = Signal(object, object)
@@ -173,7 +217,7 @@ class RevengeAlertTests(unittest.TestCase):
         feed.message.connect(self.controller.on_message)
         threads = []
         self.controller.alert_requested.connect(lambda _name: threads.append(threading.get_ident()))
-        event = self.event("Bandit attacks.")
+        event = self.event("Bandit attacks.", actor="Bandit")
         worker = threading.Thread(target=lambda: feed.message.emit(None, event))
         worker.start()
         worker.join(1)

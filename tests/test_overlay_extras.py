@@ -365,6 +365,75 @@ class OverlayExtrasTests(unittest.TestCase):
         self.overlay.show_encounter(self.overlay.zone_summary(closed[0]))
         self.assertEqual(self.overlay._snap.encounters, 3)
 
+    def test_session_header_labels_all_zones_and_restores_the_pinned_combat_selection(self) -> None:
+        from mnmparse.session import SessionStats
+
+        *closed, _live = _fights()
+        self.overlay.set_history(closed)
+        self.overlay.show_encounter(self.overlay.zone_summary(closed[0]))
+        selected = self.overlay.pinned
+        session = SessionStats(PLAYER)
+        session.add(parse_line("You loot [Wolf Tooth] from a dismal cur's corpse.", 100.0, PLAYER))
+        self.overlay.set_session(session.snapshot())
+        self.overlay.set_tab("session")
+        self.overlay.show()
+        self.app.processEvents()
+        self.overlay._header.grab()
+        header = self.overlay._header
+        self.assertEqual(header.label, "Whole session · all zones")
+        self.assertNotIn("Night Harbor", header._base_tip)
+        self.assertEqual((header.total, header.raid_dps, header.duration), (0, 0.0, 0.0))
+        self.assertTrue(header._label_rect.isEmpty(), "Session should have no encounter dropdown")
+        self.assertTrue(header._copy_rect.isEmpty(), "Session should have no hidden-fight copy glyph")
+        self.assertFalse(header._mode_rect.isEmpty(), "The group/self control remains available")
+        self.overlay.set_view_mode("self")
+        self.assertEqual(self.overlay._session._view_mode, "self")
+        self.assertIs(self.overlay.pinned, selected)
+        self.overlay.set_view_mode("group")
+        self.overlay.set_tab("damage")
+        self.overlay._header.grab()
+        self.assertEqual(header.label, selected.label)
+        self.assertFalse(header._label_rect.isEmpty())
+        self.assertFalse(header._copy_rect.isEmpty())
+        self.assertIs(self.overlay.pinned, selected)
+
+    def test_session_disables_fight_copy_browse_and_respawn_actions(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QMenu
+
+        closed, _live = _hover_fights()
+        self.overlay.show_encounter(closed)
+        enemy = next(row for row in closed.rows if row.is_npc)
+        self.overlay.set_tab("session")
+        copied = []
+        self.overlay.copy_requested.connect(copied.append)
+        self.overlay.copy_current()
+        self.assertEqual(copied, [])
+        self.assertEqual(self.overlay._respawn_names_at(QPoint(), enemy), [])
+        with patch("mnmparse.app.overlay.QMenu.exec") as execute:
+            self.overlay.open_encounter_menu(QPoint())
+        execute.assert_not_called()
+
+        def choose_mode(menu, _pos):
+            actions = {action.text(): action for action in menu.actions()}
+            self.assertFalse(actions["Copy this fight to the clipboard"].isEnabled())
+            self.assertFalse(actions["Earlier fights…"].isEnabled())
+            self.assertNotIn("Start respawn timer…", actions)
+            return actions["Show just you"]
+
+        class PickingMenu(QMenu):
+            def exec(self, pos):
+                return choose_mode(self, pos)
+
+        with patch("mnmparse.app.overlay.QMenu", PickingMenu):
+            self.overlay.contextMenuEvent(SimpleNamespace(globalPos=lambda: QPoint()))
+        self.assertEqual(self.overlay.view_mode, "self")
+        self.overlay.set_tab("damage")
+        self.overlay.copy_current()
+        self.assertEqual(copied, [closed])
+
     def test_attack_bar_docks_and_undocks(self) -> None:
         overlay, bar = self.overlay, self.overlay.attack_bar
         overlay.setGeometry(100, 100, 400, 250)
@@ -415,12 +484,11 @@ class LiveOverlaySettingsTests(unittest.TestCase):
             settings = QSettings(str(Path(tmp) / "o.ini"), QSettings.Format.IniFormat)
             overlay = OverlayWindow(settings, Config())
             try:
-                self.assertTrue(overlay.locked)
-                self.assertEqual(overlay._header.cursor().shape(), Qt.CursorShape.ArrowCursor)
-                overlay.set_locked(False)
+                self.assertFalse(overlay.locked)
                 self.assertEqual(overlay._header.cursor().shape(), Qt.CursorShape.SizeAllCursor)
                 self.assertEqual(overlay.attack_bar.cursor().shape(), Qt.CursorShape.SizeAllCursor)
                 overlay.set_locked(True)
+                self.assertEqual(overlay._header.cursor().shape(), Qt.CursorShape.ArrowCursor)
                 self.assertEqual(overlay.attack_bar.cursor().shape(), Qt.CursorShape.ArrowCursor)
             finally:
                 overlay.close()

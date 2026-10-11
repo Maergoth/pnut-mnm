@@ -55,8 +55,22 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertEqual(tuple(stats[0, 0]), (2, 100, 200))
         self.assertEqual(self.engine._ocr.read.call_count, 2)
         processed = self.engine._ocr.read.call_args.args[0]
-        self.assertEqual(processed.shape, (8, 8, 3))  # Active OCR scale remains the run's scale.
+        self.assertEqual(processed.shape, (12, 12, 3))  # Mini stats enlarge the active 1x OCR input to 1.5x.
         self.assertEqual(tuple(processed[0, 0]), (200, 200, 200))
+
+    def test_stats_calibration_uses_recovery_without_changing_chat_ocr(self):
+        frame = np.full((20, 30, 3), (2, 100, 200), np.uint8)
+        cfg = dataclasses.replace(self.cfg, crop=(10, 5, 25, 15))
+        self.engine._test_ocr = Mock(read=Mock(return_value=[OcrLine(0, 0, 1, "chat")]))
+        self.engine._test_ocr_key = (cfg.ocr_engine, cfg.ocr_scale)
+        recovered = [OcrLine(0, 0, 1, "Health 8 / 100")]
+        with patch("mnmparse.player_status.read_status_crop", return_value=(self.reading(), recovered)) as reader:
+            self.assertEqual(self.engine.test_stats_ocr(frame, cfg.crop, cfg), recovered)
+            self.assertEqual(self.engine.test_ocr(frame, cfg.crop, cfg)[0].text, "chat")
+        reader.assert_called_once()
+        self.assertIs(reader.call_args.args[0], self.engine._test_ocr)
+        np.testing.assert_array_equal(reader.call_args.args[1], frame[5:15, 10:25])
+        self.assertEqual(reader.call_args.args[2:], (cfg.preprocess, cfg.ocr_scale))
 
     def test_shared_crop_excludes_only_verified_stat_rows(self):
         chat = OcrLine(0, 3, 1, "You begin casting Heal.")
@@ -168,14 +182,66 @@ class EnginePlayerStatusTests(unittest.TestCase):
             self.engine._observe_player_status(reading, self.cfg, now, (248, 324, 3))
         self.assertEqual(signals, [round(100 * 73 / 767, 6)])
         self.assertIsNotNone(self.engine._telemetry()._xp_baseline)
-        # A missing panel or a different, distant rectangle needs a new baseline.
+        # A brief OCR miss resets HP confirmation while preserving the XP baseline.
         self.engine._observe_player_status(None, self.cfg, 100.75, (248, 324, 3))
         self.engine._observe_player_status(first, self.cfg, 101, (248, 324, 3))
         self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+        self.assertIsNotNone(self.engine._telemetry()._xp_baseline)
+        # A different, distant rectangle needs a new baseline.
         distant = dataclasses.replace(first, panel_rect=(100, 3, 324, 248))
         self.engine._observe_player_status(distant, self.cfg, 101.25, (248, 324, 3))
         self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
         self.assertIsNone(self.engine._telemetry()._xp_baseline)
+
+    def test_short_panel_or_bar_ocr_misses_preserve_thirty_second_xp_comparisons(self):
+        for missing in (None, dataclasses.replace(self.reading(), xp_percent=None, xp_bar_rect=None)):
+            with self.subTest(missing=missing):
+                engine = Engine(self.cfg)
+                for now in range(100, 403):
+                    value = missing if now in (150, 200, 250, 300, 350) else dataclasses.replace(
+                        self.reading(), xp_percent=22.0 if now >= 111 else 20.0)
+                    engine._observe_player_status(value, self.cfg, now, (8, 8, 3))
+                    if now in (151, 201, 251, 301, 351) and missing is None:
+                        self.assertFalse(engine._telemetry().snapshot()["hp_low"])
+                snap = engine._telemetry().snapshot()
+                self.assertEqual(snap["xp_observed_seconds"], 301)
+                self.assertAlmostEqual(snap["xp_points_per_hour"], 2 * 3600 / 301, places=6)
+                engine._observe_player_status(None, self.cfg, 404, (8, 8, 3))
+                engine._observe_player_status(None, self.cfg, 406, (8, 8, 3))
+                self.assertIsNone(engine._telemetry()._xp_baseline)
+                self.assertIsNone(engine._telemetry().snapshot()["xp_points_per_hour"])
+                self.assertEqual(engine._telemetry().snapshot()["xp_gain_points"], 2)
+
+    def test_unreadable_health_does_not_stop_xp_or_invent_low_health_alerts(self):
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        for now in range(100, 402):
+            value = dataclasses.replace(self.reading(), hp_current=None, hp_max=None,
+                                        xp_percent=22.0 if now >= 111 else 20.0)
+            self.engine._observe_player_status(value, self.cfg, now, (8, 8, 3))
+        snap = self.engine._telemetry().snapshot()
+        self.assertEqual(snap["xp_observed_seconds"], 300)
+        self.assertAlmostEqual(snap["xp_points_per_hour"], 24)
+        self.assertEqual(signals, [])
+        self.assertIsNone(snap["hp_percent"])
+        self.assertFalse(snap["hp_low"])
+        self.engine._observe_player_status(self.reading(), self.cfg, 402, (8, 8, 3))
+        self.assertEqual(signals, [])
+        self.engine._observe_player_status(self.reading(), self.cfg, 403, (8, 8, 3))
+        self.assertEqual(signals, [8.0])
+
+    def test_slow_cadence_ocr_miss_tolerates_small_scheduling_jitter(self):
+        for fps, ocr_ms in ((1 / 3, 0), (4, 3000)):
+            with self.subTest(fps=fps, ocr_ms=ocr_ms):
+                cfg = dataclasses.replace(self.cfg, fps=fps)
+                engine = Engine(cfg)
+                for now, value in ((100, self.reading()), (103.02, self.reading()),
+                                   (106.04, None), (109.06, self.reading())):
+                    engine._observe_player_status(value, cfg, now, (8, 8, 3), ocr_ms=ocr_ms)
+                self.assertEqual(engine._telemetry()._xp_baseline, (103.02, .2))
+                self.assertFalse(engine._telemetry().snapshot()["hp_low"])
+                engine._observe_player_status(self.reading(), cfg, 112.08, (8, 8, 3), ocr_ms=ocr_ms)
+                self.assertTrue(engine._telemetry().snapshot()["hp_low"])
 
     def test_slow_ocr_and_poll_cadences_confirm_health_and_complete_xp_window(self):
         for fps, ocr_ms in ((4, 1500), (1 / 3, 0)):
@@ -185,7 +251,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
                 signals = []
                 engine.low_health.connect(signals.append)
                 for now in range(100, 404, 3):
-                    reading = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 400 else 20.0)
+                    reading = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 106 else 20.0)
                     engine._observe_player_status(reading, cfg, now, (8, 8, 3), ocr_ms=ocr_ms)
                     if now == 100:
                         self.assertEqual(signals, [])

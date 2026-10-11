@@ -53,7 +53,7 @@ class TrayIcon(QSystemTrayIcon):
         self._window_visible = True
         self._capture_running = False
         self._overlay_visible = False
-        self._overlay_locked = True
+        self._overlay_locked = False
 
         self._menu = QMenu()
         self._window_action = QAction("Hide window", self._menu)

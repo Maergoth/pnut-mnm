@@ -692,10 +692,13 @@ class CropPicker(QWidget):
 
         def work() -> tuple[list[OcrLine], float]:
             t0 = time.perf_counter()
-            lines = self._engine.test_ocr(frame, crop, cfg)
+            lines = self._read_test_ocr(frame, crop, cfg)
             return list(lines), (time.perf_counter() - t0) * 1000.0
 
         self._run_job(work, self._on_ocr_done)
+
+    def _read_test_ocr(self, frame, crop, cfg):
+        return self._engine.test_ocr(frame, crop, cfg)
 
     # -- internals -------------------------------------------------------------------
     def _run_job(self, fn: Callable[[], Any], on_done: Callable[[Any, BaseException | None], None]) -> None:

@@ -204,7 +204,7 @@ class MapOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.settings = settings
-        self._locked = settings.value("overlay/locked", True, type=bool)
+        self._locked = settings.value("overlay/locked", False, type=bool)
         self._opacity = 0.85
         self._font_scale = 1.0
         self._drag_offset: QPoint | None = None
@@ -294,10 +294,13 @@ class MapOverlay(QWidget):
         QShortcut(QKeySequence("F11"), self).activated.connect(self.toggle_fullscreen)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self.exit_fullscreen)
         rect = settings.value("map/geometry")
-        if isinstance(rect, QRect) and rect.isValid():
-            screens = [screen.availableGeometry() for screen in QGuiApplication.screens()]
-            if any(area.contains(rect.center()) for area in screens):
-                self.setGeometry(rect)
+        screens = [screen.availableGeometry() for screen in QGuiApplication.screens()]
+        if (isinstance(rect, QRect) and rect.isValid()
+                and any(area.contains(rect.center()) for area in screens)):
+            self.setGeometry(rect)
+        else:
+            screen = QGuiApplication.primaryScreen()
+            self.move(screen.availableGeometry().topLeft() if screen is not None else QPoint())
         if settings.value("map/fullscreen", False, type=bool):
             self._normal_geometry = self.geometry()
             # Set the state without showing: a previously closed map stays closed.

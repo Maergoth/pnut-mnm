@@ -1325,7 +1325,11 @@ class Engine(QObject):
             )
         return frame
 
-    def test_ocr(self, frame: np.ndarray, crop: tuple[int, int, int, int], cfg: Config) -> list[OcrLine]:
+    def test_stats_ocr(self, frame: np.ndarray, crop: tuple[int, int, int, int], cfg: Config) -> list[OcrLine]:
+        """Preview mini stats with the same text recovery as live capture."""
+        return self.test_ocr(frame, crop, cfg, stats=True)
+
+    def test_ocr(self, frame: np.ndarray, crop: tuple[int, int, int, int], cfg: Config, *, stats: bool = False) -> list[OcrLine]:
         """Crop, preprocess and OCR ``frame`` once with the settings in ``cfg``.
 
         A private OCR engine (cached by engine name and scale) is used so the
@@ -1340,7 +1344,12 @@ class Engine(QObject):
             if self._test_ocr is None or self._test_ocr_key != key:
                 self._test_ocr = make_engine(cfg)
                 self._test_ocr_key = key
-            img = preprocess(crop_frame(frame, tuple(crop)), cfg.preprocess, cfg.ocr_scale)
+            raw = crop_frame(frame, tuple(crop))
+            if stats:
+                from mnmparse.player_status import read_status_crop
+                _reading, lines = read_status_crop(self._test_ocr, raw, cfg.preprocess, cfg.ocr_scale)
+                return lines
+            img = preprocess(raw, cfg.preprocess, cfg.ocr_scale)
             return self._test_ocr.read(img)
         except Exception as exc:  # noqa: BLE001
             log.exception("test_ocr failed")
@@ -1653,6 +1662,10 @@ class Engine(QObject):
         key = (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop), tuple(shape),
                tuple(reading.panel_rect) if reading is not None else None)
         prior = self._player_panel_key
+        if prior is not None and key[:3] == prior[:3] and reading is None:
+            # The crop is unchanged; an OCR miss is not a new panel. Telemetry
+            # bounds XP continuity from its last valid reading and resets HP.
+            key = prior
         if prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None:
             current, previous_panel = key[3], prior[3]
             intersection = (max(0, min(current[2], previous_panel[2]) - max(current[0], previous_panel[0]))
@@ -1667,7 +1680,7 @@ class Engine(QObject):
             telemetry.pause()
             self._player_panel_key = key
         previous = telemetry.snapshot().get("hp_below10_episodes") or 0
-        measurement = None
+        measurement = {}
         if reading is not None:
             measurement = {"hp_current": reading.hp_current, "hp_max": reading.hp_max,
                            "xp_fraction": reading.xp_percent / 100.0
@@ -1675,7 +1688,10 @@ class Engine(QObject):
                            "xp_pixels": reading.xp_bar_rect[2] - reading.xp_bar_rect[0]
                            if reading.xp_bar_rect else None,
                            "xp_resolution_points": reading.xp_resolution_points}
-        max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * max(1.0 / max(cfg.fps, .1), ocr_ms / 1000.0)))
+        cadence = max(1.0 / max(cfg.fps, .1), ocr_ms / 1000.0)
+        # A slow cadence plus one missed frame needs room for ordinary OCR
+        # scheduling jitter, while the existing ten-second ceiling still applies.
+        max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * cadence + .25))
         telemetry.update(measurement, now, max_gap=max_gap)
         summary = telemetry.snapshot()
         if (cfg.low_health_enabled and (summary.get("hp_below10_episodes") or 0) > previous
@@ -1723,7 +1739,7 @@ class Engine(QObject):
         separate = cfg.player_status_separate
         status_raw = raw
         if cfg.player_status_enabled:
-            from mnmparse.player_status import read_player_status
+            from mnmparse.player_status import read_player_status, read_status_crop
             try:
                 if separate:
                     if cfg.player_status_crop is None:
@@ -1733,8 +1749,7 @@ class Engine(QObject):
                             status_frame = crop_frame(frame, cfg.player_status_crop)
                     status_raw = status_frame
                     if status_raw is not None:
-                        status_lines = ocr.read(preprocess(status_raw, cfg.preprocess, cfg.ocr_scale))
-                        reading = read_player_status(status_lines, status_raw, xp_bar_confirmed=True)
+                        reading, status_lines = read_status_crop(ocr, status_raw, cfg.preprocess, cfg.ocr_scale)
                 else:
                     reading = read_player_status(lines, raw, xp_bar_confirmed=True)
             except Exception:  # noqa: BLE001 - optional mini stats cannot stop combat chat

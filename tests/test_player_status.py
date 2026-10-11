@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
 from mnmparse.ocr import OcrLine
-from mnmparse.player_status import read_player_status
+from mnmparse.player_status import read_player_status, read_status_crop
 
 
 def panel(hp: str = "601 / 733", *, inline: bool = False) -> list[OcrLine]:
@@ -74,6 +75,25 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertEqual(reading.xp_bar_rect, rect)
                 self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
 
+    def test_unreadable_health_ratio_does_not_hide_independently_verified_xp(self):
+        image, rect = pixels(73.2)
+        for hp in ("707 1767", "707 767", "120/100", "10/0", "garbled"):
+            with self.subTest(hp=hp):
+                lines = panel(hp)
+                before = [asdict(line) for line in lines]
+                reading = read_player_status(lines, image, xp_bar_confirmed=True)
+                self.assertIsNotNone(reading)
+                self.assertIsNone(reading.hp_current)
+                self.assertIsNone(reading.hp_max)
+                self.assertIsNone(reading.hp_percent)
+                self.assertEqual(reading.xp_bar_rect, rect)
+                self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
+                self.assertEqual([asdict(line) for line in lines], before)
+                self.assertIsNone(read_player_status(lines, image))
+                self.assertIsNone(read_player_status(lines))
+        # An isolated XP-looking track without verified stat labels is still ignored.
+        self.assertIsNone(read_player_status(panel("707 1767")[:2], image, xp_bar_confirmed=True))
+
     def test_unanchored_chat_invalid_health_and_ambiguous_panels_are_ignored(self):
         inputs = [
             [OcrLine(10, 20, 10, "My Health 10/100, mana 60/200")],
@@ -137,6 +157,81 @@ class PlayerStatusTests(unittest.TestCase):
         image[213:216, 90:120] = (255, 80, 0)
         reading = read_player_status(panel(), image, xp_bar_rect=rect)
         self.assertIsNone(reading.xp_percent)
+
+
+class StatsCropOcrTests(unittest.TestCase):
+    @staticmethod
+    def enlarged(lines, extra):
+        return [OcrLine(round(line.x * extra), round(line.y * extra), round(line.h * extra), line.text)
+                for line in lines]
+
+    def test_readable_health_uses_one_enlarged_ocr_pass(self):
+        image, rect = pixels(73.2)
+        expected = panel()
+        ocr = Mock(read=Mock(return_value=self.enlarged(expected, 1.5)))
+        reading, returned = read_status_crop(ocr, image, "maxchannel", 1.0)
+        self.assertEqual(reading.hp_current, 601)
+        self.assertEqual(reading.xp_bar_rect, rect)
+        self.assertEqual([asdict(line) for line in returned], [asdict(line) for line in expected])
+        ocr.read.assert_called_once()
+        self.assertEqual(ocr.read.call_args.args[0].shape, (390, 600, 3))
+
+    def test_unscales_only_additional_factor_for_existing_ocr_scale(self):
+        image, rect = pixels(73.2)
+        for base_scale in (0.5, 1.0, 1.25, 1.5, 2.0):
+            with self.subTest(scale=base_scale):
+                expected = panel()
+                effective = max(base_scale, 1.5)
+                input_lines = self.enlarged(expected, effective / base_scale)
+                before = [asdict(line) for line in input_lines]
+                ocr = Mock(read=Mock(return_value=input_lines))
+                reading, returned = read_status_crop(ocr, image, "gray", base_scale)
+                self.assertEqual((reading.hp_current, reading.hp_max), (601, 733))
+                self.assertEqual(reading.xp_bar_rect, rect)
+                self.assertEqual([asdict(line) for line in returned], [asdict(line) for line in expected])
+                self.assertEqual([asdict(line) for line in input_lines], before)
+                self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
+                ocr.read.assert_called_once()
+                self.assertEqual(ocr.read.call_args.args[0].shape,
+                                 (round(260 * effective), round(400 * effective), 3))
+                if base_scale >= 1.5:
+                    self.assertIs(returned, input_lines)
+
+    def test_xp_uses_original_color_pixels_and_returned_rows_have_correct_indices(self):
+        image, rect = pixels(73.2)
+        original = image.copy()
+        expected = [OcrLine(5, 2, 8, "Unrelated"), *panel()]
+        ocr = Mock(read=Mock(return_value=self.enlarged(expected, 1.5)))
+        reading, returned = read_status_crop(ocr, image, "gray", 1.0)
+        self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
+        self.assertEqual(reading.xp_bar_rect, rect)
+        self.assertEqual(reading.panel_line_indices, tuple(range(1, len(expected))))
+        self.assertEqual([asdict(line) for line in returned], [asdict(line) for line in expected])
+        np.testing.assert_array_equal(image, original)
+        # The OCR image is grayscale and enlarged, while XP remained readable.
+        processed = ocr.read.call_args.args[0]
+        np.testing.assert_array_equal(processed[:, :, 0], processed[:, :, 1])
+        ocr.read.assert_called_once()
+
+    def test_unknown_health_keeps_independently_verified_xp_without_second_pass(self):
+        image, rect = pixels(73.2)
+        expected = panel("601 1733")
+        ocr = Mock(read=Mock(return_value=self.enlarged(expected, 1.5)))
+        reading, returned = read_status_crop(ocr, image, "maxchannel", 1.0)
+        self.assertIsNone(reading.hp_percent)
+        self.assertEqual(reading.xp_bar_rect, rect)
+        self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
+        self.assertEqual([asdict(line) for line in returned], [asdict(line) for line in expected])
+        ocr.read.assert_called_once()
+
+    def test_accidentally_large_regions_are_not_additionally_enlarged(self):
+        image = np.zeros((1000, 1000, 3), dtype=np.uint8)
+        ocr = Mock(read=Mock(return_value=[]))
+        reading, returned = read_status_crop(ocr, image, "maxchannel", 1.0)
+        self.assertIsNone(reading)
+        self.assertEqual(returned, [])
+        self.assertEqual(ocr.read.call_args.args[0].shape, image.shape)
+        ocr.read.assert_called_once()
 
 
 if __name__ == "__main__":

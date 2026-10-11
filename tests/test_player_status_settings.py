@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -167,6 +168,7 @@ class PlayerStatusSettingsTests(unittest.TestCase):
 
     def test_stats_frame_and_ocr_use_full_frame_without_applying_chat_crop(self):
         self.page.player_status_separate.setChecked(True)
+        self.engine.test_stats_ocr = Mock(wraps=self.engine.test_ocr)
         picker = self.page.player_status_picker
         picker.set_crop((850, 50, 1150, 320))
         picker.capture_frame()
@@ -177,6 +179,7 @@ class PlayerStatusSettingsTests(unittest.TestCase):
         picker.run_test_ocr()
         self.settle_job()
         self.assertEqual(len(self.engine.ocr_calls), 1)
+        self.engine.test_stats_ocr.assert_called_once()
         frame, crop, cfg = self.engine.ocr_calls[0]
         self.assertIs(frame, self.engine.frame)
         self.assertEqual(crop, (850, 50, 1150, 320))

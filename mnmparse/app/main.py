@@ -1949,7 +1949,7 @@ class App(QApplication):
 
     def _current_overlay_lock(self) -> bool:
         """Use the combat overlay's effective lock, or its saved preference if unavailable."""
-        default = self.settings.value("overlay/locked", bool(getattr(self.cfg, "overlay_locked", True)), type=bool)
+        default = self.settings.value("overlay/locked", bool(getattr(self.cfg, "overlay_locked", False)), type=bool)
         return _overlay_locked(self.overlay, default)
 
     def _sync_map_appearance(self, *_args: Any) -> None:
@@ -2121,7 +2121,7 @@ class App(QApplication):
         else:
             self.settings.setValue("overlay/opacity", float(getattr(cfg, "overlay_opacity", 0.85)))
             self.settings.setValue("overlay/font_scale", float(getattr(cfg, "overlay_font_scale", 1.0)))
-        self.set_overlay_locked(bool(getattr(cfg, "overlay_locked", True)))
+        self.set_overlay_locked(bool(getattr(cfg, "overlay_locked", False)))
         self._sync_map_appearance()
         log.info("Configuration updated from the Settings page")
 

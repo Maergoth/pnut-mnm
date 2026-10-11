@@ -26,11 +26,12 @@ from typing import Any
 from .grammar import Event, is_npc_name, is_you
 from .interrupts import CC_CATEGORIES
 from .party import PartyRoster
+from .player_telemetry import XP_RATE_WINDOW
 from .stats import canonical_names
 from .vocab import Vocabulary
 
 __all__ = [
-    "LOOTED_BY_YOU", "LootEntry", "SessionEntry", "SessionSnapshot", "SessionStats", "filter_session", "format_coin",
+    "LOOTED_BY_YOU", "LootEntry", "SessionEntry", "SessionSnapshot", "SessionStats", "filter_group_session", "filter_session", "format_coin",
 ]
 
 RECENT_LIMIT = 200
@@ -45,6 +46,15 @@ def _copy_player_status(summary: Any) -> dict[str, Any]:
     """Copy own-XP measurements; HP alerts have no session metrics."""
     if not isinstance(summary, dict):
         return {}
+
+    def valid_number(value: Any) -> bool:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
+
     copied = {}
     for key in PLAYER_STATUS_FIELDS:
         if key not in summary:
@@ -52,18 +62,35 @@ def _copy_player_status(summary: Any) -> dict[str, Any]:
         value = summary[key]
         if value is None:
             copied[key] = None
-        elif isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+        elif valid_number(value) and value >= 0:
             if key != "xp_percent" or value <= 100:
                 copied[key] = value
+    if not copied:
+        return copied
+    if summary.get("xp_rate_kind") != "rolling":
+        # Older archives measured the entire observed session. Preserve that
+        # historical rate, but never label it as a current rolling estimate.
+        copied["xp_rate_kind"] = "session"
+        return copied
+    copied["xp_rate_kind"] = "rolling"
+    copied["xp_rate_window_seconds"] = XP_RATE_WINDOW
+    copied["xp_rate_gain_points"] = 0.0
+    copied["xp_rate_observed_seconds"] = 0.0
+    copied["xp_points_per_hour"] = None
+    window = summary.get("xp_rate_window_seconds")
+    gain = summary.get("xp_rate_gain_points")
+    seconds = summary.get("xp_rate_observed_seconds")
+    if (valid_number(window) and window == XP_RATE_WINDOW and valid_number(gain) and gain >= 0
+            and valid_number(seconds) and 0 <= seconds <= window and (seconds > 0 or gain == 0)):
+        rate = gain * 3600.0 / seconds if seconds else None
+        if rate is None or math.isfinite(rate):
+            copied["xp_rate_gain_points"] = gain
+            copied["xp_rate_observed_seconds"] = seconds
+            copied["xp_points_per_hour"] = round(rate, 6) if rate is not None else None
     return copied
 #: A wrapped "N copper coins from X's corpse as your split." line belongs to a coin loot at most
 #: this many seconds before it (the two halves were always read in the same second).
 COIN_SPLIT_JOIN_S = 5.0
-# Damage and awakening lines can be read in either order within one capture batch.
-# Longer gaps do not establish who broke the effect.
-MEZ_DAMAGE_LINK_S = 2.0
-# Uncertain damaging evidence prevents assigning a nearby break to a named actor.
-_MEZ_UNCERTAIN_ACTOR = "\0"
 
 
 def format_coin(copper: int) -> str:
@@ -192,35 +219,139 @@ class SessionSnapshot:
 LOOTED_BY_YOU = "Looted by you (gross)"
 
 
+def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
+    """Show current-group totals without changing the collected session.
+
+    Item counters are complete even when only recent loot details were loaded.
+    Historical party kills can name members who have since left. Complete
+    participant counters keep current-group totals accurate with bounded details.
+    """
+    members = {name.casefold() for name in snap.party if name}
+    members.add((player or "You").casefold())
+    included = lambda name: bool(name) and name.casefold() in members
+    item_looters = {item: [(name, count) for name, count in looters if included(name)]
+                    for item, looters in snap.item_looters.items()}
+    item_looters = {item: looters for item, looters in item_looters.items() if looters}
+    item_counts = [(item, sum(count for _name, count in looters))
+                   for item, looters in item_looters.items()]
+    looter_counts = [(name, count) for name, count in snap.items_by_looter if included(name)]
+    if not snap.items_by_looter:
+        by_looter: Counter[str] = Counter()
+        for looters in item_looters.values():
+            for name, count in looters:
+                by_looter[name] += count
+        looter_counts = sorted(by_looter.items(), key=lambda pair: (-pair[1], pair[0]))
+    coin = [(name, count) for name, count in snap.coin_by_looter if included(name)]
+    kills = [entry for entry in snap.kill_entries if included(entry[1])]
+    killers = [(name, count) for name, count in snap.kills_by_killer if included(name)]
+    if not snap.kills_by_killer and len(snap.kill_entries) == snap.kills:
+        killers = sorted(Counter(name for _ts, name, _target in kills).items(),
+                         key=lambda pair: (-pair[1], pair[0]))
+    kill_total = sum(count for _name, count in killers)
+    crafts = [entry for entry in snap.craft_entries if included(entry[1])]
+    crafters = [(name, count) for name, count in snap.crafts_by_crafter if included(name)]
+    if not snap.crafts_by_crafter and sum(entry[3] for entry in snap.craft_entries) == snap.crafts:
+        by_crafter: Counter[str] = Counter()
+        for _ts, name, _item, count in crafts:
+            by_crafter[name] += count
+        crafters = sorted(by_crafter.items(), key=lambda pair: (-pair[1], pair[0]))
+    craft_total = sum(count for _name, count in crafters)
+    deaths = [(name, count) for name, count in snap.deaths_by_player if included(name)]
+    allocations = getattr(snap, "_participant_totals", {})
+    filtered_allocations = {
+        kind: {key: count for key, count in counts.items() if included(key[0])}
+        for kind, counts in allocations.items()
+    }
+
+    def detail_counts(kind: str, total: int, aggregate: list[tuple[str, int]],
+                      original_total: int, details: Counter[str], complete: bool) -> list[tuple[str, int]]:
+        if kind in filtered_allocations:
+            counts: Counter[str] = Counter()
+            for (_actor, target), count in filtered_allocations[kind].items():
+                counts[target] += count
+            return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])) if sum(counts.values()) == total else []
+        if total == original_total:
+            return aggregate
+        # Older snapshots may only carry recent rows. Keep their complete
+        # participant totals without presenting partial details as full totals.
+        return sorted(details.items(), key=lambda pair: (-pair[1], pair[0])) if complete else []
+
+    kill_targets = detail_counts(
+        "kill_targets", kill_total, snap.kills_by_target, snap.kills,
+        Counter(target for _ts, _actor, target in kills), len(snap.kill_entries) == snap.kills,
+    )
+    craft_items: Counter[str] = Counter()
+    for _ts, _actor, item, count in crafts:
+        craft_items[item] += count
+    craft_targets = detail_counts(
+        "craft_items", craft_total, snap.crafts_by_item, snap.crafts, craft_items,
+        sum(entry[3] for entry in snap.craft_entries) == snap.crafts,
+    )
+
+    def recent_included(entry: SessionEntry) -> bool:
+        if entry.kind == "kill":
+            # SessionStats formats death rows with the victim first; the actor
+            # is the killer, which can be an NPC killing an unrelated player.
+            victim = entry.text.partition(" slain")[0]
+            return included(entry.actor) or included(victim)
+        return not entry.actor or is_npc_name(entry.actor) or included(entry.actor)
+
+    projected = dataclasses.replace(
+        snap,
+        items=sum(count for _name, count in looter_counts),
+        items_by_name=sorted(item_counts, key=lambda pair: (-pair[1], pair[0])),
+        items_by_looter=looter_counts,
+        item_looters=item_looters,
+        loot=[entry for entry in snap.loot if included(entry.looter)],
+        coin_total=sum(count for _name, count in coin),
+        coin_by_looter=coin,
+        rewards=[entry for entry in snap.rewards if included(entry.looter)],
+        kills=kill_total, kills_by_killer=killers, kills_by_target=kill_targets, kill_entries=kills,
+        crafts=craft_total, crafts_by_crafter=crafters, crafts_by_item=craft_targets, craft_entries=crafts,
+        deaths=sum(count for _name, count in deaths), deaths_by_player=deaths,
+        recent=[entry for entry in snap.recent if recent_included(entry)],
+        outsider_deaths=[], outsider_kills=0, outsider_crafts=[],
+    )
+    if hasattr(snap, "_personal_totals"):
+        projected._personal_totals = snap._personal_totals
+    if allocations:
+        projected._participant_totals = filtered_allocations
+    return projected
+
+
 def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     """The viewer's own share of ``snap``: loot, coin, kills, deaths and crafts by ``player``.
 
     The coin is what the viewer received (``coin_received``: their splits, plus their own
     loots without a split), which is also what coin per hour is worked out from; the gross
     coin they looted themselves is one detail row, ``(LOOTED_BY_YOU, copper)``, in
-    ``coin_by_looter``. Zones and unattributed awakenings stay shared; attributed mez
-    breaks retain only the viewer's own counts and details.
+    ``coin_by_looter``. Zones and awakenings stay shared; the log does not name mez breakers.
     """
     player = player or "You"
-    loot = [e for e in snap.loot if e.looter == player]
-    items: Counter[str] = Counter(e.item for e in loot)
-    kills = [k for k in snap.kill_entries if k[1] == player]
+    own = lambda name: bool(name) and name.casefold() == player.casefold()
+    loot = [e for e in snap.loot if own(e.looter)]
+    items: Counter[str] = (Counter({item: sum(count for name, count in looters if own(name))
+                                   for item, looters in snap.item_looters.items()})
+                           if snap.item_looters else Counter(e.item for e in loot))
+    items = Counter({item: count for item, count in items.items() if count})
+    kills = [k for k in snap.kill_entries if own(k[1])]
     by_target: Counter[str] = Counter(v for _ts, _k, v in kills)
-    crafts = [c for c in snap.craft_entries if c[1] == player]
+    crafts = [c for c in snap.craft_entries if own(c[1])]
     by_item: Counter[str] = Counter()
     for _ts, _c, item, n in crafts:
         by_item[item] += n
-    gross = sum(c for name, c in snap.coin_by_looter if name == player)
-    deaths = [(name, n) for name, n in snap.deaths_by_player if name == player]
+    gross = sum(c for name, c in snap.coin_by_looter if own(name))
+    deaths = [(name, n) for name, n in snap.deaths_by_player if own(name)]
     personal = getattr(snap, "_personal_totals", {})
-    complete = personal if personal.get("player") == player else {}
+    complete = personal if own(personal.get("player")) else {}
     item_counts = complete.get("items_by_name", sorted(items.items(), key=lambda kv: (-kv[1], kv[0])))
-    item_total = complete.get("items", len(loot))
+    item_total = complete.get("items", sum(count for name, count in snap.items_by_looter if own(name))
+                              if snap.items_by_looter else sum(items.values()))
     craft_counts = complete.get("crafts_by_item", sorted(by_item.items(), key=lambda kv: (-kv[1], kv[0])))
     craft_total = complete.get("crafts", sum(by_item.values()))
     kill_total = complete.get("kills", len(kills))
-    mez_counts = [(name, n) for name, n in snap.mez_breaks_by_breaker if name == player]
-    mez_details = [entry for entry in snap.mez_break_details if entry[2] in (None, player)]
+    mez_counts = [(name, n) for name, n in snap.mez_breaks_by_breaker if own(name)]
+    mez_details = [entry for entry in snap.mez_break_details if entry[2] is None or own(entry[2])]
     unknown = snap.mez_breaks_unknown or (len(snap.mez_breaks) if not snap.mez_breaks_total else 0)
     return dataclasses.replace(
         snap,
@@ -231,7 +362,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         loot=loot,
         coin_total=snap.coin_received,
         coin_by_looter=[(LOOTED_BY_YOU, gross)] if gross else [],
-        rewards=[e for e in snap.rewards if e.looter == player],
+        rewards=[e for e in snap.rewards if own(e.looter)],
         crafts=craft_total,
         crafts_by_crafter=[(player, craft_total)] if craft_total else [],
         crafts_by_item=craft_counts,
@@ -294,10 +425,6 @@ class SessionStats:
         self._zones: list[str] = []
         self._mez_breaks: list[tuple[float, str]] = []
         self._mez_break_entries: list[tuple[float, str, str | None]] = []
-        self._mez_break_counts: Counter[str] = Counter()
-        self._mez_active: dict[str, float] = {}
-        self._mez_hits: dict[str, dict[str, float]] = {}
-        self._mez_pending: dict[str, dict[str, Any]] = {}
         self._kill_entries: list[tuple[float, str | None, str]] = []
         #: every craft line, the party's and other players' (told apart in the snapshot)
         self._craft_entries: list[tuple[float, str, str, int]] = []
@@ -375,8 +502,6 @@ class SessionStats:
         if self.roster is None:
             self._local_roster.observe(ev)
         kind = ev.kind
-        if self._observe_mez(ev):
-            self._version += 1
         if kind == "loot" and ev.item:
             looter = self._name(ev.actor) or "?"
             self._loot.append(LootEntry(ev.ts, looter, ev.item, ev.target))
@@ -456,103 +581,10 @@ class SessionStats:
         self._version += 1
 
     # ------------------------------------------------------------------
-    def _mez_key(self, name: str) -> str:
-        if self.vocab is not None:
-            name = self.vocab.canonical("npc" if is_npc_name(name) else "player", name) or name
-        return name.casefold()
-
-    def _observe_mez(self, ev: Event) -> bool:
-        """Link only observed mez plus nearby unambiguous damaging chat evidence."""
-        if ev.kind == "zone":
-            self._mez_active.clear()
-            self._mez_hits.clear()
-            self._mez_pending.clear()
-            return False
-        damage = ev.kind in {"melee_hit", "ability_hit"}
-        if not (damage or ev.kind in {"kill", "awaken"} or ev.kind in {"cc", "cc_fade"} and ev.outcome == "mez"):
-            return False
-        if damage and not self._mez_active and not self._mez_pending:
-            return False
-        ts = float(ev.ts)
-        if self._mez_pending:
-            self._mez_pending = {key: entry for key, entry in self._mez_pending.items()
-                                 if ts - entry["ts"] <= MEZ_DAMAGE_LINK_S}
-        if ev.kind == "awaken":
-            return False
-        if damage and (not self._mez_active and not self._mez_pending
-                       or ev.amount is not None and ev.amount <= 0):
-            return False
-        if not ev.target:
-            return False
-        key = self._mez_key(ev.target)
-        if ev.kind == "cc" and ev.outcome == "mez":
-            self._mez_active[key] = ts
-            self._mez_hits.pop(key, None)
-            self._mez_pending.pop(key, None)
-            return False
-        if ev.kind == "kill" or ev.kind == "cc_fade" and ev.outcome == "mez":
-            self._mez_active.pop(key, None)
-            self._mez_hits.pop(key, None)
-            pending = self._mez_pending.pop(key, None)
-            if ev.kind == "cc_fade" and pending is not None:
-                old = self._mez_break_entries[pending["index"]]
-                if old[2]:
-                    self._mez_break_counts[old[2]] -= 1
-                    self._mez_break_entries[pending["index"]] = (old[0], old[1], None)
-                    return True
-            return False
-        pending = self._mez_pending.get(key)
-        if key not in self._mez_active and (pending is None or not pending["eligible"]):
-            return False
-        if not ev.actor or ev.amount is None or ev.estimated or ev.estimated_ts:
-            actor = _MEZ_UNCERTAIN_ACTOR
-        else:
-            actor = self._name(ev.actor) or ev.actor
-            roster = self.roster if self.roster is not None else self._local_roster
-            pets = getattr(roster, "pet_owners", lambda: {})()
-            owner = next((owner for pet, owner in pets.items()
-                          if pet.casefold() == actor.casefold()), None)
-            if ev.is_pet:
-                actor = self._you()
-            elif owner:
-                actor = owner
-            elif is_npc_name(actor):
-                actor = _MEZ_UNCERTAIN_ACTOR
-        if key in self._mez_active and ts >= self._mez_active[key]:
-            hits = {name: hit_ts for name, hit_ts in self._mez_hits.get(key, {}).items()
-                    if 0 <= ts - hit_ts <= MEZ_DAMAGE_LINK_S}
-            hits[actor] = ts
-            self._mez_hits[key] = hits
-        if pending is None or not pending["eligible"] or not 0 <= ts - pending["ts"] <= MEZ_DAMAGE_LINK_S:
-            return False
-        pending["actors"][actor] = ts
-        index = pending["index"]
-        old = self._mez_break_entries[index]
-        breaker = (next(iter(pending["actors"]))
-                   if len(pending["actors"]) == 1 and _MEZ_UNCERTAIN_ACTOR not in pending["actors"] else None)
-        if old[2] == breaker:
-            return False
-        if old[2]:
-            self._mez_break_counts[old[2]] -= 1
-        if breaker:
-            self._mez_break_counts[breaker] += 1
-        self._mez_break_entries[index] = (old[0], old[1], breaker)
-        return True
-
     def _add_mez_break(self, ev: Event) -> None:
         ts, mob = float(ev.ts), self._name(ev.target) or ev.target
-        key = self._mez_key(mob)
-        start = self._mez_active.pop(key, None)
-        eligible = start is not None and start <= ts and not ev.estimated_ts
-        actors = {actor: hit_ts for actor, hit_ts in self._mez_hits.pop(key, {}).items()
-                  if eligible and 0 <= ts - hit_ts <= MEZ_DAMAGE_LINK_S}
-        breaker = next(iter(actors)) if len(actors) == 1 and _MEZ_UNCERTAIN_ACTOR not in actors else None
         self._mez_breaks.append((ts, mob))
-        self._mez_break_entries.append((ts, mob, breaker))
-        if breaker:
-            self._mez_break_counts[breaker] += 1
-        self._mez_pending[key] = dict(ts=ts, index=len(self._mez_break_entries) - 1,
-                                      eligible=eligible, actors=actors)
+        self._mez_break_entries.append((ts, mob, None))
 
     def _you(self) -> str:
         return self.player_name or "You"
@@ -614,11 +646,13 @@ class SessionStats:
         deaths = deque(maxlen=detail_limit)
         outsiders = deque(maxlen=detail_limit)
         totals = {name: Counter() for name in ("killers", "targets", "deaths", "outsiders", "own_targets")}
+        totals["kill_targets"] = Counter()
         def killed(ts: float, killer: str | None, victim: str) -> None:
             kills.append((ts, killer, victim))
             if killer:
                 totals["killers"][killer] += 1
             totals["targets"][victim] += 1
+            totals["kill_targets"][(killer, victim)] += 1
             if killer == you:
                 totals["own_targets"][victim] += 1
         outsider_kills = 0
@@ -670,6 +704,7 @@ class SessionStats:
         result = dataclasses.replace(content, elapsed=max(0.0, (time.time() if now is None else now) - self.started),
                                    player_status=_copy_player_status(content.player_status))
         result._personal_totals = content._personal_totals
+        result._participant_totals = content._participant_totals
         return result
 
     def _build_snapshot(self, now: float | None = None, *, detail_limit: int | None = None) -> SessionSnapshot:
@@ -697,9 +732,9 @@ class SessionStats:
 
         items_by_looter = fold(self._items_by_looter)
         coin_by_looter = fold(self._coin_by_looter)
-        mez_counts = fold(Counter({name: n for name, n in self._mez_break_counts.items() if n > 0}))
-        mez_details = [(ts, who(mob), who(actor) if actor else None)
-                       for ts, mob, actor in (self._mez_break_entries if detail_limit is None
+        # Preserve targets/times from older archives, discarding inferred breakers.
+        mez_details = [(ts, who(mob), None)
+                       for ts, mob, _actor in (self._mez_break_entries if detail_limit is None
                                              else self._mez_break_entries[-detail_limit:])]
         # Old archives contain awakening targets but no attribution evidence.
         legacy_count = len(self._mez_breaks) - len(self._mez_break_entries)
@@ -727,6 +762,7 @@ class SessionStats:
         crafts = deque(maxlen=detail_limit)
         crafts_by_crafter: Counter[str] = Counter()
         crafts_by_item: Counter[str] = Counter()
+        craft_items_by_participant: Counter[tuple[str, str]] = Counter()
         own_crafts: Counter[str] = Counter()
         outsider_crafts: Counter[str] = Counter()
         for ts, raw, item, n in self._craft_entries:
@@ -737,6 +773,7 @@ class SessionStats:
             crafts.append((ts, crafter, item, n))
             crafts_by_crafter[crafter] += n
             crafts_by_item[item] += n
+            craft_items_by_participant[(crafter, item)] += n
             if crafter == you:
                 own_crafts[item] += n
         # What the viewer got: every split (theirs by definition), and their own loots without
@@ -791,8 +828,8 @@ class SessionStats:
                      for e in (self._rewards if detail_limit is None else self._rewards[-detail_limit:])],
             capture_quality=dict(self.capture_quality),
             mez_break_details=mez_details,
-            mez_breaks_by_breaker=mez_counts,
-            mez_breaks_unknown=len(self._mez_breaks) - sum(n for _name, n in mez_counts),
+            mez_breaks_by_breaker=[],
+            mez_breaks_unknown=len(self._mez_breaks),
             mez_breaks_total=len(self._mez_breaks),
             player_status=_copy_player_status(self.player_status),
         )
@@ -803,6 +840,10 @@ class SessionStats:
         snap._personal_totals = dict(player=you, items=sum(own_items.values()), items_by_name=fold(Counter(own_items), lambda n: n),
                                     crafts=sum(own_crafts.values()), crafts_by_item=fold(own_crafts, lambda n: n),
                                     kills=sum(own_kills.values()), kills_by_target=fold(own_kills, lambda n: n))
+        # Complete participant allocations are internal like _personal_totals;
+        # bounded views can filter former members without scanning raw history.
+        snap._participant_totals = {"kill_targets": slain["kill_targets"],
+                                    "craft_items": craft_items_by_participant}
         return snap
 
     # ------------------------------------------------------------------

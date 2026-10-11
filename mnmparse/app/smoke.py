@@ -44,7 +44,7 @@ def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
     from mnmparse.config import Config
     from mnmparse.ocr import OcrLine
     from mnmparse.player_status import read_player_status
-    from mnmparse.player_telemetry import PlayerTelemetry
+    from mnmparse.player_telemetry import PlayerTelemetry, XP_INTERVAL
     from mnmparse.privacy import project_session
     from mnmparse.session import SessionStats
 
@@ -71,15 +71,17 @@ def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
     if not telemetry.snapshot()["hp_low"] or telemetry.snapshot()["hp_below10_episodes"] != 1:
         raise RuntimeError("Personal low HP could not confirm two fresh readings")
     if telemetry.snapshot()["xp_points_per_hour"] is not None:
-        raise RuntimeError("Packaged XP rate was available before its first five-minute sample")
-    for second in range(1, 301):
-        fraction = measurement["xp_fraction"] + (.02 if second >= 299 else 0)
+        raise RuntimeError("Packaged XP rate was available before its first complete sample")
+    interval = int(XP_INTERVAL)
+    for second in range(1, interval + 1):
+        fraction = measurement["xp_fraction"] + (.02 if second >= interval - 1 else 0)
         telemetry.update(dict(measurement, xp_fraction=fraction), 100.25 + second)
-        if second < 300 and telemetry.snapshot()["xp_points_per_hour"] is not None:
-            raise RuntimeError("Packaged XP rate used an incomplete five-minute observation")
+        if second < interval and telemetry.snapshot()["xp_points_per_hour"] is not None:
+            raise RuntimeError("Packaged XP rate used an incomplete observation")
     summary = telemetry.snapshot()
-    if summary["xp_points_per_hour"] is None or abs(summary["xp_points_per_hour"] - 24) > .1:
-        raise RuntimeError("Packaged XP rate did not use a completed five-minute observation")
+    expected_rate = 2.0 * 3600.0 / XP_INTERVAL
+    if summary["xp_points_per_hour"] is None or abs(summary["xp_points_per_hour"] - expected_rate) > .1:
+        raise RuntimeError("Packaged XP rate did not use a completed observation")
     personal = SessionStats("SmokeOwner", started=100)
     personal.note_player_status(summary)
     protected = project_session(personal.snapshot(now=401), Config(player_name="SmokeOwner"))
@@ -100,7 +102,7 @@ def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
     if not flash.isHidden() or flash._timer.isActive():
         raise RuntimeError("The low-HP flash remained active after stopping")
     report["player_status"] = {"reader": True, "dual_scale_xp": True, "fresh_hp": True,
-                               "five_minute_rate": True, "carebear_own_xp": True, "passive_flash": True}
+                               "thirty_second_rate": True, "carebear_own_xp": True, "passive_flash": True}
 
 
 def _exercise(report: dict[str, Any]) -> None:

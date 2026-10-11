@@ -79,7 +79,7 @@ mnmparse/            library + CLI
   interrupts.py      crowd-control registry (categories), cc.json loader, rank/tier matching
   session.py         SessionStats: loot, coin, crafting, party kills and deaths, CC totals, rates
   player_status.py   Anchored mini-stat OCR and original-color XP-bar estimates
-  player_telemetry.py Own HP alert episodes and five-minute XP-rate comparisons
+  player_telemetry.py Own HP alert episodes and 30-second XP comparisons over a rolling hour
   vocab.py           learned spellings: conflate OCR variants of names, items, zones, abilities
   replay.py          find replayed blocks in old logs, and a restart's repeated opening lines (find_backlog)
   importer.py        re-parse a .log / .jsonl (or several in a row: import_files) into encounters + a session
@@ -148,7 +148,8 @@ re-read from its content on every layout request (`MainWindow._sync_minimum_size
 2. **Crop and preprocess.** `Config.crop` is in game-window pixels (physical, 3840x2160 here).
    `ocr.preprocess` takes the brightest of B/G/R per pixel; colored combat text (red deaths,
    green buffs) keeps full brightness that way, which fixed the misreads grayscale produced.
-   Upscaling gained nothing on this font; keep scale 1.0 unless the font is tiny.
+   Chat OCR keeps the configured scale (normally 1.0). A separate stats region uses at
+   least 1.5× OCR for HP; XP-bar measurements use the original color pixels.
 3. **OCR.** Windows.Media.Ocr through the `winrt` projection, about 20 to 30 ms per frame.
    `ocr.OcrLine` carries x, y, height and text per visual line. The engine keeps one persistent
    asyncio loop per thread because recognize_async is a WinRT coroutine.
@@ -384,7 +385,8 @@ you exactly which rule broke.
 - Reading network traffic: the game's user agreement forbids intercepting its protocol, and the
   project's safety rule keeps everything outside the game process.
 - Memory reading or any in-process hook: excluded by the project's safety rule.
-- Grayscale preprocessing and 2x upscaling: worse or no better than max-channel at 1x.
+- Grayscale preprocessing and 2× upscaling for the combat-chat font: worse or no better
+  than max-channel at 1×.
 - A plain "never emit duplicate text" rule in the tracker: legitimately repeated hits must each
   be logged, so de-duplication is by position, not by text.
 - Repairing a garbled "begins casting" line by fuzzy matching: most such lines get a clean

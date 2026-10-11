@@ -108,7 +108,8 @@ class QtViewTests(unittest.TestCase):
         s.add(parse_line("a skeletal defender is mesmerized.", 1.0, PLAYER))  # combat: must not appear
         view = SessionView(compact=True)
         from mnmparse.config import Config
-        view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
+        view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True,
+                               show_other_groups=True))
         view.set_snapshot(s.snapshot(now=5.0))
         tree = view._tree
         titles = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
@@ -122,7 +123,37 @@ class QtViewTests(unittest.TestCase):
         self.assertTrue(items.isExpanded())
         self.assertEqual(items.data(0, Qt.ItemDataRole.UserRole), "items")
 
-    def test_mez_tree_groups_expandable_people_and_preserves_full_private_counts(self) -> None:
+    def test_session_group_filter_hides_outsiders_and_can_restore_full_loot(self) -> None:
+        from mnmparse.app.session_view import SessionView
+        from mnmparse.config import Config
+        from dataclasses import replace
+
+        session = SessionStats(PLAYER, started=0)
+        for ts, text in enumerate(("Tovozen has joined the party.",
+                                   "You loot [Bone Chips] from a rat's corpse.",
+                                   "Tovozen loots [Worn Bow] from a rat's corpse.",
+                                   "Septimal loots [Secret Diamond] from a rat's corpse.",
+                                   "Septimal crafts Cloth Scraps(3)."), 1):
+            session.add(parse_line(text, ts, PLAYER))
+        cfg = Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True)
+        view = SessionView(compact=True)
+        view.set_config(cfg)
+        view.set_snapshot(session.snapshot(now=10))
+        items = view._tree.topLevelItem(0)
+        self.assertEqual(items.text(1), "2")
+        self.assertEqual({items.child(i).text(0) for i in range(items.childCount())}, {PLAYER, "Tovozen"})
+        self.assertNotIn("Septimal", view._tree.topLevelItem(4).toolTip(0))
+        view.set_view_mode("self", PLAYER)
+        self.assertEqual(view._tree.topLevelItem(0).text(1), "1")
+        view.set_view_mode("group", PLAYER)
+        view.set_config(replace(cfg, show_other_groups=True))
+        items = view._tree.topLevelItem(0)
+        self.assertEqual(items.text(1), "3")
+        self.assertIn("Septimal", {items.child(i).text(0) for i in range(items.childCount())})
+        view.close()
+        view.deleteLater()
+
+    def test_mez_tree_lists_targets_and_times_without_individual_breaker_counts(self) -> None:
         from PySide6.QtCore import Qt
         from mnmparse.app.session_view import SessionView
         from mnmparse.config import Config
@@ -148,21 +179,17 @@ class QtViewTests(unittest.TestCase):
 
                 top = mez()
                 self.assertEqual(top.text(1), "5")
-                people = {top.child(i).text(0): top.child(i) for i in range(top.childCount())}
-                self.assertEqual({name: row.text(1) for name, row in people.items()},
-                                 {PLAYER: "3", "Povebizu": "1", "Unknown / natural fade": "1"})
-                self.assertEqual(people[PLAYER].child(0).text(0), "3 older breaks")
-                peer = people["Povebizu"]
-                self.assertEqual(peer.child(0).text(0), "a rat")
-                self.assertTrue(peer.child(0).text(2))
-                peer.setExpanded(True)
+                self.assertEqual([top.child(i).text(0) for i in range(top.childCount())],
+                                 ["a rat", "a skeleton"])
+                self.assertTrue(all(top.child(i).text(2) for i in range(top.childCount())))
+                self.assertTrue(all(top.child(i).childCount() == 0 for i in range(top.childCount())))
+                top.setExpanded(True)
                 view.set_snapshot(snap)
-                self.assertTrue(next(mez().child(i) for i in range(mez().childCount())
-                                     if mez().child(i).text(0) == "Povebizu").isExpanded())
+                self.assertTrue(mez().isExpanded())
                 view.set_config(Config(player_name=PLAYER))
-                self.assertEqual(mez().text(1), "4")
+                self.assertEqual(mez().text(1), "5")
                 self.assertEqual([mez().child(i).text(0) for i in range(mez().childCount())],
-                                 [PLAYER, "Unknown / natural fade"])
+                                 ["a rat", "a skeleton"])
                 view.close()
                 view.deleteLater()
 
@@ -175,7 +202,7 @@ class QtViewTests(unittest.TestCase):
         settings = QSettings("mnmparse", "MnM Parser-tests")
         settings.clear()
         overlay = OverlayWindow(settings, Config())
-        self.assertTrue(overlay.locked)
+        self.assertFalse(overlay.locked)
         self.assertFalse(overlay.click_through)
         self.assertFalse(bool(overlay.windowFlags() & Qt.WindowType.WindowTransparentForInput))
         overlay.set_click_through(True)

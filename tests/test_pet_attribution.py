@@ -186,7 +186,8 @@ class AttributionUiTests(unittest.TestCase):
             session.add(parse_line(f"--{looter} loots [{item}] from a rat's corpse.--", 100 + offset, PLAYER))
         for compact in (False, True):
             view = SessionView(compact=compact)
-            view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
+            view.set_config(Config(player_name=PLAYER, casual_mode=False,
+                                   casual_mode_confirmed=True, show_other_groups=True))
             snap = session.snapshot(now=110)
             view.set_snapshot(snap)
             top = view._tree.topLevelItem(0)

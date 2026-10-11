@@ -35,7 +35,7 @@
   "stats_interval_s": 5.0,
   "overlay_enabled": false,
   "overlay_opacity": 0.85,
-  "overlay_locked": true,
+  "overlay_locked": false,
   "overlay_font_scale": 1.0,
   "overlay_tab": "damage",
   "start_capture_on_launch": true,

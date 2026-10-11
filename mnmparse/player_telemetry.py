@@ -1,7 +1,9 @@
 """Own-player health alerts and approximate XP from visible stat-panel readings.
 
-XP compares stable bar positions every five continuous minutes. It never invents
-raw XP, attributes gains to kills, or bridges a missing panel or a restart.
+XP compares stable bar positions about thirty seconds apart and estimates a
+time-weighted recent rate over at most one hour. Brief OCR misses within
+the capture cadence are tolerated; pauses and longer gaps reset live baselines.
+It never invents raw XP or attributes gains to kills.
 """
 from __future__ import annotations
 
@@ -11,7 +13,8 @@ from typing import Any
 
 MAX_GAP = 2.0
 MAX_SAMPLE_GAP = 10.0
-XP_INTERVAL = 300.0
+XP_INTERVAL = 30.0
+XP_RATE_WINDOW = 3600.0
 LEVEL_GRACE = 8.0
 PENDING_LIMIT = 64
 
@@ -80,6 +83,9 @@ class PlayerTelemetry:
         self._levels: list[float] = []
         self._used_levels: set[float] = set()
         self._checkpoint: tuple[float, float, set[float]] | None = None
+        self._xp_rate_intervals: list[tuple[float, float, float]] = []
+        self._xp_pending_gain_start: float | None = None
+        self._xp_pending_last_fraction: float | None = None
 
     def _clear_live(self) -> None:
         self._hp_previous: tuple[float, float] | None = None
@@ -175,11 +181,62 @@ class PlayerTelemetry:
         self._levels = []
         self._used_levels = set()
         self._checkpoint = None
+        self._xp_rate_intervals.clear()
+        self._xp_pending_gain_start = None
+        self._xp_pending_last_fraction = None
+
+    def _record_rate_interval(self, start: float, end: float, points: float) -> None:
+        """Keep completed measurements, dropping leading idle before a new gain."""
+        self._trim_rate_intervals(end)
+        if points > 0 and not any(gain > 0 for _start, _end, gain in self._xp_rate_intervals):
+            # A small change may need several checkpoints to exceed one pixel.
+            # Retain that measured time rather than credit all gain to the last
+            # thirty seconds; only idle before the first movement is excluded.
+            pending = self._xp_pending_gain_start
+            self._xp_rate_intervals = [interval for interval in self._xp_rate_intervals
+                                       if pending is not None and interval[1] > pending]
+        self._xp_rate_intervals.append((start, end, points))
+        self._trim_rate_intervals(end)
+
+    def _trim_rate_intervals(self, end: float) -> None:
+        cutoff = end - XP_RATE_WINDOW
+        recent = []
+        for start, stop, points in self._xp_rate_intervals:
+            if stop <= cutoff:
+                continue
+            if start < cutoff:
+                # Bar checkpoints only locate gain within this interval. Weight
+                # the retained portion instead of averaging interval rates.
+                points *= (stop - cutoff) / (stop - start)
+                start = cutoff
+            recent.append((start, stop, points))
+        self._xp_rate_intervals = recent
+
+    def _correct_rate_checkpoint(self, start: float, end: float) -> None:
+        for index, (begin, stop, points) in enumerate(self._xp_rate_intervals):
+            if stop == end:
+                correction = 100.0 * (stop - begin) / (end - start)
+                if not any(gain > 0 for _begin, _stop, gain in self._xp_rate_intervals):
+                    # A late level line turns an idle-looking checkpoint into
+                    # the first gain; earlier idle must still be excluded.
+                    self._xp_rate_intervals = [(begin, stop, points + correction)]
+                else:
+                    self._xp_rate_intervals[index] = (begin, stop, points + correction)
+                return
+        self._record_rate_interval(start, end, 100.0)
 
     def _update_xp(self, fraction: float | None, ts: float, tolerance: float,
                    width: float | None, max_gap: float) -> None:
         if fraction is None:
-            self._clear_xp()
+            if self._xp_previous_ts is None or ts - self._xp_previous_ts > max_gap:
+                self._clear_xp()
+            else:
+                # One unclear frame must not discard completed bar
+                # observations. Recovery still needs two fresh stable reads,
+                # and is bounded from the last valid XP sample, not this miss.
+                self._xp_percent = None
+                self._xp_candidate = None
+                self._xp_candidate_count = 0
             return
         contiguous = (self._xp_previous_ts is not None and ts - self._xp_previous_ts <= max_gap
                       and width == self._xp_width)
@@ -215,16 +272,38 @@ class PlayerTelemetry:
         duration = ts - start
         if duration < XP_INTERVAL:
             return
+        if (self._xp_pending_gain_start is not None
+                and ts - self._xp_pending_gain_start > XP_RATE_WINDOW):
+            # An uncredited change of at most one pixel cannot remain pending
+            # forever and later masquerade as new XP. Age out that uncertain
+            # movement against the last checkpoint's bar position.
+            baseline = self._xp_pending_last_fraction if self._xp_pending_last_fraction is not None else baseline
+            self._xp_pending_gain_start = None
+            self._xp_pending_last_fraction = None
         levels = {level for level in self._levels if start < level <= ts}
         delta = fraction - baseline + len(levels)
         if delta < -tolerance - 1e-12:
             self._start_window(ts, fraction)
             return
         points = 0.0 if abs(delta) <= tolerance + 1e-12 else max(0.0, delta * 100.0)
+        if points == 0 and delta > 1e-12:
+            if self._xp_pending_gain_start is None:
+                self._xp_pending_gain_start = start
+            self._xp_pending_last_fraction = fraction
+        elif delta <= 1e-12:
+            self._xp_pending_gain_start = None
+            self._xp_pending_last_fraction = None
         self._xp_gain += points
         self._xp_seconds += duration
         self._xp_wraps += len(levels)
-        self._xp_baseline = (ts, fraction)
+        self._record_rate_interval(start, ts, points)
+        # Advance elapsed time once per checkpoint while carrying sub-pixel
+        # gains against the last credited bar position. Repeated small changes
+        # must neither disappear nor count the same XP more than once.
+        self._xp_baseline = (ts, baseline if points == 0 and not levels else fraction)
+        if points > 0:
+            self._xp_pending_gain_start = None
+            self._xp_pending_last_fraction = None
         self._levels = [level for level in self._levels if level > ts]
         self._used_levels.intersection_update(self._levels)
         self._checkpoint = (start, ts, levels)
@@ -242,11 +321,12 @@ class PlayerTelemetry:
                     accepted.add(now)
                     self._xp_gain += 100.0
                     self._xp_wraps += 1
+                    self._correct_rate_checkpoint(start, end)
                 return self.snapshot() != before
         if not self._xp_baseline[0] < now <= self._clock + LEVEL_GRACE or now in self._levels:
             return False
         self._levels.append(now)
-        # More than this many levels in five minutes is untrustworthy input.
+        # More than this many pending levels is untrustworthy input.
         if len(self._levels) > PENDING_LIMIT:
             self._start_window(self._clock, self._xp_stable)
             return False
@@ -254,8 +334,9 @@ class PlayerTelemetry:
         return self.snapshot() != before
 
     def snapshot(self) -> dict[str, Any]:
-        rate = (self._xp_gain * 3600.0 / self._xp_seconds
-                if self._xp_gain is not None and self._xp_seconds else None)
+        rate_gain = sum(points for _start, _end, points in self._xp_rate_intervals)
+        rate_seconds = sum(end - start for start, end, _points in self._xp_rate_intervals)
+        rate = rate_gain * 3600.0 / rate_seconds if rate_seconds else None
 
         def rounded(value: float | None) -> float | None:
             return round(value, 6) if value is not None and math.isfinite(value) else None
@@ -268,5 +349,7 @@ class PlayerTelemetry:
             "hp_lowest_percent": rounded(self._hp_lowest),
             "xp_percent": rounded(self._xp_percent), "xp_gain_points": rounded(self._xp_gain),
             "xp_observed_seconds": rounded(self._xp_seconds), "xp_points_per_hour": rounded(rate),
+            "xp_rate_kind": "rolling", "xp_rate_window_seconds": XP_RATE_WINDOW,
+            "xp_rate_gain_points": rounded(rate_gain), "xp_rate_observed_seconds": rounded(rate_seconds),
             "xp_level_ups": self._xp_wraps, "last_seen": self._last_seen,
         }

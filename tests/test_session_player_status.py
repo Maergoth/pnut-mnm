@@ -30,6 +30,8 @@ def status():
     return {
         "xp_percent": 94.8, "xp_gain_points": 3.0, "xp_observed_seconds": 600.0,
         "xp_points_per_hour": 18.0, "xp_level_ups": 0,
+        "xp_rate_kind": "rolling", "xp_rate_window_seconds": 3600.0,
+        "xp_rate_gain_points": 3.0, "xp_rate_observed_seconds": 600.0,
     }
 
 
@@ -61,7 +63,54 @@ class SessionPlayerStatusTests(unittest.TestCase):
         session.note_player_status({"xp_percent": 101, "xp_gain_points": float("nan"),
                                     "xp_observed_seconds": -1, "xp_level_ups": True,
                                     "xp_points_per_hour": None})
-        self.assertEqual(session.player_status, {"xp_points_per_hour": None})
+        self.assertEqual(session.player_status, {"xp_points_per_hour": None, "xp_rate_kind": "session"})
+
+    def test_recent_metadata_determines_rate_without_recomputing_from_session_totals(self):
+        session = SessionStats(PLAYER, started=0)
+        summary = status()
+        summary.update(xp_gain_points=30, xp_observed_seconds=3600, xp_points_per_hour=999)
+        session.note_player_status(summary)
+        snap = session.snapshot(now=3600).player_status
+        self.assertEqual(snap["xp_points_per_hour"], 18)
+        self.assertEqual(snap["xp_gain_points"], 30)
+        self.assertEqual(snap["xp_observed_seconds"], 3600)
+
+    def test_invalid_recent_metadata_cannot_masquerade_as_current_or_legacy_rate(self):
+        for key, value in (("xp_rate_window_seconds", 3601), ("xp_rate_window_seconds", True),
+                           ("xp_rate_gain_points", -1), ("xp_rate_gain_points", float("nan")),
+                           ("xp_rate_gain_points", 1e308), ("xp_rate_gain_points", 10 ** 1000),
+                           ("xp_rate_observed_seconds", 3601), ("xp_rate_observed_seconds", True),
+                           ("xp_rate_observed_seconds", 0), ("xp_rate_observed_seconds", None)):
+            with self.subTest(key=key, value=value):
+                session = SessionStats(PLAYER, started=0)
+                summary = dict(status(), **{key: value})
+                session.note_player_status(summary)
+                snap = session.snapshot(now=600).player_status
+                self.assertEqual(snap["xp_rate_kind"], "rolling")
+                self.assertIsNone(snap["xp_points_per_hour"])
+                self.assertEqual(snap["xp_rate_observed_seconds"], 0)
+                self.assertEqual(snap["xp_gain_points"], 3)
+                json.dumps(snap, allow_nan=False)
+
+    def test_legacy_rate_is_labeled_as_a_session_average_and_archives_preserve_that(self):
+        legacy = {key: value for key, value in status().items() if not key.startswith("xp_rate_")}
+        session = SessionStats(PLAYER, started=0)
+        session.note_player_status(legacy)
+        self.assertEqual(session.player_status["xp_rate_kind"], "session")
+        self.assertEqual(session.player_status["xp_points_per_hour"], 18)
+        with tempfile.TemporaryDirectory() as directory:
+            archive = SessionArchive(Path(directory) / "sessions.sqlite3")
+            archive.save_session("old-average", session)
+            with closing(sqlite3.connect(archive.path)) as db, db:
+                state, preview = db.execute("SELECT state,preview FROM sessions WHERE id='old-average'").fetchone()
+                state, preview = json.loads(state), json.loads(preview)
+                state["player_status"].pop("xp_rate_kind")
+                preview["player_status"].pop("xp_rate_kind")
+                db.execute("UPDATE sessions SET state=?,preview=? WHERE id='old-average'",
+                           (json.dumps(state), json.dumps(preview)))
+            for restored in (archive.restore("old-average"), archive.preview("old-average")):
+                self.assertEqual(restored.player_status["xp_rate_kind"], "session")
+                self.assertEqual(restored.player_status["xp_points_per_hour"], 18)
 
     def test_carebear_and_self_projection_retain_own_xp(self):
         session = SessionStats(PLAYER, started=0)
@@ -156,7 +205,8 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
                 self.assertNotIn("kill", text)
                 self.assertNotIn("HP", text)
                 self.assertIn("XP ~18.0%/h", view._footer.text())
-                self.assertIn("five-minute bar comparisons", view._footer.toolTip())
+                self.assertIn("30-second bar comparisons", view._footer.toolTip())
+                self.assertIn("hour", view._footer.toolTip())
                 top.setExpanded(True)
                 view.set_snapshot(snap)
                 self.assertTrue(self.category(view, "experience").isExpanded())
@@ -175,12 +225,25 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
         view.set_snapshot(None)
         self.assertEqual(view._footer.toolTip(), "")
 
+    def test_legacy_average_has_explicit_session_label_in_both_views(self):
+        session = SessionStats(PLAYER, started=0)
+        session.note_player_status({key: value for key, value in status().items()
+                                    if not key.startswith("xp_rate_")})
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                view = self.view(compact)
+                view.set_snapshot(session.snapshot(now=600))
+                self.assertIn("XP session ~18.0%/h", view._footer.text())
+                self.assertIn("older version", view._footer.toolTip())
+
     def test_collecting_state_shows_current_bar_without_fake_rate_or_gain(self):
         view = self.view()
         session = SessionStats(PLAYER, started=0)
         session.note_player_status({"xp_percent": 94.8, "xp_gain_points": 0,
                                     "xp_observed_seconds": 0, "xp_points_per_hour": None,
-                                    "xp_level_ups": 0})
+                                    "xp_level_ups": 0, "xp_rate_kind": "rolling",
+                                    "xp_rate_window_seconds": 3600, "xp_rate_gain_points": 0,
+                                    "xp_rate_observed_seconds": 0})
         view.set_snapshot(session.snapshot(now=600))
         top = self.category(view, "experience")
         self.assertEqual(top.childCount(), 1)
@@ -188,7 +251,7 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
         self.assertEqual(top.child(0).text(1), "~94.8%")
         self.assertIn("XP collecting…", view._footer.text())
         self.assertNotIn("%/h", view._footer.text())
-        self.assertIn("five minutes", view._footer.toolTip())
+        self.assertIn("30 seconds", view._footer.toolTip())
 
 
 if __name__ == "__main__":

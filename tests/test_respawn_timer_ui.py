@@ -207,9 +207,9 @@ class RespawnTimerUiTests(unittest.TestCase):
         self.assertEqual(menus[1], [COMMON_MOB, NAMED_MOB])
         self.assertEqual(self.runner.board.timers[0].label, f"{NAMED_MOB} respawn")
 
-    def test_header_keeps_actual_mob_name_in_self_feed_and_session_views(self):
+    def test_header_keeps_mob_name_in_combat_views_and_session_has_no_respawn_target(self):
         self.show_fight()
-        for mode, tab in (("self", "damage"), ("group", "feed"), ("self", "session")):
+        for mode, tab in (("self", "damage"), ("group", "feed")):
             with self.subTest(mode=mode, tab=tab):
                 self.runner.clear_timers()
                 self.overlay.set_view_mode(mode)
@@ -218,6 +218,12 @@ class RespawnTimerUiTests(unittest.TestCase):
                 with self.dialog_response(seconds=120):
                     self.context_menu(*self.header_target(), choice=RESPAWN_ACTION)
                 self.assertEqual(self.runner.board.timers[0].label, f"{NAMED_MOB} respawn")
+        self.runner.clear_timers()
+        self.overlay.set_tab("session")
+        self.app.processEvents()
+        menu, = self.context_menu(*self.header_target())
+        self.assertNotIn(RESPAWN_ACTION, menu)
+        self.assertEqual(self.runner.board.timers, [])
 
     def test_zone_summary_header_never_starts_a_timer_for_the_zone_title(self):
         snap = self.show_fight(multi=True)
