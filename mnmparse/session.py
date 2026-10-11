@@ -31,7 +31,7 @@ from .stats import canonical_names
 from .vocab import Vocabulary
 
 __all__ = [
-    "LOOTED_BY_YOU", "LootEntry", "SessionEntry", "SessionSnapshot", "SessionStats", "filter_session", "format_coin",
+    "LOOTED_BY_YOU", "LootEntry", "SessionEntry", "SessionSnapshot", "SessionStats", "filter_group_session", "filter_session", "format_coin",
 ]
 
 RECENT_LIMIT = 200
@@ -219,6 +219,55 @@ class SessionSnapshot:
 LOOTED_BY_YOU = "Looted by you (gross)"
 
 
+def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
+    """Show the known group's loot and coin without changing the collected session.
+
+    Item counters are complete even when only recent loot details were loaded.
+    Kills, deaths and crafts already have group classification in SessionStats.
+    """
+    members = {name.casefold() for name in snap.party if name}
+    members.add((player or "You").casefold())
+    included = lambda name: bool(name) and name.casefold() in members
+    item_looters = {item: [(name, count) for name, count in looters if included(name)]
+                    for item, looters in snap.item_looters.items()}
+    item_looters = {item: looters for item, looters in item_looters.items() if looters}
+    item_counts = [(item, sum(count for _name, count in looters))
+                   for item, looters in item_looters.items()]
+    looter_counts = [(name, count) for name, count in snap.items_by_looter if included(name)]
+    if not snap.items_by_looter:
+        by_looter: Counter[str] = Counter()
+        for looters in item_looters.values():
+            for name, count in looters:
+                by_looter[name] += count
+        looter_counts = sorted(by_looter.items(), key=lambda pair: (-pair[1], pair[0]))
+    coin = [(name, count) for name, count in snap.coin_by_looter if included(name)]
+
+    def recent_included(entry: SessionEntry) -> bool:
+        if entry.kind == "kill":
+            # SessionStats formats death rows with the victim first; the actor
+            # is the killer, which can be an NPC killing an unrelated player.
+            victim = entry.text.partition(" slain")[0]
+            return included(entry.actor) or included(victim)
+        return not entry.actor or is_npc_name(entry.actor) or included(entry.actor)
+
+    projected = dataclasses.replace(
+        snap,
+        items=sum(count for _name, count in looter_counts),
+        items_by_name=sorted(item_counts, key=lambda pair: (-pair[1], pair[0])),
+        items_by_looter=looter_counts,
+        item_looters=item_looters,
+        loot=[entry for entry in snap.loot if included(entry.looter)],
+        coin_total=sum(count for _name, count in coin),
+        coin_by_looter=coin,
+        rewards=[entry for entry in snap.rewards if included(entry.looter)],
+        recent=[entry for entry in snap.recent if recent_included(entry)],
+        outsider_deaths=[], outsider_kills=0, outsider_crafts=[],
+    )
+    if hasattr(snap, "_personal_totals"):
+        projected._personal_totals = snap._personal_totals
+    return projected
+
+
 def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     """The viewer's own share of ``snap``: loot, coin, kills, deaths and crafts by ``player``.
 
@@ -228,25 +277,30 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     ``coin_by_looter``. Zones and awakenings stay shared; the log does not name mez breakers.
     """
     player = player or "You"
-    loot = [e for e in snap.loot if e.looter == player]
-    items: Counter[str] = Counter(e.item for e in loot)
-    kills = [k for k in snap.kill_entries if k[1] == player]
+    own = lambda name: bool(name) and name.casefold() == player.casefold()
+    loot = [e for e in snap.loot if own(e.looter)]
+    items: Counter[str] = (Counter({item: sum(count for name, count in looters if own(name))
+                                   for item, looters in snap.item_looters.items()})
+                           if snap.item_looters else Counter(e.item for e in loot))
+    items = Counter({item: count for item, count in items.items() if count})
+    kills = [k for k in snap.kill_entries if own(k[1])]
     by_target: Counter[str] = Counter(v for _ts, _k, v in kills)
-    crafts = [c for c in snap.craft_entries if c[1] == player]
+    crafts = [c for c in snap.craft_entries if own(c[1])]
     by_item: Counter[str] = Counter()
     for _ts, _c, item, n in crafts:
         by_item[item] += n
-    gross = sum(c for name, c in snap.coin_by_looter if name == player)
-    deaths = [(name, n) for name, n in snap.deaths_by_player if name == player]
+    gross = sum(c for name, c in snap.coin_by_looter if own(name))
+    deaths = [(name, n) for name, n in snap.deaths_by_player if own(name)]
     personal = getattr(snap, "_personal_totals", {})
-    complete = personal if personal.get("player") == player else {}
+    complete = personal if own(personal.get("player")) else {}
     item_counts = complete.get("items_by_name", sorted(items.items(), key=lambda kv: (-kv[1], kv[0])))
-    item_total = complete.get("items", len(loot))
+    item_total = complete.get("items", sum(count for name, count in snap.items_by_looter if own(name))
+                              if snap.items_by_looter else sum(items.values()))
     craft_counts = complete.get("crafts_by_item", sorted(by_item.items(), key=lambda kv: (-kv[1], kv[0])))
     craft_total = complete.get("crafts", sum(by_item.values()))
     kill_total = complete.get("kills", len(kills))
-    mez_counts = [(name, n) for name, n in snap.mez_breaks_by_breaker if name == player]
-    mez_details = [entry for entry in snap.mez_break_details if entry[2] in (None, player)]
+    mez_counts = [(name, n) for name, n in snap.mez_breaks_by_breaker if own(name)]
+    mez_details = [entry for entry in snap.mez_break_details if entry[2] is None or own(entry[2])]
     unknown = snap.mez_breaks_unknown or (len(snap.mez_breaks) if not snap.mez_breaks_total else 0)
     return dataclasses.replace(
         snap,
@@ -257,7 +311,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         loot=loot,
         coin_total=snap.coin_received,
         coin_by_looter=[(LOOTED_BY_YOU, gross)] if gross else [],
-        rewards=[e for e in snap.rewards if e.looter == player],
+        rewards=[e for e in snap.rewards if own(e.looter)],
         crafts=craft_total,
         crafts_by_crafter=[(player, craft_total)] if craft_total else [],
         crafts_by_item=craft_counts,

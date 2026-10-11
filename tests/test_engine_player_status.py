@@ -193,21 +193,21 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
         self.assertIsNone(self.engine._telemetry()._xp_baseline)
 
-    def test_short_panel_or_bar_ocr_misses_do_not_restart_five_minute_xp_comparison(self):
+    def test_short_panel_or_bar_ocr_misses_preserve_thirty_second_xp_comparisons(self):
         for missing in (None, dataclasses.replace(self.reading(), xp_percent=None, xp_bar_rect=None)):
             with self.subTest(missing=missing):
                 engine = Engine(self.cfg)
-                for now in range(100, 402):
+                for now in range(100, 403):
                     value = missing if now in (150, 200, 250, 300, 350) else dataclasses.replace(
-                        self.reading(), xp_percent=22.0 if now >= 390 else 20.0)
+                        self.reading(), xp_percent=22.0 if now >= 111 else 20.0)
                     engine._observe_player_status(value, self.cfg, now, (8, 8, 3))
                     if now in (151, 201, 251, 301, 351) and missing is None:
                         self.assertFalse(engine._telemetry().snapshot()["hp_low"])
                 snap = engine._telemetry().snapshot()
-                self.assertEqual(snap["xp_observed_seconds"], 300)
-                self.assertAlmostEqual(snap["xp_points_per_hour"], 24)
-                engine._observe_player_status(None, self.cfg, 402, (8, 8, 3))
+                self.assertEqual(snap["xp_observed_seconds"], 301)
+                self.assertAlmostEqual(snap["xp_points_per_hour"], 2 * 3600 / 301, places=6)
                 engine._observe_player_status(None, self.cfg, 404, (8, 8, 3))
+                engine._observe_player_status(None, self.cfg, 406, (8, 8, 3))
                 self.assertIsNone(engine._telemetry()._xp_baseline)
                 self.assertIsNone(engine._telemetry().snapshot()["xp_points_per_hour"])
                 self.assertEqual(engine._telemetry().snapshot()["xp_gain_points"], 2)
@@ -217,7 +217,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.engine.low_health.connect(signals.append)
         for now in range(100, 402):
             value = dataclasses.replace(self.reading(), hp_current=None, hp_max=None,
-                                        xp_percent=22.0 if now >= 390 else 20.0)
+                                        xp_percent=22.0 if now >= 111 else 20.0)
             self.engine._observe_player_status(value, self.cfg, now, (8, 8, 3))
         snap = self.engine._telemetry().snapshot()
         self.assertEqual(snap["xp_observed_seconds"], 300)
@@ -251,7 +251,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
                 signals = []
                 engine.low_health.connect(signals.append)
                 for now in range(100, 404, 3):
-                    reading = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 400 else 20.0)
+                    reading = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 106 else 20.0)
                     engine._observe_player_status(reading, cfg, now, (8, 8, 3), ocr_ms=ocr_ms)
                     if now == 100:
                         self.assertEqual(signals, [])

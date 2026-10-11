@@ -97,7 +97,7 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertEqual(report["legal_documents"], ["open-source", "privacy", "terms"])
             self.assertTrue(report["image_processing"])
             self.assertEqual(set(report["player_status"]), {
-                "reader", "dual_scale_xp", "fresh_hp", "five_minute_rate", "carebear_own_xp", "passive_flash",
+                "reader", "dual_scale_xp", "fresh_hp", "thirty_second_rate", "carebear_own_xp", "passive_flash",
             })
             self.assertTrue(all(report["player_status"].values()))
             self.assertEqual(report["setup"]["style"], "Modern")

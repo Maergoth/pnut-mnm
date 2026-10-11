@@ -116,7 +116,7 @@ class SessionView(QWidget):
         """``"group"`` shows everyone; ``"self"`` only the viewer's own loot, coin, kills, deaths, crafts."""
         self._view_mode = "self" if mode == "self" else "group"
         self._player = player or self._player
-        self.set_snapshot(self._snap)
+        self.set_snapshot(getattr(self, "_raw_snap", self._snap))
 
     def set_config(self, cfg: Any) -> None:
         self._cfg = cfg
@@ -194,11 +194,13 @@ class SessionView(QWidget):
                     rate_tip = "Session average recorded by an older version, in estimated level percentage points per hour."
                 else:
                     footer += f"  ·  XP ~{rate:,.1f}%/h"
-                    rate_tip = ("Rolling 15-minute estimate in level percentage points per hour, from five-minute bar comparisons. "
+                    measured = _mmss(status.get("xp_rate_observed_seconds") or 0)
+                    rate_tip = ("Rolling one-hour estimate in level percentage points per hour, from 30-second bar comparisons. "
+                                f"Based on {measured} measured so far. "
                                 "Idle before gains is excluded; breaks after gains lower the rate.")
             elif status.get("xp_gain_points") is not None:
                 footer += "  ·  XP collecting…"
-                rate_tip = "Keep your XP bar visible for five minutes to estimate XP/hour."
+                rate_tip = "Keep your XP bar visible for 30 seconds to estimate XP/hour."
             self._footer.setText(footer)
             self._footer.setToolTip(rate_tip)
         finally:
@@ -211,7 +213,7 @@ class SessionView(QWidget):
         percent = status.get("xp_percent")
         if gain is None and percent is None:
             return
-        tip = ("Estimated from five-minute comparisons of your visible XP bar. "
+        tip = ("Estimated from 30-second comparisons of your visible XP bar. "
                "Different levels require different XP amounts.")
         children = []
         if percent is not None:

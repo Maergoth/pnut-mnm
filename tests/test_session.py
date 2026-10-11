@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import json
 import unittest
 
 from mnmparse.parser import parse_line
-from mnmparse.session import SessionStats, filter_session, format_coin
+from mnmparse.session import LootEntry, SessionStats, filter_session, format_coin
 
 PLAYER = "Maergoth"
 
@@ -127,6 +128,82 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(format_coin(10_203), "1g 2s 3c")
         self.assertEqual(format_coin(1_020_304), "1p 2g 3s 4c")
         self.assertEqual(format_coin(2_000_000), "2p")
+
+
+class SessionGroupProjectionTests(unittest.TestCase):
+    def snapshot(self):
+        session = SessionStats(PLAYER, started=0)
+        texts = ["Tovozen has joined the party.", "Mira has joined the party."]
+        texts += ["You loot [Bone Chips] from a rat's corpse."] * 12
+        texts += ["Tovozen loots [Bone Chips] from a rat's corpse."] * 3
+        texts += ["Mira loots [Worn Bow] from a rat's corpse."] * 2
+        texts += ["You loot 2 silver coins from a rat's corpse.",
+                  "Tovozen loots 50 copper coins from a rat's corpse, and you receive 10 copper coins from a rat's corpse as your split.",
+                  "Mira loots 30 copper coins from a rat's corpse.",
+                  "Septimal loots 25 copper coins from a rat's corpse.",
+                  "Septimal crafts Cloth Scraps(3).", "Septimal has been slain by a rat!"]
+        texts += ["Septimal loots [Secret Diamond] from a rat's corpse."] * 8
+        for ts, text in enumerate(texts, 1):
+            session.add(parse_line(text, ts, PLAYER))
+        session.note_player_status({"xp_percent": 50, "xp_gain_points": 2,
+                                    "xp_observed_seconds": 300, "xp_points_per_hour": 24})
+        snap = session.snapshot(now=100, detail_limit=2)
+        snap.party = ["TOVOZEN", "MIRA"]
+        snap.rewards = [LootEntry(90, PLAYER, "Own reward", None),
+                        LootEntry(91, "Septimal", "Foreign reward", None)]
+        return snap
+
+    def test_hidden_outsiders_leave_complete_group_totals_and_self_coin_received(self):
+        from mnmparse.config import Config
+        from mnmparse.privacy import project_session
+
+        raw = self.snapshot()
+        cfg = Config(player_name=PLAYER.lower(), casual_mode=False, casual_mode_confirmed=True)
+        shown = project_session(raw, cfg)
+        self.assertEqual(shown.items, 17)
+        self.assertEqual(shown.items_by_name, [("Bone Chips", 15), ("Worn Bow", 2)])
+        self.assertEqual(dict(shown.items_by_looter), {PLAYER: 12, "Tovozen": 3, "Mira": 2})
+        self.assertEqual(shown.loot, [], "Bounded details contain only outsiders, but totals stay complete")
+        self.assertEqual((shown.coin_total, shown.coin_received, shown.coin_split), (280, 210, 10))
+        self.assertEqual(shown.rewards, [raw.rewards[0]])
+        self.assertEqual((shown.outsider_deaths, shown.outsider_crafts), ([], []))
+        self.assertNotIn("Septimal", json.dumps(asdict(shown)))
+        mine = filter_session(shown, PLAYER.lower())
+        self.assertEqual((mine.items, mine.coin_total), (12, 210))
+        self.assertEqual(mine.coin_by_looter, [("Looted by you (gross)", 200)])
+        self.assertEqual(shown.player_status, raw.player_status)
+        self.assertEqual(raw.items, 25)
+        self.assertIn("Septimal", dict(raw.items_by_looter))
+        self.assertIs(project_session(raw, replace(cfg, show_other_groups=True)), raw)
+
+    def test_carebear_averages_use_known_group_totals_even_when_other_groups_are_enabled(self):
+        from mnmparse.config import Config
+        from mnmparse.privacy import project_session
+
+        raw = self.snapshot()
+        shown = project_session(raw, Config(player_name=PLAYER, show_other_groups=True))
+        self.assertEqual(shown.items, 12)
+        self.assertEqual(shown.group_average_count, 3)
+        self.assertEqual(shown.group_averages["items"], 5.7)
+        self.assertEqual(shown.group_averages["coin_total"], 93)
+        self.assertNotIn("Secret Diamond", json.dumps(asdict(shown)))
+        self.assertEqual(shown.player_status, raw.player_status)
+
+    def test_legacy_aggregate_counters_keep_totals_without_item_allocations_or_own_cache(self):
+        from mnmparse.config import Config
+        from mnmparse.privacy import project_session
+
+        raw = self.snapshot()
+        cfg = Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True)
+        legacy = replace(raw, item_looters={})
+        shown = project_session(legacy, cfg)
+        self.assertEqual(shown.items, 17)
+        self.assertEqual(shown.items_by_name, [], "Unknown allocation cannot fabricate item details")
+        self.assertEqual(filter_session(shown, PLAYER).items, 12)
+        counters_missing = replace(raw, items_by_looter=[])
+        shown = project_session(counters_missing, cfg)
+        self.assertEqual((shown.items, filter_session(shown, PLAYER).items), (17, 12))
+        self.assertEqual(project_session(shown, cfg).items, 17)
 
 
 

@@ -111,11 +111,16 @@ def project_encounter(snap: Any, cfg: Any = None) -> Any:
 
 
 def project_session(snap: Any, cfg: Any = None) -> Any:
-    if snap is None or not casual_enabled(cfg) or getattr(snap, "privacy_mode", "") == "casual":
+    if snap is None or getattr(snap, "privacy_mode", "") == "casual":
         return snap
-    from mnmparse.session import SessionEntry, filter_session
+    from mnmparse.session import SessionEntry, filter_group_session, filter_session
 
     player = str(getattr(cfg, "player_name", "") or "").strip()
+    casual = casual_enabled(cfg)
+    if not bool(getattr(cfg, "show_other_groups", False)) or casual:
+        snap = filter_group_session(snap, player or ("\0" if casual else "You"))
+    if not casual:
+        return snap
     # Blank identity fails closed, including imported sessions whose 'You' may be somebody else.
     own = filter_session(snap, player or "\0")
     loot = [dataclasses.replace(e, looter=player, source=None) for e in own.loot]

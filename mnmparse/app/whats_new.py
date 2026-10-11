@@ -30,13 +30,14 @@ class ReleaseNotes:
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.11": ReleaseNotes(
         changes=(
-            "XP/hour now averages the last 15 minutes, refreshing about every five minutes. Idle before gains is excluded; later breaks lower the rate.",
-            "XP readings continue through unreadable HP and brief OCR misses.",
-            "Mini-stat OCR uses at least 1.5× text size for clearer HP readings.",
-            "New overlays and maps start unlocked. A map with no saved position opens at the top-left.",
-            "Mez awakenings show targets and times without guessing who broke mez.",
-            "The Revenge pop-out uses its empty header space for more visible names.",
-            "Revenge alerts match combat participants, avoiding item or spell names such as Wolf Tooth.",
+            "XP/hour uses a rolling hour, updating every 30 seconds. Idle before your first gain is excluded.",
+            "XP readings survive unreadable HP and brief OCR misses.",
+            "Mini stats always use at least 1.5× OCR for clearer HP.",
+            "New overlays start unlocked; new maps open at the top-left.",
+            "Mez awakenings show targets and times, without guessed breakers.",
+            "Revenge's compact header makes more room for names.",
+            "Revenge alerts match participants, avoiding item names like Wolf Tooth.",
+            "Session loot honors Show other groups; its header indicates all zones.",
         ),
         settings_label="Mini stat settings",
         settings_target="player_status_enabled",

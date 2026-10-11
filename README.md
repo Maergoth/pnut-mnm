@@ -270,11 +270,13 @@ past without being captured cannot be recovered.
   are hidden unless
   "Show other groups" is on in Settings.
 - **Session:** everything the group produced outside the damage numbers, for the whole run, as
-  collapsible categories: items looted (one expandable subheader per person, showing the total
-  number of items they looted, with item quantities beneath it), coin and your splits
+  collapsible categories. It spans all zones; the overlay's fight selector applies to the combat
+  tables. With **Show other groups** off, loot and coin show your recognized group only.
+  Items looted has one expandable subheader per person, showing the total
+  number of items they looted, with item quantities beneath it. Other categories include coin and your splits
   (a split line that wrapped onto a second row is joined to its loot), kills by mob type,
   deaths (yours and your party's; see "Encounters" below), crafted items (your party's only;
-  other players' crafts are listed in the tooltip), quest rewards (kept out of the loot
+  other players' crafts are listed in the tooltip when **Show other groups** is on), quest rewards (kept out of the loot
   count), zones entered and mez-break targets with times. The combat log does not name
   who broke mez, so this list does not assign breaks to players. Session also shows time in combat and
   hourly rates. The party is the same roster the meter uses. Hovering a category
@@ -312,13 +314,13 @@ Two fresh HP readings below your chosen threshold can sound an alert and briefly
 red screen edges. The threshold defaults to **10%**. Choose the threshold, sound, volume
 and flash in the same section; **Preview sound** plays the selected tone and volume.
 
-Session estimates **XP/hour** by comparing stable bar readings about five minutes apart.
+Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
-The footer uses a time-weighted rolling average of the last **15 minutes**, starting with
+The footer uses a time-weighted rolling average of the last **hour**, starting with
 the first gaining interval so earlier idle time does not dilute it. Breaks after gains lower
-the estimate; after 15 minutes without gains, the next gaining interval starts a fresh rate.
+the estimate; after an hour without gains, the next gaining interval starts a fresh rate.
 These are XP-bar percentage points, not exact XP numbers. The first rate appears after a
-complete five-minute comparison. Brief OCR misses are tolerated within the capture cadence;
+complete 30-second comparison. Brief OCR misses are tolerated within the capture cadence;
 longer gaps, a changed region or pausing reset the recent window. Earlier measured totals
 remain. A detected own level-up confirms a bar wrap. Log imports
 cannot supply bar measurements. Older archived averages are labeled **XP session**.

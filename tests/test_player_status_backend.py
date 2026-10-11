@@ -83,23 +83,23 @@ class PlayerStatusBackendTests(unittest.TestCase):
             validate_profiles({"Invalid": dict(pending, settings=dict(pending["settings"],
                                                                        player_status_separate=1))})
 
-    def test_health_threshold_is_strict_and_changes_keep_the_five_minute_xp_window(self):
+    def test_health_threshold_is_strict_and_changes_keep_thirty_second_xp_window(self):
         telemetry = PlayerTelemetry(low_health_threshold=25)
-        for ts in range(0, 201):
+        for ts in range(0, 21):
             telemetry.update({"hp_current": 25, "hp_max": 100, "xp_fraction": .5}, ts)
         self.assertFalse(telemetry.snapshot()["hp_low"])
-        telemetry.update({"hp_current": 24, "hp_max": 100, "xp_fraction": .5}, 201)
+        telemetry.update({"hp_current": 24, "hp_max": 100, "xp_fraction": .5}, 21)
         self.assertFalse(telemetry.snapshot()["hp_low"])
         telemetry.set_health_threshold(30)
-        for ts in range(202, 302):
+        for ts in range(22, 32):
             telemetry.update({"hp_current": 25, "hp_max": 100, "xp_fraction": .52}, ts)
-            if ts == 202:
+            if ts == 22:
                 self.assertFalse(telemetry.snapshot()["hp_low"])
         snap = telemetry.snapshot()
         self.assertTrue(snap["hp_low"])
         self.assertEqual(snap["hp_below10_episodes"], 1)
-        self.assertEqual(snap["xp_observed_seconds"], 300)
-        self.assertAlmostEqual(snap["xp_points_per_hour"], 24)
+        self.assertEqual(snap["xp_observed_seconds"], 30)
+        self.assertAlmostEqual(snap["xp_points_per_hour"], 240)
 
     def test_health_notification_reports_actual_percentage_and_rejects_stale_threshold(self):
         from mnmparse.app.main import App
