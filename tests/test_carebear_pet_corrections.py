@@ -68,7 +68,7 @@ class CarebearPetCorrectionTests(unittest.TestCase):
         menu = self.keep(QMenu())
         calls = []
         handlers = add_own_pet_entries(menu, own, PLAYER, lambda *args: calls.append(args))
-        assign = next(action for action in handlers if action.text() == "Assign a pet to me…")
+        assign = next(action for action in handlers if action.text() == "Enter pet name…")
         with patch("mnmparse.app.overlay.QInputDialog.getText", return_value=(" a charmed rat ", True)):
             handlers[assign]()
         clear = next(action for action in handlers if action.text() == "Clear assignment for Sprout")
@@ -106,7 +106,8 @@ class CarebearPetCorrectionTests(unittest.TestCase):
 
         class AssignmentMenu(QMenu):
             def exec(self, _pos):
-                return next(action for action in self.actions() if action.text() == "Assign a pet to me…")
+                submenu = next(action.menu() for action in self.actions() if action.text() == "Add pet")
+                return next(action for action in submenu.actions() if action.text() == "Enter pet name…")
 
         for widget, table in ((page, page._pane.table), (overlay, overlay._table)):
             with self.subTest(surface=type(widget).__name__):
@@ -119,6 +120,48 @@ class CarebearPetCorrectionTests(unittest.TestCase):
                         patch("mnmparse.app.overlay.QInputDialog.getText", return_value=("Sprout", True)):
                     widget.contextMenuEvent(event)
                 self.assertEqual(requested, [("Sprout", PLAYER)])
+
+    def test_main_overlay_and_zone_menus_offer_hidden_outsider_identity_only(self):
+        raw = fight()
+        page = self.keep(LivePage(_MissingEngine(CFG), CFG, self.settings))
+        page.set_history([raw])
+        overlay = self.keep(OverlayWindow(self.settings, CFG))
+        overlay.set_history([raw])
+        overlay.set_snapshot(raw)
+        overlay._flush_snapshot()
+        event = SimpleNamespace(globalPos=lambda: QPoint(0, 0))
+
+        class CapturedPetMenu(QMenu):
+            def exec(inner, _pos):
+                submenu = next(action.menu() for action in inner.actions() if action.text() == "Add pet")
+                candidate = next(action for action in submenu.actions() if action.text() == "Sprout")
+                self.assertTrue(candidate.font().italic())
+                captions = [action.text() for action in submenu.actions()]
+                self.assertNotIn("Tamsin", captions)
+                self.assertNotIn("Wenna", captions)
+                self.assertNotIn("a rat", captions)
+                return candidate
+
+        for zone in (False, True):
+            if zone:
+                self.assertTrue(page.select_zone())
+                overlay.show_encounter(overlay.zone_summary(raw))
+            else:
+                self.assertTrue(page.select_key(raw.key))
+            for widget, table, selected in ((page, page._pane.table, page.selected()),
+                                            (overlay, overlay._table, overlay._snap)):
+                with self.subTest(surface=type(widget).__name__, zone=zone):
+                    own = next(row for row in selected.rows if row.is_you)
+                    self.assertFalse(any(row.name == "Sprout" for row in selected.rows))
+                    requested = []
+                    slot = lambda *args: requested.append(args)
+                    widget.pet_owner_requested.connect(slot)
+                    with patch.object(table, "row_at", return_value=own), \
+                            patch("mnmparse.app.pages.QMenu", CapturedPetMenu), \
+                            patch("mnmparse.app.overlay.QMenu", CapturedPetMenu):
+                        widget.contextMenuEvent(event)
+                    widget.pet_owner_requested.disconnect(slot)
+                    self.assertEqual(requested, [("Sprout", PLAYER)])
 
     def test_app_accepts_own_assignment_and_clear_but_rejects_peer_edits(self):
         engine = SimpleNamespace(set_pet_owner=Mock(), pet_owners=lambda: {"Sprout": PLAYER, "PeerPet": "Tamsin"})

@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.5 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.6 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.5-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.6-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -268,7 +268,7 @@ past without being captured cannot be recovered.
   was restarted, the opening lines a log repeats from the one before it are left out. Fights
   that nobody in your group took part in (other groups nearby; the Combat chat shows them too)
   are hidden unless
-  "Show other groups' fights" is on in Settings.
+  "Show other groups" is on in Settings.
 - **Session:** everything the group produced outside the damage numbers, for the whole run, as
   collapsible categories: items looted (one expandable subheader per person, showing the total
   number of items they looted, with item quantities beneath it), coin and your splits
@@ -351,8 +351,9 @@ one of two kinds:
   PvP fight carries the attackers' names (never yours or your party's), and a heal that lands
   on an enemy is shown on its own, not as your group's healing.
 - **Outsiders**: players on your side who are not in your party (another group fighting next
-  to you; the Combat chat shows their fights too). They stay in the meter, faded and in
-  italics, with "Not in your group" when you hover them, but are not counted in your totals.
+  to you; the Combat chat shows their fights too). They are hidden by default. Turn on
+  **Show other groups** to see them faded and italicized in the meter. Their damage
+  does not count toward your group's totals.
 
 The app learns your party from explicit chat evidence: "Your party member X has slain ..."
 (or "has been slain by ..."), "X has joined the party.", "X is now the leader of the party.",
@@ -369,16 +370,17 @@ clears automatic membership learned by older versions because it may contain gue
 manual choices and pet assignments are preserved. Newly identified members can update the
 last 15 minutes of fights in the current zone visit without another clipboard copy.
 
-**Show other groups' fights** filters whole encounters. Your self-buffs and self-heals during
-nearby combat do not make those fights yours. Attacking, taking hits, healing an active
-friendly combatant, landed crowd control, and pet combat count as participation. Nearby
-players can still appear as faded outsiders within a fight that includes you; their damage
-does not count toward your group's totals. Changing this setting updates the displayed
-fight and encounter history immediately.
+**Show other groups** controls nearby outsider rows as well as whole encounters.
+With it off, italicized outsiders are hidden from every Live and overlay meter tab, including
+fights your group participates in. Your self-buffs and self-heals during nearby combat do
+not make those fights yours. Attacking, taking hits, healing an active friendly combatant,
+landed crowd control, and pet combat count as participation. Changing this setting updates
+the meters and encounter history immediately.
 
-The chat seldom says whose pet a pet is. In Carebear, use **Assign a pet to me…** to enter your
-pet's name, or clear an assignment through **My pets**. In Elitist mode, right-click a combatant in the Live
-meter or overlay and use **Assign pet to group member** to select yourself or a group member.
+The chat seldom says whose pet a pet is. Right-click an owner in the Live meter or overlay
+and choose **Add pet** to select one of the hidden italicized names. Carebear offers this
+for your own row; Elitist mode also offers it for group members. You can enter a pet name
+manually too, or right-click a visible combatant and use **Assign pet to group member**.
 An attributed pet merges into its owner's parse: one row labeled **Owner + Owner's Pet**
 shows their combined damage, healing, damage taken and utility. Multiple pets use **Owner +
 Owner's Pets**. Pet abilities keep their pet's name in the breakdown, and group totals count

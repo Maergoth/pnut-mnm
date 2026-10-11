@@ -153,7 +153,7 @@ class WhatsNewTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(controller.dialog.isVisible())
 
-    def test_settings_navigation_acknowledges_and_scrolls_to_revenge_options(self):
+    def test_settings_navigation_acknowledges_and_scrolls_to_release_options(self):
         controller = self.controller()
         cfg = Config(player_name="PreviewHero", setup_complete=True, start_capture_on_launch=False)
         window = MainWindow(_MissingEngine(cfg), None, cfg, self.settings)
@@ -161,7 +161,7 @@ class WhatsNewTests(unittest.TestCase):
         window.resize(1100, 750)
         window.show()
         self.extra_windows.append(window)
-        controller._open_settings = window.open_revenge_settings
+        controller._open_settings = window.open_release_settings
         self.app.processEvents()
         self.assertTrue(controller.show_if_needed())
         controller.dialog.settings_button.click()
@@ -170,18 +170,18 @@ class WhatsNewTests(unittest.TestCase):
         self.assertIs(window._stack.currentWidget(), page)
         self.assertTrue(window._nav_buttons["settings"].isChecked())
         self.assertGreater(page._scroll.verticalScrollBar().value(), 0)
-        y = page.revenge_enabled.mapTo(page._scroll.viewport(), QPoint(0, 0)).y()
+        y = page.show_other_groups.mapTo(page._scroll.viewport(), QPoint(0, 0)).y()
         self.assertGreaterEqual(y, 0)
         self.assertLess(y, page._scroll.viewport().height())
         self.assertEqual(self.settings.value(SEEN_VERSION_KEY), APP_VERSION)
 
         self.settings.setValue(SEEN_VERSION_KEY, "1.0.4")
-        controller = self.controller(open_feature=window.show_page)
+        controller = self.controller(open_feature=window.show_page, version="1.0.5")
         self.assertTrue(controller.show_if_needed())
         controller.dialog.feature_button.click()
         self.app.processEvents()
         self.assertIs(window._stack.currentWidget(), window.page("triggers"))
-        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), APP_VERSION)
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), "1.0.5")
 
     def test_dialog_renders_dark_readable_content_and_random_native_caption(self):
         palette, stylesheet = self.app.palette(), self.app.styleSheet()

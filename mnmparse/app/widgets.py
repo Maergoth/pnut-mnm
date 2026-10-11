@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from mnmparse.privacy import AVERAGE_UNAVAILABLE_TEXT, metric_available
+from mnmparse.app.models import is_outsider
 
 from PySide6.QtCore import (
     QAbstractTableModel,
@@ -597,17 +598,6 @@ class _MeterModel(QAbstractTableModel):
 
 
 OUTSIDER_ALPHA = 0.55  #: how faded a player outside the group is drawn
-
-
-def is_outsider(row: Any) -> bool:
-    """A player (or pet) on the group's side who is not in the group: another group nearby,
-    or a party member's pet the chat does not tie to its owner."""
-    return (
-        row is not None
-        and not getattr(row, "in_group", True)
-        and not getattr(row, "is_enemy", False)
-        and not getattr(row, "is_npc", False)
-    )
 
 
 def _row_color(row: Any) -> str:

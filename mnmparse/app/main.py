@@ -945,9 +945,18 @@ class MainWindow(QMainWindow):
             focus()
 
     def open_revenge_settings(self) -> None:
+        self._open_settings_option("revenge_enabled")
+
+    def open_release_settings(self) -> None:
+        from mnmparse.app.whats_new import RELEASE_NOTES
+
+        notes = RELEASE_NOTES.get(APP_VERSION)
+        self._open_settings_option(notes.settings_target if notes is not None else "")
+
+    def _open_settings_option(self, name: str) -> None:
         self.show_page("settings")
         page = self.page("settings")
-        toggle = getattr(page, "revenge_enabled", None)
+        toggle = getattr(page, name, None)
         scroll = getattr(page, "_scroll", None)
         content = getattr(page, "_content", None)
         if toggle is None or scroll is None:
@@ -1382,7 +1391,7 @@ class App(QApplication):
         self._whats_new_waiting_setup = wait_for_setup
         self._whats_new = WhatsNewController(
             self.settings, self.window, eligible=self._whats_new_eligible,
-            open_settings=self.window.open_revenge_settings,
+            open_settings=self.window.open_release_settings,
             open_feature=self.window.show_page, version=APP_VERSION)
         self._whats_new.request()
 

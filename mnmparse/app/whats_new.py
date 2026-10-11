@@ -21,11 +21,21 @@ class ReleaseNotes:
     settings_label: str
     feature_page: str = ""
     feature_label: str = ""
+    settings_target: str = "revenge_enabled"
 
 
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.6": ReleaseNotes(
+        changes=(
+            "Turn off Show other groups to hide italic names from your combat meters.",
+            "Right-click a player and choose Add pet to assign a hidden italic name.",
+            "Assigned pets combine with their owner in Live and overlay meters.",
+        ),
+        settings_label="Settings",
+        settings_target="show_other_groups",
+    ),
     "1.0.5": ReleaseNotes(
         changes=(
             "Players and Guilds now sit side by side in the Revenge List.",

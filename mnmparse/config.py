@@ -118,7 +118,7 @@ class Config:
     minimize_to_tray: bool = True
     feed_max_lines: int = 500
     include_personal: bool = False  #: count lines only the viewer gets (skill-ups, faction, XP) in the Session tab
-    show_other_groups: bool = False  #: list fights nobody in the party took part in (other groups nearby)
+    show_other_groups: bool = False  #: show nearby outsider rows and fights without group participation
     dummy_fix: bool = False  #: unreadable hit / heal numbers count as the zone's average (estimates)
     attack_bar: bool = True  #: show the auto-attack timer bar under the overlay
     log_break_minutes: float = 60.0  #: start a new log file after this long without messages
