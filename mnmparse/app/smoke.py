@@ -334,7 +334,10 @@ def _exercise(report: dict[str, Any]) -> None:
 
             report["stage"] = "exercise timer sharing"
             from mnmparse.trigger_chat import ChatShareAssembler, encode_trigger
-            from mnmparse.app.trigger_share_dialog import TriggerChatExportDialog, TriggerSharePrompt
+            from mnmparse.trigger_exchange import export_trigger_code, parse_trigger_text
+            from mnmparse.app.trigger_share_dialog import (
+                TriggerChatExportDialog, TriggerSharePrompt, TriggerTextImportDialog,
+            )
 
             trigger = store.triggers[0]
             code = encode_trigger(trigger)
@@ -344,6 +347,17 @@ def _exercise(report: dict[str, Any]) -> None:
             windows.append(TriggerChatExportDialog(trigger, code, window))
             windows.append(TriggerSharePrompt(received[0].trigger, received[0].sender, window))
             report["chat_share_chars"] = len(code)
+            compact_code = export_trigger_code([trigger])
+            compact_received = parse_trigger_text(compact_code)
+            if len(compact_received) != 1 or compact_received[0].to_dict() != trigger.to_dict():
+                raise RuntimeError("Packaged compact timer sharing did not preserve the definition")
+            import_dialog = TriggerTextImportDialog(window)
+            windows.append(import_dialog)
+            import_dialog.text.setPlainText(compact_code)
+            if not import_dialog.import_button.isEnabled():
+                raise RuntimeError("The packaged timer import dialog did not accept pasted data")
+            report["compact_share_chars"] = len(compact_code)
+            report["trigger_text_import"] = True
 
             report["stage"] = "open bundled trigger guide"
             from mnmparse.app.trigger_help import TriggerHelpDialog
