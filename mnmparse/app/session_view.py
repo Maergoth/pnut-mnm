@@ -34,6 +34,7 @@ from mnmparse.session import SessionSnapshot, filter_session, format_coin
 __all__ = ["SessionView", "CATEGORY_COLORS"]
 
 CATEGORY_COLORS: dict[str, str] = {
+    "experience": theme.ACCENT,
     "items": theme.KIND_COLORS.get("loot", theme.ACCENT),
     "coin": theme.KIND_COLORS.get("coin", "#e0c060"),
     "kills": theme.KIND_COLORS.get("kill", theme.ACCENT),
@@ -135,6 +136,7 @@ class SessionView(QWidget):
             self._tree.clear()
             if snap is None:
                 self._footer.setText("")
+                self._footer.setToolTip("")
                 return
             self._add_items(snap)
             averages = getattr(snap, "group_averages", {})
@@ -171,24 +173,92 @@ class SessionView(QWidget):
                 )
             self._add_category("zones", "Zones", f"{len(snap.zones)}", [(z, "", "") for z in snap.zones],
                                tooltip=" → ".join(snap.zones) if snap.zones else "no zone change seen")
-            breaks = [(mob, "", time.strftime("%H:%M:%S", time.localtime(ts))) for ts, mob in snap.mez_breaks[-MAX_CHILDREN:]]
-            self._add_category("mez", "Mez breaks", f"{len(snap.mez_breaks)}", breaks,
-                               tooltip="\n".join(f"{time.strftime('%H:%M:%S', time.localtime(ts))}  {mob}" for ts, mob in snap.mez_breaks[-25:])
-                               or "no mesmerize broke")
+            self._add_mez_breaks(snap)
+            self._add_experience(snap)
             if snap.personal_included:
                 detail = [(f"Skill {s}", f"{v}", "") for s, v in snap.skill_ups] + [
                     (f"Faction {f}", f"{'+' if d > 0 else ''}{d}", "") for f, d in snap.faction
                 ] + [("Experience ticks", f"{snap.xp_ticks}", "")]
                 self._add_category("personal", "Personal", f"{len(detail)}", detail, tooltip="viewer-only lines")
-            self._footer.setText(
+            footer = (
                 f"{_mmss(snap.combat_seconds)} in combat over {snap.encounters} encounters  ·  "
                 f"{snap.kills_per_hour:,.0f} kills/h  ·  {snap.items_per_hour:,.0f} items/h  ·  "
                 f"{format_coin(int(snap.coin_per_hour))}/h"
             )
+            status = snap.player_status
+            rate = status.get("xp_points_per_hour")
+            if rate is not None:
+                footer += f"  ·  XP ~{rate:,.1f}%/h"
+            elif status.get("xp_gain_points") is not None:
+                footer += "  ·  XP collecting…"
+            self._footer.setText(footer)
+            self._footer.setToolTip(
+                "XP estimates percentage points of a level per hour from five-minute bar comparisons. "
+                "Different levels require different XP amounts." if rate is not None else
+                "Keep your XP bar visible for five minutes to estimate XP/hour."
+                if status.get("xp_gain_points") is not None else "")
         finally:
             self._tree.setUpdatesEnabled(True)
 
     # ------------------------------------------------------------------
+    def _add_experience(self, snap: SessionSnapshot) -> None:
+        status = snap.player_status
+        gain = status.get("xp_gain_points")
+        percent = status.get("xp_percent")
+        if gain is None and percent is None:
+            return
+        tip = ("Estimated from five-minute comparisons of your visible XP bar. "
+               "Different levels require different XP amounts.")
+        children = []
+        if percent is not None:
+            children.append(("Current bar", f"~{percent:.1f}%", "Toward next level"))
+        observed = status.get("xp_observed_seconds")
+        if observed:
+            children.append(("Measured time", _mmss(observed), "Completed comparisons"))
+        total = f"~{gain:.2f}%" if gain is not None and observed else "Collecting…"
+        top = self._add_category("experience", "Experience (est.)", total,
+                                 children, tooltip=tip)
+        for index in range(top.childCount()):
+            child = top.child(index)
+            text = " · ".join(child.text(column) for column in range(3) if child.text(column))
+            for column in range(3):
+                child.setToolTip(column, text + "\n" + tip)
+
+    def _add_mez_breaks(self, snap: SessionSnapshot) -> None:
+        """Expandable damage-linked counts; awakenings alone name no culprit."""
+        details = snap.mez_break_details or [(ts, mob, None) for ts, mob in snap.mez_breaks]
+        counts = list(snap.mez_breaks_by_breaker)
+        unknown = snap.mez_breaks_unknown or (len(snap.mez_breaks) if not snap.mez_breaks_total else 0)
+        total = snap.mez_breaks_total or sum(n for _actor, n in counts) + unknown
+        tip = ("Damage-linked: observed damage on a mesmerized target within 2 seconds of awakening. "
+               "Multiple attackers, missing evidence and natural fades remain unattributed.")
+        top = self._add_category("mez", "Mez breaks", f"{total:,}", [], tooltip=tip)
+        by_person: dict[str | None, list[tuple[float, str]]] = {}
+        for ts, mob, actor in details:
+            by_person.setdefault(actor, []).append((ts, mob))
+        people: list[tuple[str | None, int]] = list(counts)
+        if unknown:
+            people.append((None, unknown))
+        for actor, count in people:
+            name = actor or "Unknown / natural fade"
+            key = f"mez/person/{actor}" if actor else "mez/unknown"
+            person = QTreeWidgetItem([name, f"{count:,}", "Damage-linked" if actor else "Unattributed"])
+            person.setData(0, Qt.ItemDataRole.UserRole, key)
+            person.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            person.setToolTip(0, tip if actor else "The chat did not establish who or what ended these effects.")
+            seen = by_person.get(actor, [])[-MAX_CHILDREN:]
+            for ts, mob in seen:
+                stamp = time.strftime("%H:%M:%S", time.localtime(ts))
+                child = QTreeWidgetItem([mob, "", stamp])
+                child.setToolTip(0, f"{mob}\n{stamp}" + (f"\nDamage-linked to {actor}" if actor else "\nUnattributed"))
+                person.addChild(child)
+            omitted = max(0, count - len(seen))
+            if omitted:
+                person.addChild(QTreeWidgetItem([f"{omitted:,} older breaks", "", "Details not shown"]))
+            top.addChild(person)
+            person.setExpanded(self._expanded.get(key, False))
+        top.setExpanded(top.childCount() > 0 and self._expanded.get("mez", False))
+
     def _add_items(self, snap: SessionSnapshot) -> None:
         """One expandable subtotal per person, followed by their complete item breakdown."""
         top = self._add_category("items", "Items looted", f"{snap.items:,}", [],

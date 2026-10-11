@@ -1,0 +1,203 @@
+"""Own stat readings stay separate from chat, and HP alerts remain passive."""
+from __future__ import annotations
+
+import dataclasses
+import os
+import tempfile
+import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import numpy as np
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtWidgets import QApplication
+
+from mnmparse.app.engine import Engine
+from mnmparse.app.low_health import LowHealthFlash
+from mnmparse.config import Config
+from mnmparse.ocr import OcrLine
+from mnmparse.player_status import PlayerStatusReading
+from mnmparse.tracker import Tracker
+
+
+class EnginePlayerStatusTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = Config(player_name="Owner", log_dir=self.tmp.name, crop=(0, 0, 8, 8))
+        self.engine = Engine(self.cfg)
+        self.engine._tracker = Tracker()
+
+    @staticmethod
+    def reading(hp=8):
+        return PlayerStatusReading(hp, 100, (0, 0, 8, 8), (0,), 20.0, (0, 6, 8, 8), .1)
+
+    def test_second_region_uses_original_pixels_and_never_enters_chat(self):
+        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8), ocr_scale=2)
+        chat = np.full((8, 8, 3), (8, 30, 60), np.uint8)
+        stats = np.full((8, 8, 3), (2, 100, 200), np.uint8)
+        chat_lines = [OcrLine(0, 0, 1, "You begin casting Heal.")]
+        stat_lines = [OcrLine(0, 0, 1, "Health 8 / 100")]
+        self.engine._ocr = Mock(read=Mock(side_effect=[chat_lines, stat_lines]))
+        tracker_update = Mock(return_value=[])
+        self.engine._tracker.update = tracker_update
+        with patch("mnmparse.player_status.read_player_status", return_value=self.reading()) as reader:
+            self.engine._process_frame(chat, cfg, cropped=True, status_frame=stats)
+        self.assertEqual(tracker_update.call_args.args[0], chat_lines)
+        self.assertIs(reader.call_args.args[1], stats)
+        self.assertEqual(tuple(stats[0, 0]), (2, 100, 200))
+        self.assertEqual(self.engine._ocr.read.call_count, 2)
+        processed = self.engine._ocr.read.call_args.args[0]
+        self.assertEqual(processed.shape, (8, 8, 3))  # Active OCR scale remains the run's scale.
+        self.assertEqual(tuple(processed[0, 0]), (200, 200, 200))
+
+    def test_shared_crop_excludes_only_verified_stat_rows(self):
+        chat = OcrLine(0, 3, 1, "You begin casting Heal.")
+        stats = OcrLine(4, 0, 1, "Health 8 / 100")
+        lines = [stats, chat]
+        self.engine._ocr = Mock(read=Mock(return_value=lines))
+        self.engine._tracker.update = Mock(return_value=[])
+        with patch("mnmparse.player_status.read_player_status", return_value=self.reading()):
+            self.engine._process_frame(np.zeros((8, 8, 3), np.uint8), self.cfg, cropped=True)
+        self.assertEqual(self.engine._tracker.update.call_args.args[0], [chat])
+        self.assertEqual(self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]["rows"][0]["text"], stats.text)
+
+    def test_low_hp_requires_fresh_confirmation_and_alerts_once(self):
+        self.engine._ocr = Mock(read=Mock(return_value=[]))
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        frame = np.zeros((8, 8, 3), np.uint8)
+        with patch("mnmparse.player_status.read_player_status", return_value=self.reading()), patch(
+                "mnmparse.app.engine.time.time", side_effect=[100, 100.25, 100.5, 100.75]):
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+            self.engine._process_frame(frame, self.cfg, cropped=True, fresh=False)
+            self.assertEqual(signals, [])
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+        self.assertEqual(signals, [8.0])
+        self.assertFalse(any(key.startswith("hp_") for key in self.engine.session_snapshot().player_status))
+        self.engine.set_paused(True)
+        self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+
+    def test_invalid_stats_crop_does_not_stop_chat_capture(self):
+        self.engine.update_config(dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8)))
+        source = SimpleNamespace(full_frame_dimensions=(8, 8), frame_count=1,
+                                 latest_region=Mock(return_value=np.zeros((8, 8, 3), np.uint8)),
+                                 latest_regions=Mock())
+        notices = []
+        self.engine.notice.connect(notices.append)
+        self.engine._process_frame = Mock(side_effect=lambda *a, **k: self.engine._stop_event.set())
+        self.engine._capture_loop(source)
+        source.latest_region.assert_called_once_with((0, 0, 8, 8))
+        source.latest_regions.assert_not_called()
+        self.assertEqual(len(notices), 1)
+        self.assertIsNone(self.engine._process_frame.call_args.kwargs["status_frame"])
+
+    def test_native_multiple_regions_and_compatibility_fallback_use_one_frame(self):
+        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8))
+        self.engine.update_config(cfg)
+        full = np.full((8, 32, 3), 23, np.uint8)
+        original_chat = np.full((8, 8, 3), 9, np.uint8)
+        stats = full[:, 20:28].copy()
+        for multiple in (True, False):
+            with self.subTest(multiple=multiple):
+                self.engine._stop_event.clear()
+                source = SimpleNamespace(full_frame_dimensions=(32, 8), frame_count=1,
+                                         latest_region=Mock(return_value=original_chat),
+                                         latest=Mock(return_value=full))
+                if multiple:
+                    source.latest_regions = Mock(return_value=(original_chat, stats))
+                self.engine._process_frame = Mock(side_effect=lambda *a, **k: self.engine._stop_event.set())
+                self.engine._capture_loop(source)
+                args, kwargs = self.engine._process_frame.call_args
+                self.assertTrue(kwargs["cropped"])
+                self.assertTrue(kwargs["fresh"])
+                if multiple:
+                    source.latest_regions.assert_called_once_with((self.cfg.crop, cfg.player_status_crop))
+                    source.latest_region.assert_not_called()
+                    source.latest.assert_not_called()
+                    self.assertIs(args[0], original_chat)
+                    self.assertIs(kwargs["status_frame"], stats)
+                else:
+                    source.latest.assert_called_once_with()
+                    self.assertEqual(int(args[0][0, 0, 0]), 23)
+                    self.assertEqual(int(kwargs["status_frame"][0, 0, 0]), 23)
+
+    def test_optional_reader_failure_keeps_chat_and_warns_once(self):
+        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8))
+        chat = [OcrLine(0, 0, 1, "You begin casting Heal.")]
+        frame = np.zeros((8, 8, 3), np.uint8)
+        self.engine._ocr = Mock(read=Mock(side_effect=[chat, RuntimeError("stats OCR unavailable"),
+                                                     chat, RuntimeError("stats OCR unavailable")]))
+        self.engine._tracker.update = Mock(return_value=[])
+        notices = []
+        self.engine.notice.connect(notices.append)
+        with self.assertLogs("mnmparse.app.engine", level="WARNING"):
+            self.engine._process_frame(frame, cfg, cropped=True, status_frame=frame)
+            self.engine._process_frame(frame, cfg, cropped=True, status_frame=frame)
+        self.assertEqual(self.engine._tracker.update.call_count, 2)
+        self.assertTrue(all(call.args[0] == chat for call in self.engine._tracker.update.call_args_list))
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(self.engine.session_snapshot().player_status, {})
+
+    def test_small_ocr_position_jitter_does_not_reset_low_hp_confirmation(self):
+        first = self.reading()
+        shifted = dataclasses.replace(first, panel_rect=(3, 2, 11, 10))
+        self.engine._ocr = Mock(read=Mock(return_value=[]))
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        with patch("mnmparse.player_status.read_player_status", side_effect=[first, shifted]), patch(
+                "mnmparse.app.engine.time.time", side_effect=[100, 100.25]):
+            for _ in range(2):
+                self.engine._process_frame(np.zeros((8, 8, 3), np.uint8), self.cfg, cropped=True)
+        self.assertEqual(signals, [8.0])
+
+    def test_session_owner_change_restarts_live_baseline_and_hp_confirmation(self):
+        from mnmparse.session import SessionStats
+
+        frame = np.zeros((8, 8, 3), np.uint8)
+        self.engine._ocr = Mock(read=Mock(return_value=[]))
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        now = [100.0]
+        with patch("mnmparse.player_status.read_player_status", return_value=self.reading()), patch(
+                "mnmparse.app.engine.time.time", side_effect=lambda: now[0]):
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+            now[0] = 100.25
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+            previous = self.engine._telemetry()
+            saved = self.engine.session_snapshot().player_status
+            self.engine._session_stats = SessionStats("Owner")
+            self.engine._session_stats.note_player_status(saved)
+            now[0] = 111
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+            self.assertIsNot(self.engine._telemetry(), previous)
+            self.assertEqual(signals, [8.0])
+            self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+            now[0] = 111.25
+            self.engine._process_frame(frame, self.cfg, cropped=True)
+        self.assertEqual(signals, [8.0, 8.0])
+        self.assertFalse(any(key.startswith("hp_") for key in self.engine.session_snapshot().player_status))
+
+    def test_flash_has_transparent_center_ignores_input_and_finishes(self):
+        flash = LowHealthFlash()
+        self.addCleanup(flash.close)
+        flash.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        with patch("mnmparse.app.low_health.time.monotonic", return_value=100):
+            flash.flash(QRect(0, 0, 400, 250), reduced_motion=True)
+            image = flash.grab().toImage()
+        self.assertEqual(image.pixelColor(200, 125).alpha(), 0)
+        self.assertGreater(image.pixelColor(1, 125).alpha(), 0)
+        self.assertTrue(flash.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+        self.assertTrue(flash.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+        self.assertEqual(flash.focusPolicy(), Qt.FocusPolicy.NoFocus)
+        with patch("mnmparse.app.low_health.time.monotonic", return_value=102):
+            flash._tick()
+        self.assertTrue(flash.isHidden())
+        self.assertFalse(flash._timer.isActive())

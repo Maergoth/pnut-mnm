@@ -78,6 +78,8 @@ mnmparse/            library + CLI
   stats.py           Encounter segmentation, per-actor table, OCR-noise name merge (canonical_names)
   interrupts.py      crowd-control registry (categories), cc.json loader, rank/tier matching
   session.py         SessionStats: loot, coin, crafting, party kills and deaths, CC totals, rates
+  player_status.py   Anchored mini-stat OCR and original-color XP-bar estimates
+  player_telemetry.py Own HP alert episodes and five-minute XP-rate comparisons
   vocab.py           learned spellings: conflate OCR variants of names, items, zones, abilities
   replay.py          find replayed blocks in old logs, and a restart's repeated opening lines (find_backlog)
   importer.py        re-parse a .log / .jsonl (or several in a row: import_files) into encounters + a session
@@ -107,6 +109,7 @@ mnmparse/            library + CLI
     overlay.py       OverlayWindow (translucent, topmost; lock = no move/resize, optional click-through)
     widgets.py       MeterTable (model/proxy/delegate, cell tooltips), FeedView, ToggleSwitch, StatusChip
     session_view.py  SessionView (compact for the overlay, full for the Session page)
+    low_health.py    Passive, transparent screen-edge flash for personal low HP
     pages.py         LivePage (encounter list with zone tabs + meter), SessionPage, FeedPage, SettingsPage, AboutPage
     crop_picker.py   CropPicker (frame preview, draggable rectangle, Test OCR)
     theme.py         palette tokens, QSS, actor_color(), KIND_COLORS, fonts

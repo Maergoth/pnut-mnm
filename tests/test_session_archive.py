@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import sqlite3
 import tempfile
 import time
@@ -83,6 +84,55 @@ class SnapshotCacheTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_legacy_mez_archive_keeps_unknown_history_when_new_attribution_arrives(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionArchive(Path(directory) / "sessions.sqlite3")
+            session = SessionStats(PLAYER, started=100)
+            store.attach_details(session, "old")
+            session.add(parse_line("a rat awakens.", 101, PLAYER))
+            store.save_session("old", session)
+            # Older sessions persist awakening targets but have none of the new evidence fields.
+            with closing(sqlite3.connect(store.path)) as db, db:
+                state, preview = db.execute("SELECT state,preview FROM sessions WHERE id='old'").fetchone()
+                state, preview = json.loads(state), json.loads(preview)
+                for name in ("_mez_break_counts", "_mez_active", "_mez_hits", "_mez_pending"):
+                    state.pop(name, None)
+                for name in ("mez_break_details", "mez_breaks_by_breaker", "mez_breaks_unknown", "mez_breaks_total"):
+                    preview.pop(name, None)
+                db.execute("DELETE FROM details WHERE session_id='old' AND field='_mez_break_entries'")
+                db.execute("UPDATE sessions SET state=?,preview=? WHERE id='old'", (json.dumps(state), json.dumps(preview)))
+            self.assertEqual(store.preview("old").mez_breaks, [(101.0, "a rat")])
+            restored = store.restore("old")
+            for ts, text in ((110, "a skeleton is mesmerized."),
+                             (111, "You crush a skeleton for 8 points of damage."), (111.2, "a skeleton awakens.")):
+                restored.add(parse_line(text, ts, PLAYER))
+            snap = restored.snapshot(now=120)
+            self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 1))
+            self.assertEqual(snap.mez_breaks_by_breaker, [(PLAYER, 1)])
+            self.assertEqual(snap.mez_break_details, [(101.0, "a rat", None), (111.2, "a skeleton", PLAYER)])
+
+    def test_mez_attribution_survives_disk_recovery_and_bounded_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionArchive(Path(directory) / "sessions.sqlite3")
+            session = SessionStats(PLAYER, started=100)
+            store.attach_details(session, "first")
+            for ts, text in ((100, "a rat is mesmerized."), (101, "You crush a rat for 8 points of damage."),
+                             (101.2, "a rat awakens."), (110, "a skeleton is mesmerized."),
+                             (111, "a skeleton awakens.")):
+                session.add(parse_line(text, ts, PLAYER))
+            store.save_session("first", session)
+            restored = store.restore("first")
+            self.assertIsInstance(restored._mez_break_entries, DiskDetails)
+            restored.add(parse_line("Tovozen slashes a skeleton for 8 points of damage.", 111.2, PLAYER))
+            store.save_session("first", restored)
+            preview = store.preview("first", detail_limit=1)
+            self.assertEqual(preview.mez_breaks_total, 2)
+            self.assertEqual(dict(preview.mez_breaks_by_breaker), {PLAYER: 1, "Tovozen": 1})
+            self.assertEqual(preview.mez_break_details, [(111.0, "a skeleton", "Tovozen")])
+            full = store.restore("first").snapshot(now=120)
+            self.assertEqual(full.mez_breaks_unknown, 0)
+            self.assertEqual(full.mez_break_details, [(101.2, "a rat", PLAYER), (111.0, "a skeleton", "Tovozen")])
+
     def test_disk_details_and_wrapped_coin_split_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SessionArchive(Path(directory) / "sessions.sqlite3")

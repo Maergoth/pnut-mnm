@@ -781,7 +781,17 @@ class RevengeList(QFrame):
         self.allow_popout = allow_popout
         self.minimal = minimal
         self._manual_dialog: _RevengeAddDialog | None = None
-        self.setStyleSheet(button_qss())
+        self.setStyleSheet(button_qss() + f"""
+            QPushButton#RevengeHeading, QPushButton#RevengeAdd {{
+                background: transparent; color: {theme.MUTED}; border: none;
+                border-radius: 4px; padding: 1px 4px; min-height: 0px; }}
+            QPushButton#RevengeHeading {{ text-align: left; font-weight: 600; }}
+            QPushButton#RevengeHeading:hover, QPushButton#RevengeAdd:hover {{
+                background: rgba(255,255,255,0.08); color: {theme.TEXT}; }}
+            QPushButton#RevengeRemove {{ background: transparent; color: {theme.MUTED};
+                border: none; border-radius: 4px; padding: 0px 4px; min-height: 0px; }}
+            QPushButton#RevengeRemove:hover {{ background: rgba(255,255,255,0.08); color: {theme.TEXT}; }}
+        """)
         self._rows: dict[str | tuple[str, str], QWidget] = {}
         self._dates: dict[str | tuple[str, str], QLabel] = {}
         self._labels: dict[str | tuple[str, str], ElidedLabel] = {}
@@ -794,13 +804,9 @@ class RevengeList(QFrame):
         self.guild_column = QWidget(self)
         player_layout = QVBoxLayout(self.player_column)
         guild_layout = QVBoxLayout(self.guild_column)
-        for column, title in ((player_layout, "Players"), (guild_layout, "Guilds")):
+        for column in (player_layout, guild_layout):
             column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(6)
-            heading = QLabel(title)
-            heading.setProperty("class", "muted")
-            heading.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-            column.addWidget(heading)
+            column.setSpacing(4)
         columns.addWidget(self.player_column, 1)
         columns.addWidget(self.guild_column, 1)
         layout.addLayout(columns, 1)
@@ -813,48 +819,51 @@ class RevengeList(QFrame):
             self.guild_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
             self.guild_status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        player_layout.addWidget(self.status)
-        guild_layout.addWidget(self.guild_status)
-        manual = QHBoxLayout()
-        manual.setSpacing(6)
         self.name_input = QLineEdit(self.player_column)
         self.name_input.setPlaceholderText("Name")
         self.name_input.setAccessibleName("Player name to add to revenge list")
         self.name_input.setMinimumWidth(140)
-        if not minimal:
-            player_layout.addWidget(self.name_input)
-        self.add_button = QPushButton("Add Player(s)", self.player_column)
-        self.add_button.setObjectName("Chip")
-        self.add_button.setAccessibleName("Add player name to revenge list")
+        self.add_button = QPushButton("+", self.player_column)
+        self.add_button.setObjectName("RevengeAdd")
+        self.add_button.setToolTip("Add Player(s)")
+        self.add_button.setAccessibleName("Add players manually or from clipboard")
         self.add_button.clicked.connect(lambda _checked=False: self._open_manual())
         self.name_input.returnPressed.connect(self._add_manual)
         self.name_input.textChanged.connect(self._update_add_enabled)
-        if not minimal:
-            manual.addWidget(self.add_button)
         self.pop_out_button = QPushButton("Pop out", self)
         self.pop_out_button.setObjectName("Chip")
         self.pop_out_button.setAccessibleName("Pop out revenge list")
         self.pop_out_button.clicked.connect(self._pop_out)
-        self.export_button = QPushButton("Export CSV", self.player_column)
-        self.export_button.setObjectName("Chip")
-        self.export_button.setAccessibleName("Copy revenge list as CSV")
+        self.export_button = QPushButton("Players", self.player_column)
+        self.export_button.setObjectName("RevengeHeading")
+        self.export_button.setToolTip("Copy CSV to Clipboard")
+        self.export_button.setAccessibleName("Copy players CSV to clipboard")
         self.export_button.clicked.connect(lambda _checked=False: self._export_csv())
-        self.guild_add_button = QPushButton("Add Guild(s)", self.guild_column)
-        self.guild_add_button.setObjectName("Chip")
-        self.guild_add_button.setAccessibleName("Add guild reminders")
+        self.guild_add_button = QPushButton("+", self.guild_column)
+        self.guild_add_button.setObjectName("RevengeAdd")
+        self.guild_add_button.setToolTip("Add Guild(s)")
+        self.guild_add_button.setAccessibleName("Add guilds manually or from clipboard")
         self.guild_add_button.clicked.connect(self._open_guild_manual)
-        self.guild_export_button = QPushButton("Export CSV", self.guild_column)
-        self.guild_export_button.setObjectName("Chip")
-        self.guild_export_button.setAccessibleName("Copy guild reminders as CSV")
+        self.guild_export_button = QPushButton("Guilds", self.guild_column)
+        self.guild_export_button.setObjectName("RevengeHeading")
+        self.guild_export_button.setToolTip("Copy CSV to Clipboard")
+        self.guild_export_button.setAccessibleName("Copy guilds CSV to clipboard")
         self.guild_export_button.clicked.connect(self._export_guild_csv)
+        for column, heading, add in ((player_layout, self.export_button, self.add_button),
+                                     (guild_layout, self.guild_export_button, self.guild_add_button)):
+            controls = QHBoxLayout()
+            controls.setContentsMargins(0, 0, 0, 0)
+            controls.setSpacing(2)
+            for button in (heading, add):
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                controls.addWidget(button)
+            controls.addStretch(1)
+            column.addLayout(controls)
+        player_layout.addWidget(self.status)
+        guild_layout.addWidget(self.guild_status)
         if not minimal:
-            manual.addWidget(self.export_button)
-            player_layout.addLayout(manual)
-            guild_manual = QHBoxLayout()
-            guild_manual.setSpacing(6)
-            guild_manual.addWidget(self.guild_add_button)
-            guild_manual.addWidget(self.guild_export_button)
-            guild_layout.addLayout(guild_manual)
+            player_layout.addWidget(self.name_input)
             layout.addWidget(self.pop_out_button, 0, Qt.AlignmentFlag.AlignRight)
         self.rows_scroll = QScrollArea()
         self.rows_scroll.setWidgetResizable(True)
@@ -865,6 +874,7 @@ class RevengeList(QFrame):
         rows = QWidget()
         self._row_layout = QVBoxLayout(rows)
         self._row_layout.setContentsMargins(0, 0, 0, 0)
+        self._row_layout.setSpacing(2)
         self._row_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._row_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.rows_scroll.setWidget(rows)
@@ -878,6 +888,7 @@ class RevengeList(QFrame):
         guild_rows = QWidget()
         self._guild_row_layout = QVBoxLayout(guild_rows)
         self._guild_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._guild_row_layout.setSpacing(2)
         self._guild_row_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._guild_row_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.guild_rows_scroll.setWidget(guild_rows)
@@ -1002,20 +1013,21 @@ class RevengeList(QFrame):
             kind = getattr(entry, "kind", "Player")
             if key not in self._rows:
                 row = QWidget()
+                row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
                 line = QHBoxLayout(row)
                 line.setContentsMargins(0, 0, 0, 0)
+                line.setSpacing(6)
                 label = ElidedLabel()
                 line.addWidget(label, 1)
                 date = QLabel()
                 date.setTextFormat(Qt.TextFormat.PlainText)
                 line.addWidget(date)
                 remove = QPushButton("×" if self.compact else "Remove")
-                remove.setObjectName("Chip")
+                remove.setObjectName("RevengeRemove")
                 remove.setAccessibleName(f"Remove {name} guild reminder" if kind == "Guild" else f"Remove {name} from revenge list")
                 remove.setToolTip("Remove guild reminder" if kind == "Guild" else "Remove player")
                 if self.compact:
                     remove.setFixedWidth(24)
-                    remove.setStyleSheet("QPushButton { padding: 3px 4px; }")
                 remove.clicked.connect(lambda _checked=False, n=name, k=kind: self._remove_saved(n, kind=k))
                 line.addWidget(remove)
                 self._rows[key], self._dates[key], self._labels[key] = row, date, label
@@ -1053,38 +1065,6 @@ class _PopoutHeader(QFrame):
         self.heading.setTextFormat(Qt.TextFormat.PlainText)
         self.heading.setProperty("class", "title")
         layout.addWidget(self.heading, 1)
-        layout.addWidget(QLabel("Players"))
-        self.add_button = owner.list.add_button
-        self.add_button.setText("+")
-        self.add_button.setObjectName("RevengeAdd")
-        self.add_button.setToolTip("Add Player(s)")
-        self.add_button.setAccessibleName("Add players manually or from clipboard")
-        self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_button.clicked.connect(owner._show_header)
-        layout.addWidget(self.add_button)
-        self.export_button = owner.list.export_button
-        self.export_button.setObjectName("RevengeExport")
-        self.export_button.setText("📋")
-        self.export_button.setToolTip("Copy CSV to Clipboard")
-        self.export_button.setAccessibleName("Copy players CSV to clipboard")
-        self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(self.export_button)
-        layout.addWidget(QLabel("Guilds"))
-        self.guild_add_button = owner.list.guild_add_button
-        self.guild_add_button.setText("+")
-        self.guild_add_button.setObjectName("RevengeAdd")
-        self.guild_add_button.setToolTip("Add Guild(s)")
-        self.guild_add_button.setAccessibleName("Add guilds manually or from clipboard")
-        self.guild_add_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.guild_add_button.clicked.connect(owner._show_header)
-        layout.addWidget(self.guild_add_button)
-        self.guild_export_button = owner.list.guild_export_button
-        self.guild_export_button.setObjectName("RevengeExport")
-        self.guild_export_button.setText("📋")
-        self.guild_export_button.setToolTip("Copy CSV to Clipboard")
-        self.guild_export_button.setAccessibleName("Copy guilds CSV to clipboard")
-        self.guild_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(self.guild_export_button)
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("Chip")
         self.close_button.setAccessibleName("Close revenge list popout")
@@ -1155,7 +1135,7 @@ class RevengePopoutWindow(QWidget):
         layout.setSpacing(0)
         self.list = RevengeList(controller, self, compact=True, allow_popout=False, minimal=True)
         layout.addWidget(self.list, 1)
-        # Floating controls reveal over the list without changing its viewport.
+        # Window controls reveal above the column actions without moving them.
         self.header = _PopoutHeader(self)
         self._header_hide = QTimer(self)
         self._header_hide.setSingleShot(True)
@@ -1164,7 +1144,7 @@ class RevengePopoutWindow(QWidget):
         self._grip = OverlaySizeGrip(self)
         self._grip.setAccessibleName("Resize revenge list popout")
         self._grip.setToolTip("Drag to resize")
-        self.setMinimumSize(360, 200)
+        self.setMinimumSize(240, 200)
         self.resize(460, 380)
         cfg = controller._cfg
         locked = bool(getattr(cfg, "overlay_locked", True))
@@ -1256,22 +1236,17 @@ class RevengePopoutWindow(QWidget):
     def _fit_header(self, area: QRect | None) -> None:
         """Keep controls reachable when a smaller monitor cannot fit their scale."""
         normal_px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
-        style = f"""
-            QPushButton#RevengeAdd, QPushButton#RevengeExport {{ background: transparent; color: {theme.MUTED};
-                border: none; border-radius: 6px; padding: 3px 8px; min-height: 20px; }}
-            QPushButton#RevengeAdd:hover, QPushButton#RevengeExport:hover {{
-                background: rgba(255,255,255,0.08); color: {theme.TEXT}; }}
-        """
         for px in range(normal_px, 8, -1):
-            self.header.setStyleSheet(style + (f"QWidget {{ font-size: {px}px; }}" if px < normal_px else ""))
+            self.header.setStyleSheet(f"QWidget {{ font-size: {px}px; }}" if px < normal_px else "")
             self.header.close_button.setFixedWidth(max(32, round(px * 2.5)))
             self.header.layout().invalidate()
             if area is None or self.header.sizeHint().width() + 10 <= area.width():
                 break
-        minimum = max(360, round(360 * self._font_scale), self.header.sizeHint().width() + 10)
+        minimum = max(240, round(240 * self._font_scale), self.header.sizeHint().width() + 10)
         self.setMinimumWidth(min(minimum, area.width()) if area is not None else minimum)
 
     def _position_chrome(self) -> None:
+        self.layout().setContentsMargins(2, self.header.sizeHint().height() + 7, 2, 8)
         self.layout().activate()
         self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
         self._grip.resize(16, 16)

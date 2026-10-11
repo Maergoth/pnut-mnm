@@ -7,8 +7,9 @@ from typing import Any
 
 from mnmparse.config import Config
 
-PROFILE_FIELDS = ("window_title", "capture_backend", "crop", "fps", "ocr_engine", "ocr_scale",
-                  "preprocess", "player_name", "log_dir")
+LEGACY_PROFILE_FIELDS = ("window_title", "capture_backend", "crop", "fps", "ocr_engine", "ocr_scale",
+                         "preprocess", "player_name", "log_dir")
+PROFILE_FIELDS = (*LEGACY_PROFILE_FIELDS, "player_status_crop")
 
 
 def validate_profiles(profiles: Any) -> dict:
@@ -19,13 +20,15 @@ def validate_profiles(profiles: Any) -> dict:
             raise ValueError("Capture profile names must be between 1 and 80 characters.")
         if (not isinstance(profile, dict) or set(profile) - {"schema", "settings", "calibration"}
                 or profile.get("schema") != 1 or not isinstance(profile.get("settings"), dict)
-                or set(profile["settings"]) != set(PROFILE_FIELDS)):
+                or set(profile["settings"]) not in (set(LEGACY_PROFILE_FIELDS), set(PROFILE_FIELDS))):
             raise ValueError("Capture profile schema is unsupported.")
         values = profile["settings"]
         defaults = Config()
         for key in PROFILE_FIELDS:
-            value = values[key]
-            if key == "crop":
+            value = values.get(key)
+            if key == "player_status_crop" and value is None:
+                continue
+            if key in ("crop", "player_status_crop"):
                 if not isinstance(value, (list, tuple)) or len(value) != 4 or any(type(n) is not int for n in value):
                     raise ValueError("Capture profile crop must contain four integers.")
             elif type(getattr(defaults, key)) is float:
@@ -51,6 +54,7 @@ def validate_profiles(profiles: Any) -> dict:
 def capture_profile(cfg: Config, dimensions: tuple[int, int] | None = None) -> dict:
     values = {key: getattr(cfg, key) for key in PROFILE_FIELDS}
     values["crop"] = list(cfg.crop)
+    values["player_status_crop"] = list(cfg.player_status_crop) if cfg.player_status_crop is not None else None
     profile = {"schema": 1, "settings": values}
     if dimensions is not None:
         profile["calibration"] = dict(width=dimensions[0], height=dimensions[1])
@@ -62,4 +66,6 @@ def apply_profile(cfg: Config, name: str) -> Config:
     profiles = validate_profiles(cfg.capture_profiles)
     values = dict(profiles[name]["settings"])
     values["crop"] = tuple(values["crop"])
+    stats_crop = values.get("player_status_crop")
+    values["player_status_crop"] = tuple(stats_crop) if stats_crop is not None else None
     return dataclasses.replace(cfg, **values, active_profile=name)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import csv
 import os
 from pathlib import Path
 import tempfile
@@ -300,7 +301,7 @@ class RevengeOverlayTests(unittest.TestCase):
 
         outside = window.mapToGlobal(QPoint(20, window.height() + 20))
         with patch("mnmparse.app.revenge.QCursor.pos", return_value=outside):
-            window.header.add_button.click()
+            window.list.add_button.click()
             dialog = window.list._manual_dialog
             self.assertIsNotNone(dialog)
             window._hide_header()
@@ -314,7 +315,7 @@ class RevengeOverlayTests(unittest.TestCase):
         window = self.popout()
         self.controller.save_attacker("Bandit")
         window._show_header()
-        window.header.guild_add_button.click()
+        window.list.guild_add_button.click()
         dialog = window.list._manual_dialog
         self.assertEqual(dialog.kind, "Guild")
         dialog.setTextValue("Bandit")
@@ -330,9 +331,9 @@ class RevengeOverlayTests(unittest.TestCase):
         clipboard = self.app.clipboard()
         previous = clipboard.text()
         try:
-            window.header.export_button.click()
+            window.list.export_button.click()
             self.assertEqual(clipboard.text().rstrip("\r\n"), "Bandit")
-            window.header.guild_export_button.click()
+            window.list.guild_export_button.click()
             self.assertEqual(clipboard.text().rstrip("\r\n"), "Bandit")
         finally:
             clipboard.setText(previous)
@@ -392,18 +393,18 @@ class RevengeOverlayTests(unittest.TestCase):
     def test_popout_clipboard_actions_review_only_the_chosen_csv_list(self) -> None:
         window = self.popout()
         headings = [label.text() for label in window.header.findChildren(QLabel)]
-        self.assertIn("Players", headings)
-        self.assertIn("Guilds", headings)
-        self.assertFalse(any(button.text() == "📥" for button in window.header.findChildren(QPushButton)))
+        self.assertEqual(headings, ["Revenge"])
+        self.assertEqual([button.text() for button in window.header.findChildren(QPushButton)], ["×"])
         clipboard = self.app.clipboard()
         previous = clipboard.text()
         try:
             for add_button, export_button, kind, name in (
-                    (window.header.add_button, window.header.export_button, "Player", "Raider"),
-                    (window.header.guild_add_button, window.header.guild_export_button, "Guild", "Friends")):
+                    (window.list.add_button, window.list.export_button, "Player", "Raider"),
+                    (window.list.guild_add_button, window.list.guild_export_button, "Guild", "Friends")):
                 with self.subTest(kind=kind):
                     clipboard.setText(f'{name},"Name, with comma"')
                     self.assertEqual(add_button.text(), "+")
+                    self.assertEqual(export_button.text(), "Players" if kind == "Player" else "Guilds")
                     self.assertEqual(export_button.toolTip(), "Copy CSV to Clipboard")
                     with patch("mnmparse.app.revenge.QApplication.clipboard",
                                side_effect=AssertionError("Adding a name should not read the clipboard automatically")):
@@ -426,10 +427,53 @@ class RevengeOverlayTests(unittest.TestCase):
                     self.app.processEvents()
                     self.assertIn(key, window.list._rows)
                     self.assertIn(quoted_key, window.list._rows)
+                    export_button.click()
+                    self.assertEqual(set(next(csv.reader([clipboard.text().rstrip("\r\n")]))),
+                                     {name, "Name, with comma"})
             self.assertEqual(set(window.list._rows), {"Raider", "Name, with comma", ("Guild", "Friends"),
                                                      ("Guild", "Name, with comma")})
         finally:
             clipboard.setText(previous)
+
+    def test_column_actions_remain_reachable_and_rows_are_tight_in_all_views(self) -> None:
+        regular = RevengeList(self.controller)
+        self.windows.append(regular)
+        regular.resize(520, 420)
+        regular.show()
+        overlay = self.overlay()
+        overlay.set_tab("revenge")
+        popout = self.popout()
+        popout._show_header()
+        for name in ("First", "Second", "Third"):
+            self.controller.save_attacker(name)
+        self.app.processEvents()
+        for listing in (regular, overlay._revenge, popout.list):
+            with self.subTest(view=listing.window().objectName() or "main"):
+                for heading, add, column in ((listing.export_button, listing.add_button, listing.player_column),
+                                             (listing.guild_export_button, listing.guild_add_button,
+                                              listing.guild_column)):
+                    self.assertIs(heading.parentWidget(), column)
+                    self.assertIs(add.parentWidget(), column)
+                    self.assertTrue(heading.isVisible())
+                    self.assertTrue(add.isVisible())
+                    self.assertEqual(add.text(), "+")
+                    self.assertEqual(heading.geometry().top(), add.geometry().top())
+                    self.assertGreaterEqual(add.geometry().left(), heading.geometry().right())
+                first, second = (listing._row_layout.itemAt(i).widget() for i in range(2))
+                self.assertLessEqual(second.y() - first.geometry().bottom() - 1, 2)
+                self.assertLessEqual(first.height(), first.fontMetrics().height() + 4)
+        for control in (popout.list.export_button, popout.list.add_button,
+                        popout.list.guild_export_button, popout.list.guild_add_button):
+            bounds = QRect(control.mapTo(popout, QPoint()), control.size())
+            self.assertFalse(popout.header.geometry().intersects(bounds),
+                             "Hovering over the window controls must not cover the list actions")
+        popout.resize(240, 380)
+        self.app.processEvents()
+        self.assertEqual(popout.width(), 240)
+        for control in (popout.list.export_button, popout.list.add_button,
+                        popout.list.guild_export_button, popout.list.guild_add_button):
+            self.assertTrue(control.parentWidget().rect().contains(control.geometry()),
+                            f"Column action {control.text()} must fit the narrow list")
 
 
 if __name__ == "__main__":
