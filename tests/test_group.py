@@ -239,13 +239,35 @@ class CaptureReviewTests(unittest.TestCase):
         self.assertEqual(int(src.latest_region((0, 0, 50, 50))[0, 0, 0]), 9)
 
     def test_a_cut_for_the_old_crop_is_not_handed_out_for_the_new_one(self) -> None:
-        src = self._source()
-        self.feed(src, 1)
-        src.latest_region((0, 0, 100, 100))
-        self.feed(src, 2)
-        src._region_cut = (0, 0, 100, 100)
-        src._region = (0, 0, 30, 30)  # switched between the cut and the store
-        self.assertIsNone(src.latest_region((0, 0, 30, 30)))
+        from unittest.mock import patch
+
+        for count in (1, 2):
+            with self.subTest(crop_count=count):
+                old = ((0, 0, 100, 100), (200, 200, 250, 250))[:count]
+                new = ((0, 0, 30, 30), (300, 300, 340, 340))[:count]
+                src = self._source()
+                latest = (lambda regions: (src.latest_region(regions[0]),)) if count == 1 else src.latest_regions
+                self.feed(src, 1)
+                latest(old)
+                self.feed(src, 2)
+                src._frame_at -= 60.0  # no fresh whole frame can satisfy the changed request
+                cut = src._cut
+                switched = []
+
+                def switch_while_copying(view, crop):
+                    result = cut(view, crop)
+                    if not switched:
+                        switched.append(latest(new))
+                    return result
+
+                with patch.object(src, "_cut", side_effect=switch_while_copying):
+                    self.feed(src, 3)  # changes the request between the old cut and its storage
+                self.assertEqual(switched, [(None,) * count])
+                self.assertEqual(latest(new), (None,) * count)
+                self.feed(src, 9)
+                for crop, part in zip(new, latest(new)):
+                    self.assertEqual(part.shape, (crop[3] - crop[1], crop[2] - crop[0], 3))
+                    self.assertEqual(int(part[0, 0, 0]), 9)
 
     def test_plain_latest_mode_is_throttled_again(self) -> None:
         src = self._source()

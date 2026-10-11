@@ -47,7 +47,7 @@ class CaptureRegionTests(unittest.TestCase):
     def test_whole_frames_until_a_crop_is_asked_for(self) -> None:
         self.feed()
         self.assertEqual(self.src._frame.shape, (2160, 3840, 3))
-        self.assertIsNone(self.src._region_frame)
+        self.assertEqual(self.src._regions_frames, ())
 
     def test_region_mode_copies_only_the_crop(self) -> None:
         self.feed()
