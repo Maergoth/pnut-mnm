@@ -560,8 +560,9 @@ name. **Add** accepts any nonempty name or label, including spaces, symbols and 
 
 The main panel and overlay both offer **Pop out**, opening one synchronized passive window.
 The pop-out shares the overlay's colors, background opacity, text size and move/resize lock.
-Guilds and Players appear in separate lists side by side. Hover near the pop-out's top edge
-to reveal each list's **+** and clipboard copy controls, plus Close.
+Guilds and Players appear in separate lists side by side. Use **+** beside either heading
+to add entries; click **Guilds** or **Players** to copy that list's CSV. Hover near the
+pop-out's top edge to reveal Close.
 The pop-out remembers whether it was open, its position and its size between sessions.
 Removing a player or guild from the pop-out asks for confirmation.
 When unlocked, drag its dotted bottom-right grip to resize it.
@@ -576,8 +577,8 @@ Its **Export** copies that list as one comma-separated row of names, such as
 merge entries into the selected list without replacing saved activity dates. Player
 entries can trigger sighting alerts; Guild entries are reminders, since combat chat does
 not identify guild membership.
-In the pop-out, **+** opens the same Add dialog for that list; **Copy CSV to Clipboard**
-copies its CSV.
+In the pop-out, each heading's **+** opens the same Add dialog for that list. The heading's
+tooltip says **Copy CSV to Clipboard**.
 
 After an update, **What's New!** includes every release since the last version you
 acknowledged, each labeled with its version number and shortcuts to relevant settings.
