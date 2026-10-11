@@ -36,6 +36,11 @@ pushes and release tags do not duplicate the PR gate, and superseded runs are ca
 After squash merging, build and verify the clean merged commit once for publication;
 the released package's embedded provenance must identify that exact commit.
 
+Every release must update the in-app **What's New!** notes for its version in
+`mnmparse/app/whats_new.py`, alongside `docs/RELEASE_<version>.md`. Keep the pop-up concise,
+describe the new behavior and point to the relevant features or Settings section. It
+appears once per version after interactive startup; never show it during smoke tests.
+
 `tests/test_native_window_visibility.py` also exercises the real Windows Qt platform on
 an isolated desktop that is never displayed. It reproduces the hidden launch used by
 older updaters and checks startup recovery and tray restoration. Keep the updater helper

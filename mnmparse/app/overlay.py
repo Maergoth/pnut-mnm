@@ -56,7 +56,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QMenu,
-    QSizeGrip,
     QStackedWidget,
     QToolTip,
     QVBoxLayout,
@@ -73,6 +72,7 @@ from mnmparse.app.widgets import (
     ElidedLabel,
     FeedView,
     MeterTable,
+    OverlaySizeGrip,
     SliderRow,
     WarningLatch,
     _cell_tooltip,
@@ -345,24 +345,6 @@ class _Toolbar(QWidget):
         p.setPen(QPen(qcolor("#ffffff", 0.14), 1))
         p.setBrush(qcolor(token("BG1"), 0.97))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
-        p.end()
-
-
-class _Grip(QSizeGrip):
-    """Size grip painted as three small dots (bottom-right, unlocked only)."""
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setFixedSize(16, 16)
-        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(qcolor(token("MUTED"), 0.9))
-        for dx, dy in ((10, 10), (10, 6), (6, 10), (10, 2), (6, 6), (2, 10)):
-            p.drawEllipse(QRectF(dx, dy, 2.4, 2.4))
         p.end()
 
 
@@ -910,7 +892,7 @@ class OverlayWindow(QWidget):
         root.addWidget(self._stack, 1)
 
         # chrome: created last so it sits above the body in z-order
-        self._grip = _Grip(self)
+        self._grip = OverlaySizeGrip(self)
         self._toolbar = _Toolbar(self)
         self._toolbar.hide()
         self._grip.hide()

@@ -9,6 +9,7 @@
 * :class:`ToggleSwitch` -- animated iOS-style on/off button.
 * :class:`SliderRow` -- ``label + slider + value`` form row.
 * :class:`StatusChip` -- small pill with a coloured state dot.
+* :class:`OverlaySizeGrip` -- shared six-dot handle for resizing overlay windows.
 
 Everything paints with the tokens from :mod:`mnmparse.app.theme`; a tiny
 fallback keeps the module importable while the theme is being written.
@@ -74,6 +75,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLayout,
     QLayoutItem,
+    QSizeGrip,
     QSizePolicy,
     QScrollArea,
     QScrollBar,
@@ -1623,6 +1625,25 @@ def _highlight(escaped: str, needle: str, color: str) -> str:
     return "".join(out)
 
 
+# --------------------------------------------------------------------------- overlay resize handle
+class OverlaySizeGrip(QSizeGrip):
+    """Size grip painted as six small dots (bottom-right, unlocked only)."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(qcolor(token("MUTED"), 0.9))
+        for dx, dy in ((10, 10), (10, 6), (6, 10), (10, 2), (6, 6), (2, 10)):
+            p.drawEllipse(QRectF(dx, dy, 2.4, 2.4))
+        p.end()
+
+
 # --------------------------------------------------------------------------- toggle switch
 class ToggleSwitch(QAbstractButton):
     """Animated iOS-style switch (checkable button, 44x24)."""
@@ -2021,6 +2042,7 @@ __all__ = [
     "FlowLayout",
     "MeterTable",
     "METRIC_VALUE_KEY",
+    "OverlaySizeGrip",
     "SliderRow",
     "StatusChip",
     "ToggleSwitch",

@@ -11,16 +11,19 @@ import re
 import time
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QPoint, QRectF, QTimer, Signal, Slot, Qt
-from PySide6.QtGui import QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLayout, QLineEdit, QPushButton, QScrollArea, QSizeGrip, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QTimer, Signal, Slot, Qt
+from PySide6.QtGui import QCursor, QHideEvent, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
+
+from PySide6.QtWidgets import QSizePolicy
 
 from mnmparse.app import theme
 from mnmparse.app.crop_picker import button_qss
-from mnmparse.app.widgets import ElidedLabel
+from mnmparse.app.widgets import ElidedLabel, OverlaySizeGrip
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
 from mnmparse.grammar import is_you
+from mnmparse.revenge_csv import CsvEntry, KINDS, RevengeCsvError, format_csv, parse_csv, parse_names, validate_entries
 from mnmparse.storage import atomic_json
 
 PROMPT_SECONDS = 30.0
@@ -67,6 +70,11 @@ class RevengeEntry:
     name: str
     added_at: float | None
     last_activity: float | None
+    kind: str = "Player"
+
+
+def _entry_key(name: str, kind: str = "Player") -> str | tuple[str, str]:
+    return name.casefold() if kind == "Player" else ("Guild", name.casefold())
 
 
 def _valid_time(value: object) -> bool:
@@ -124,7 +132,7 @@ class RevengeController(QObject):
         self._alert_delivery_cutoff: float | None = None
         self._seen: set[str] = set()
         self._pending: dict[str, AttackerCandidate] = {}
-        self._saved: dict[str, RevengeEntry] = {}
+        self._saved: dict[str | tuple[str, str], RevengeEntry] = {}
         self._dirty = False
         self._last_error = ""
         self._presentation_available = self.available
@@ -169,6 +177,9 @@ class RevengeController(QObject):
 
     @property
     def saved_entries(self) -> tuple[RevengeEntry, ...]:
+        return self.entries_for()
+
+    def entries_for(self, kind: str | None = None) -> tuple[RevengeEntry, ...]:
         if not self.available:
             return ()
         days = getattr(self._cfg, "revenge_days", 30)
@@ -177,9 +188,10 @@ class RevengeController(QObject):
         count = min(MAX_SAVED_NAMES, max(0, count)) if type(count) is int else 100
         cutoff = self._clock() - days * 86400
         entries = [entry for entry in self._saved.values()
-                   if not days or _activity_time(entry) is None or _activity_time(entry) >= cutoff]
+                   if (kind is None or entry.kind == kind)
+                   and (not days or _activity_time(entry) is None or _activity_time(entry) >= cutoff)]
         entries.sort(key=lambda entry: (_activity_time(entry) is None,
-                                       -(_activity_time(entry) or 0), entry.name.casefold()))
+                                       -(_activity_time(entry) or 0), entry.name.casefold(), entry.kind))
         return tuple(entries[:count] if count else entries)
 
     @property
@@ -253,7 +265,8 @@ class RevengeController(QObject):
         source = source.casefold() if isinstance(source, str) else ""
         participants = {name.casefold() for field in ("actor", "raw_actor", "target")
                         if isinstance(name := getattr(event, field, None), str)}
-        keys = [key for key in self._saved if key in participants or _contains_name(source, key)]
+        keys = [key for key, entry in self._saved.items() if entry.kind == "Player"
+                and (key in participants or _contains_name(source, entry.name.casefold()))]
         if not keys:
             return ()
         activity_now = self._clock()
@@ -280,7 +293,7 @@ class RevengeController(QObject):
     def _record_activity(self, key: str, now: float | None) -> None:
         entry = self._saved[key]
         if _valid_time(now) and now is not None and (entry.last_activity is None or now > entry.last_activity):
-            self._saved[key] = RevengeEntry(entry.name, entry.added_at, float(now))
+            self._saved[key] = RevengeEntry(entry.name, entry.added_at, float(now), entry.kind)
             self._dirty = True
             # Coalesce sustained combat into bounded two-second checkpoints.
             if not self._save_timer.isActive():
@@ -341,15 +354,18 @@ class RevengeController(QObject):
         if expired or self._pending:
             self.prompts_changed.emit()
 
-    def save_attacker(self, name: str, *, from_prompt: bool = False) -> bool:
+    def save_attacker(self, name: str, *, from_prompt: bool = False, kind: str = "Player") -> bool:
         if not self.available:
+            return False
+        if kind not in KINDS or from_prompt and kind != "Player":
+            self._report_error("Choose a Player or Guild list.")
             return False
         if not _valid_saved_name(name):
             self._report_error("Enter a name to add to the revenge list.")
             return False
         name = name.strip()
-        key = name.casefold()
-        candidate = self._pending.get(key)
+        key = _entry_key(name, kind)
+        candidate = self._pending.get(key) if kind == "Player" else None
         if from_prompt and (candidate is None or self._clock() >= candidate.expires_at):
             self.expire()
             return False
@@ -364,28 +380,96 @@ class RevengeController(QObject):
         previous = self._saved.get(key)
         entry = RevengeEntry(previous.name if previous else candidate.name if candidate else name,
                              previous.added_at if previous else float(now),
-                             max(previous.last_activity or 0, float(now)) if previous else float(now))
+                             max(previous.last_activity or 0, float(now)) if previous else float(now), kind)
         updated = {**self._saved, key: entry}
         if not self._persist(updated):
             return False
         self._saved = updated
         self._set_clean()
-        self._seen.add(key)
-        self._pending.pop(key, None)
+        if kind == "Player":
+            self._seen.add(key)
+            self._pending.pop(key, None)
         self.expire()
         self.saved_changed.emit()
         self.prompts_changed.emit()
         return True
 
-    def remove_saved(self, name: str) -> bool:
-        if not self.available or name.casefold() not in self._saved:
+    def remove_saved(self, name: str, *, kind: str = "Player") -> bool:
+        key = _entry_key(name, kind)
+        if not self.available or kind not in KINDS or key not in self._saved:
             return False
-        updated = {key: value for key, value in self._saved.items() if key != name.casefold()}
+        updated = {existing_key: value for existing_key, value in self._saved.items() if existing_key != key}
         if not self._persist(updated):
             return False
         self._saved = updated
-        self._alert_last_seen.pop(name.casefold(), None)
+        if kind == "Player":
+            self._alert_last_seen.pop(name.casefold(), None)
         self._set_clean()
+        self.saved_changed.emit()
+        return True
+
+    def export_csv(self, kind: str = "Player") -> str:
+        """Export the chosen complete list, including entries hidden by limits."""
+        if not self.available:
+            return ""
+        if kind not in KINDS:
+            self._report_error("Choose a Player or Guild list.")
+            return ""
+        entries = sorted((entry for entry in self._saved.values() if entry.kind == kind),
+                         key=lambda entry: (_activity_time(entry) is None, -(_activity_time(entry) or 0), entry.name.casefold()))
+        try:
+            return format_csv(CsvEntry(entry.name, entry.kind) for entry in entries)
+        except RevengeCsvError as exc:
+            self._report_error(str(exc))
+            return ""
+
+    def import_csv(self, text: str, kind: str = "Player") -> bool:
+        try:
+            entries = parse_csv(text, default_kind=kind)
+        except RevengeCsvError as exc:
+            self._report_error(str(exc))
+            return False
+        return self.import_entries(entries, kind=kind)
+
+    def import_entries(self, entries: Any, *, kind: str = "Player") -> bool:
+        """Validate everything, then merge only the explicitly chosen list once."""
+        if not self.available:
+            return False
+        try:
+            if kind not in KINDS:
+                raise RevengeCsvError("Choose a Player or Guild list.")
+            checked = validate_entries(entries)
+            selected = [entry for entry in checked if entry.kind == kind]
+            if not selected:
+                raise RevengeCsvError(f"No {kind.lower()} entries to add.")
+        except (RevengeCsvError, TypeError) as exc:
+            self._report_error(str(exc))
+            return False
+        now = self._clock()
+        if not _valid_time(now) or now is None:
+            self._report_error("The current clock could not be recorded. Check the system clock and try again.")
+            return False
+        updated = dict(self._saved)
+        selected_keys = set()
+        for entry in selected:
+            name = entry.name.strip()
+            key = _entry_key(name, kind)
+            selected_keys.add(key)
+            if key not in updated:
+                updated[key] = RevengeEntry(name, float(now), float(now), kind)
+        if len(updated) > MAX_SAVED_NAMES:
+            self._report_error("Revenge list is full. Remove saved entries before importing more.")
+            return False
+        if not self._persist(updated):
+            return False
+        self._saved = updated
+        self._set_clean()
+        if kind == "Player":
+            self._seen.update(selected_keys)
+            for key in selected_keys:
+                self._pending.pop(key, None)
+            self.expire()
+            self.prompts_changed.emit()
         self.saved_changed.emit()
         return True
 
@@ -429,12 +513,15 @@ class RevengeController(QObject):
                     raise ValueError("Invalid revenge entries")
                 saved = {}
                 for row in rows:
-                    if (not isinstance(row, dict) or set(row) != {"name", "added_at", "last_activity"}
+                    kind = row.get("kind", "Player") if isinstance(row, dict) else None
+                    if (not isinstance(row, dict) or set(row) not in ({"name", "added_at", "last_activity"},
+                                                                     {"name", "added_at", "last_activity", "kind"})
+                            or kind not in KINDS
                             or not _valid_saved_name(row.get("name"))
                             or not _valid_time(row["added_at"]) or not _valid_time(row["last_activity"])
-                            or row["name"].casefold() in saved):
+                            or _entry_key(row["name"], kind) in saved):
                         raise ValueError("Invalid revenge entry")
-                    saved[row["name"].casefold()] = RevengeEntry(row["name"], row["added_at"], row["last_activity"])
+                    saved[_entry_key(row["name"], kind)] = RevengeEntry(row["name"], row["added_at"], row["last_activity"], kind)
             else:
                 raise ValueError("Unsupported revenge schema")
             self._saved = saved
@@ -458,11 +545,12 @@ class RevengeController(QObject):
         self.saved_changed.emit()
         return True
 
-    def _persist(self, saved: dict[str, RevengeEntry]) -> bool:
+    def _persist(self, saved: dict[str | tuple[str, str], RevengeEntry]) -> bool:
         try:
             payload = {"schema": 2, "entries": [
-                {"name": entry.name, "added_at": entry.added_at, "last_activity": entry.last_activity}
-                for entry in sorted(saved.values(), key=lambda entry: entry.name.casefold())]}
+                {"name": entry.name, "added_at": entry.added_at, "last_activity": entry.last_activity,
+                 **({"kind": entry.kind} if entry.kind != "Player" else {})}
+                for entry in sorted(saved.values(), key=lambda entry: (entry.name.casefold(), entry.kind))]}
             # Match atomic_json's exact UTF-8 representation. A successful save
             # must also be readable by the loader and backup's resource bounds.
             if len((json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")) > MAX_STORAGE_BYTES:
@@ -565,65 +653,249 @@ class RevengePrompts(QFrame):
         self.error.setText(self.controller.last_error)
 
 
+class _RevengeAddDialog(QDialog):
+    """Focusable manual add with a reviewed, per-list clipboard batch."""
+
+    def __init__(self, controller: RevengeController, kind: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.controller = controller
+        self.kind = kind
+        self._clipboard_entries: tuple[CsvEntry, ...] = ()
+        self._clipboard_text = ""
+        self.setWindowTitle(window_title(f"revenge-add-{kind.lower()}"))
+        self.setStyleSheet(theme.main_qss() + button_qss())
+        self.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, False)
+        self.setMinimumWidth(440)
+        layout = QVBoxLayout(self)
+        heading = QLabel(f"Add {kind}(s)")
+        heading.setProperty("class", "h2")
+        layout.addWidget(heading)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText(f"{kind} name")
+        self.name_input.setAccessibleName(f"{kind} name to add")
+        layout.addWidget(self.name_input)
+        self.from_clipboard = QPushButton("From Clipboard")
+        self.from_clipboard.clicked.connect(self._read_clipboard)
+        layout.addWidget(self.from_clipboard)
+        self.summary = QLabel()
+        self.summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+        self.preview = QPlainTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setAccessibleName(f"{kind} clipboard import preview")
+        self.preview.setMaximumHeight(200)
+        self.preview.hide()
+        layout.addWidget(self.preview)
+        self.error = QLabel()
+        self.error.setTextFormat(Qt.TextFormat.PlainText)
+        self.error.setWordWrap(True)
+        layout.addWidget(self.error)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        self.add_button = QPushButton("Add")
+        self.add_button.setProperty("class", "primary")
+        self.add_button.clicked.connect(self.accept)
+        row.addWidget(self.add_button)
+        layout.addLayout(row)
+        self.name_input.textChanged.connect(self._sync_add)
+        self.name_input.returnPressed.connect(self.accept)
+        self._sync_add()
+
+    def textValue(self) -> str:  # noqa: N802 - preserve the input dialog's small interface
+        return self.name_input.text() or self._clipboard_text
+
+    def setTextValue(self, text: str) -> None:  # noqa: N802
+        self._clipboard_entries = ()
+        self._clipboard_text = ""
+        self.preview.clear()
+        self.preview.hide()
+        self.summary.clear()
+        self.error.clear()
+        self.name_input.setText(text)
+        self._sync_add()
+
+    def _sync_add(self) -> None:
+        self.add_button.setEnabled(self.controller.available
+                                   and (bool(self._clipboard_entries) or _valid_saved_name(self.name_input.text())))
+
+    def _read_clipboard(self) -> None:
+        clipboard = QApplication.clipboard()
+        text = clipboard.text() if clipboard is not None else ""
+        self._clipboard_entries = ()
+        self._clipboard_text = ""
+        self.preview.clear()
+        self.preview.hide()
+        self.summary.clear()
+        self.error.clear()
+        try:
+            try:
+                entries = parse_csv(text, default_kind=self.kind)
+            except RevengeCsvError:
+                # Ordinary one-name-per-line clipboard text is also useful.
+                # CSV-shaped text stays strict so a malformed batch cannot
+                # quietly become a collection of literal CSV rows.
+                first_line = text.lstrip("\ufeff").strip().split("\n", 1)[0].strip().casefold()
+                if "," in text or '"' in text or first_line in {"type", "name"}:
+                    raise
+                entries = parse_names(text, kind=self.kind)
+            selected = tuple(entry for entry in entries if entry.kind == self.kind)
+            excluded = len(entries) - len(selected)
+            if not selected:
+                raise RevengeCsvError(f"No {self.kind.lower()} entries in the clipboard.")
+            self._clipboard_entries = selected
+            self._clipboard_text = text
+            self.summary.setText(f"{len(selected)} {self.kind.lower()} entries ready"
+                                 + (f" · {excluded} other entries ignored" if excluded else ""))
+            self.preview.setPlainText("\n".join(entry.name[:400] + ("…" if len(entry.name) > 400 else "")
+                                                for entry in selected[:100]))
+            self.preview.show()
+        except RevengeCsvError as exc:
+            self.error.setText(str(exc))
+        self._sync_add()
+
+    def accept(self) -> None:
+        entries = self._clipboard_entries
+        if self.name_input.text().strip():
+            entries += (CsvEntry(self.name_input.text().strip(), self.kind),)
+        if not entries:
+            return
+        if self.controller.import_entries(entries, kind=self.kind):
+            super().accept()
+        else:
+            self.error.setText(self.controller.last_error)
+
+
 class RevengeList(QFrame):
     """A persistent name list suitable for the overlay's Revenge tab."""
 
     def __init__(self, controller: RevengeController, parent: QWidget | None = None, *, compact: bool = False,
-                 allow_popout: bool = True):
+                 allow_popout: bool = True, minimal: bool = False):
         super().__init__(parent)
         self.controller = controller
         self.compact = compact
         self.allow_popout = allow_popout
-        self._manual_dialog: QInputDialog | None = None
+        self.minimal = minimal
+        self._manual_dialog: _RevengeAddDialog | None = None
         self.setStyleSheet(button_qss())
-        self._rows: dict[str, QWidget] = {}
-        self._dates: dict[str, QLabel] = {}
+        self._rows: dict[str | tuple[str, str], QWidget] = {}
+        self._dates: dict[str | tuple[str, str], QLabel] = {}
+        self._labels: dict[str | tuple[str, str], ElidedLabel] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
-        self.status = QLabel()
+        columns = QHBoxLayout()
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(12)
+        self.player_column = QWidget(self)
+        self.guild_column = QWidget(self)
+        player_layout = QVBoxLayout(self.player_column)
+        guild_layout = QVBoxLayout(self.guild_column)
+        for column, title in ((player_layout, "Players"), (guild_layout, "Guilds")):
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(6)
+            heading = QLabel(title)
+            heading.setProperty("class", "muted")
+            heading.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            column.addWidget(heading)
+        columns.addWidget(self.player_column, 1)
+        columns.addWidget(self.guild_column, 1)
+        layout.addLayout(columns, 1)
+        self.status = QLabel(self.player_column)
         self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        self.guild_status = QLabel(self.guild_column)
+        self.guild_status.setWordWrap(True)
+        if minimal:
+            self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.guild_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+            self.guild_status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        player_layout.addWidget(self.status)
+        guild_layout.addWidget(self.guild_status)
         manual = QHBoxLayout()
         manual.setSpacing(6)
-        self.name_input = QLineEdit()
+        self.name_input = QLineEdit(self.player_column)
         self.name_input.setPlaceholderText("Name")
         self.name_input.setAccessibleName("Player name to add to revenge list")
         self.name_input.setMinimumWidth(140)
-        manual.addWidget(self.name_input, 1)
-        self.add_button = QPushButton("Add player…" if compact else "Add")
+        if not minimal:
+            player_layout.addWidget(self.name_input)
+        self.add_button = QPushButton("Add Player(s)", self.player_column)
         self.add_button.setObjectName("Chip")
         self.add_button.setAccessibleName("Add player name to revenge list")
-        self.add_button.clicked.connect(self._open_manual if compact else self._add_manual)
+        self.add_button.clicked.connect(lambda _checked=False: self._open_manual())
         self.name_input.returnPressed.connect(self._add_manual)
         self.name_input.textChanged.connect(self._update_add_enabled)
-        manual.addWidget(self.add_button)
-        self.pop_out_button = QPushButton("Pop out")
+        if not minimal:
+            manual.addWidget(self.add_button)
+        self.pop_out_button = QPushButton("Pop out", self)
         self.pop_out_button.setObjectName("Chip")
         self.pop_out_button.setAccessibleName("Pop out revenge list")
         self.pop_out_button.clicked.connect(self._pop_out)
-        manual.addWidget(self.pop_out_button)
-        layout.addLayout(manual)
+        self.export_button = QPushButton("Export CSV", self.player_column)
+        self.export_button.setObjectName("Chip")
+        self.export_button.setAccessibleName("Copy revenge list as CSV")
+        self.export_button.clicked.connect(lambda _checked=False: self._export_csv())
+        self.guild_add_button = QPushButton("Add Guild(s)", self.guild_column)
+        self.guild_add_button.setObjectName("Chip")
+        self.guild_add_button.setAccessibleName("Add guild reminders")
+        self.guild_add_button.clicked.connect(self._open_guild_manual)
+        self.guild_export_button = QPushButton("Export CSV", self.guild_column)
+        self.guild_export_button.setObjectName("Chip")
+        self.guild_export_button.setAccessibleName("Copy guild reminders as CSV")
+        self.guild_export_button.clicked.connect(self._export_guild_csv)
+        if not minimal:
+            manual.addWidget(self.export_button)
+            player_layout.addLayout(manual)
+            guild_manual = QHBoxLayout()
+            guild_manual.setSpacing(6)
+            guild_manual.addWidget(self.guild_add_button)
+            guild_manual.addWidget(self.guild_export_button)
+            guild_layout.addLayout(guild_manual)
+            layout.addWidget(self.pop_out_button, 0, Qt.AlignmentFlag.AlignRight)
         self.rows_scroll = QScrollArea()
         self.rows_scroll.setWidgetResizable(True)
         self.rows_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.rows_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.rows_scroll.setMaximumHeight(160 if compact else 200)
+        if not minimal:
+            self.rows_scroll.setMaximumHeight(160 if compact else 200)
         rows = QWidget()
         self._row_layout = QVBoxLayout(rows)
         self._row_layout.setContentsMargins(0, 0, 0, 0)
         self._row_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._row_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.rows_scroll.setWidget(rows)
-        layout.addWidget(self.rows_scroll)
+        player_layout.addWidget(self.rows_scroll, 1)
+        self.guild_rows_scroll = QScrollArea(self.guild_column)
+        self.guild_rows_scroll.setWidgetResizable(True)
+        self.guild_rows_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.guild_rows_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        if not minimal:
+            self.guild_rows_scroll.setMaximumHeight(160 if compact else 200)
+        guild_rows = QWidget()
+        self._guild_row_layout = QVBoxLayout(guild_rows)
+        self._guild_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._guild_row_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._guild_row_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        self.guild_rows_scroll.setWidget(guild_rows)
+        guild_layout.addWidget(self.guild_rows_scroll, 1)
         self.error = QLabel(controller.last_error)
         self.error.setWordWrap(True)
         layout.addWidget(self.error)
         controller.saved_changed.connect(self.refresh)
-        controller.error.connect(self.error.setText)
+        controller.error.connect(self._set_error)
         self.refresh()
 
+    def _set_error(self, message: str) -> None:
+        self.error.setText(message)
+        if self.minimal:
+            self.error.setVisible(bool(message))
+
     def _update_add_enabled(self):
-        self.add_button.setEnabled(self.controller.available and (self.compact or _valid_saved_name(self.name_input.text())))
+        self.add_button.setEnabled(self.controller.available)
+        self.guild_add_button.setEnabled(self.controller.available)
 
     def _add_manual(self):
         if self.controller.save_attacker(self.name_input.text().strip()):
@@ -633,7 +905,7 @@ class RevengeList(QFrame):
         if self.allow_popout and self.controller.available:
             self.controller.pop_out_requested.emit()
 
-    def _open_manual(self):
+    def _open_manual(self, _checked: bool = False, *, kind: str = "Player"):
         if not self.controller.available:
             return
         if self._manual_dialog is not None:
@@ -642,25 +914,33 @@ class RevengeList(QFrame):
             return
         # The overlay itself refuses focus. An explicitly opened normal dialog
         # can accept keyboard input without changing the overlay's window flags.
-        dialog = QInputDialog(self.window())
-        dialog.setWindowTitle(window_title("revenge-add"))
-        dialog.setStyleSheet(theme.main_qss() + button_qss())
-        dialog.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, False)
-        dialog.setInputMode(QInputDialog.InputMode.TextInput)
-        dialog.setLabelText("")
-        dialog.setOkButtonText("Add player")
-        dialog.setCancelButtonText("Cancel")
+        dialog = _RevengeAddDialog(self.controller, kind, self.window())
+        if kind == "Player" and self.name_input.text():
+            dialog.setTextValue(self.name_input.text())
         self._manual_dialog = dialog
-        # QInputDialog emits textValueSelected after finished. Reading and
-        # clearing its value in one finished handler avoids either retaining a
-        # hidden identity or clearing the accepted value before it is saved.
         dialog.finished.connect(lambda result: self._finish_manual(dialog, result))
         dialog.open()
         dialog.activateWindow()
 
-    def _finish_manual(self, dialog: QInputDialog, result: int):
+    def _open_guild_manual(self, _checked: bool = False):
+        self._open_manual(kind="Guild")
+
+    def _export_csv(self, _checked: bool = False, *, kind: str = "Player"):
+        text = self.controller.export_csv(kind)
+        clipboard = QApplication.clipboard()
+        if text and clipboard is not None:
+            clipboard.setText(text)
+            status = self.guild_status if kind == "Guild" else self.status
+            status.setText(f"{kind} CSV copied.")
+            status.show()
+            QTimer.singleShot(2500, self, self.refresh)
+
+    def _export_guild_csv(self, _checked: bool = False):
+        self._export_csv(kind="Guild")
+
+    def _finish_manual(self, dialog: _RevengeAddDialog, result: int):
         if result == QDialog.DialogCode.Accepted:
-            self.controller.save_attacker(dialog.textValue().strip())
+            self.name_input.clear()
         dialog.setTextValue("")
         if self._manual_dialog is dialog:
             self._manual_dialog = None
@@ -668,10 +948,18 @@ class RevengeList(QFrame):
 
     def refresh(self):
         self.setVisible(self.controller.enabled)
-        entries = self.controller.saved_entries
-        names = tuple(entry.name for entry in entries)
+        player_entries = self.controller.entries_for("Player")
+        guild_entries = self.controller.entries_for("Guild")
+        entries = player_entries + guild_entries
+        keyed_entries = {("Guild", entry.name) if getattr(entry, "kind", "Player") == "Guild" else entry.name: entry
+                         for entry in entries}
         self.name_input.setVisible(self.controller.available and not self.compact)
         self.add_button.setVisible(self.controller.available)
+        self.export_button.setVisible(self.controller.available)
+        self.export_button.setEnabled(self.controller.available)
+        self.guild_add_button.setVisible(self.controller.available)
+        self.guild_export_button.setVisible(self.controller.available)
+        self.guild_export_button.setEnabled(self.controller.available)
         self.pop_out_button.setVisible(self.controller.available and self.allow_popout)
         self.pop_out_button.setEnabled(self.controller.available and self.allow_popout)
         self.name_input.setEnabled(self.controller.available)
@@ -681,45 +969,56 @@ class RevengeList(QFrame):
                 self._manual_dialog.setTextValue("")
                 self._manual_dialog.reject()
         self._update_add_enabled()
-        for key in set(self._rows) - set(names):
+        for key in set(self._rows) - set(keyed_entries):
             row = self._rows.pop(key)
             self._dates.pop(key, None)
+            self._labels.pop(key, None)
             _scrub_row(row)
-            self._row_layout.removeWidget(row)
+            (self._guild_row_layout if isinstance(key, tuple) else self._row_layout).removeWidget(row)
             row.hide()
             row.deleteLater()
-        for entry in entries:
+        for key, entry in keyed_entries.items():
             name = entry.name
-            if name not in self._rows:
+            kind = getattr(entry, "kind", "Player")
+            if key not in self._rows:
                 row = QWidget()
                 line = QHBoxLayout(row)
                 line.setContentsMargins(0, 0, 0, 0)
-                label = ElidedLabel(name)
-                # Qt auto-detects rich tooltip text, although the label itself
-                # is PlainText. Escape manual markup inside a trusted wrapper.
-                label.setToolTip("<span>" + escape(name) + "</span>")
+                label = ElidedLabel()
                 line.addWidget(label, 1)
                 date = QLabel()
                 date.setTextFormat(Qt.TextFormat.PlainText)
                 line.addWidget(date)
-                remove = QPushButton("Remove")
+                remove = QPushButton("×" if self.compact else "Remove")
                 remove.setObjectName("Chip")
-                remove.setAccessibleName(f"Remove {name} from revenge list")
-                remove.clicked.connect(lambda _checked=False, n=name: self.controller.remove_saved(n))
+                remove.setAccessibleName(f"Remove {name} guild reminder" if kind == "Guild" else f"Remove {name} from revenge list")
+                remove.setToolTip("Remove guild reminder" if kind == "Guild" else "Remove player")
+                if self.compact:
+                    remove.setFixedWidth(24)
+                    remove.setStyleSheet("QPushButton { padding: 3px 4px; }")
+                remove.clicked.connect(lambda _checked=False, n=name, k=kind: self.controller.remove_saved(n, kind=k))
                 line.addWidget(remove)
-                self._rows[name], self._dates[name] = row, date
+                self._rows[key], self._dates[key], self._labels[key] = row, date, label
+            self._labels[key].setText(name)
+            # Manual names may contain markup; keep their tooltip text literal.
             text, tooltip = _activity_caption(entry)
-            self._dates[name].setText(text)
-            self._dates[name].setToolTip(tooltip)
+            self._labels[key].setToolTip("<span>" + escape(name)
+                                        + ("<br>Guild reminder" if kind == "Guild" else "")
+                                        + ("<br>" + escape(tooltip) if self.compact else "") + "</span>")
+            self._dates[key].setText(text)
+            self._dates[key].setToolTip(tooltip)
+            self._dates[key].setVisible(not self.compact)
             # Reposition existing rows as activity changes, not only new rows.
-            self._row_layout.removeWidget(self._rows[name])
-            self._row_layout.addWidget(self._rows[name])
-        message = (f"Revenge list · {len(names)} shown of {self.controller.saved_total} · newest activity first" if names else
-                   "No entries match these limits. Saved names remain in your list; adjust Revenge List options."
-                   if self.controller.saved_total else "Revenge list is empty. Add a player or use + on a recent PvP attacker.")
-        self.status.setText(_hint(self.controller) or message)
-        self.rows_scroll.setVisible(bool(names))
-        self.error.setText(self.controller.last_error)
+            column_layout = self._guild_row_layout if kind == "Guild" else self._row_layout
+            column_layout.removeWidget(self._rows[key])
+            column_layout.addWidget(self._rows[key])
+        self.status.setText("No players to show.")
+        self.status.setVisible(not player_entries)
+        self.guild_status.setText("No guilds to show.")
+        self.guild_status.setVisible(not guild_entries)
+        self.rows_scroll.setVisible(bool(player_entries))
+        self.guild_rows_scroll.setVisible(bool(guild_entries))
+        self._set_error(self.controller.last_error)
 
 
 class _PopoutHeader(QFrame):
@@ -728,11 +1027,34 @@ class _PopoutHeader(QFrame):
         self._owner = owner
         self._drag: QPoint | None = None
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 8, 4)
-        self.heading = QLabel("Revenge List · PvP")
+        layout.setContentsMargins(8, 4, 4, 4)
+        layout.setSpacing(6)
+        self.heading = QLabel("Revenge")
         self.heading.setTextFormat(Qt.TextFormat.PlainText)
         self.heading.setProperty("class", "title")
         layout.addWidget(self.heading, 1)
+        self.add_button = owner.list.add_button
+        self.add_button.setText("Add Player(s)")
+        self.add_button.setObjectName("RevengeAdd")
+        self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_button.clicked.connect(owner._show_header)
+        layout.addWidget(self.add_button)
+        self.export_button = owner.list.export_button
+        self.export_button.setObjectName("RevengeExport")
+        self.export_button.setText("CSV")
+        self.export_button.setToolTip("Copy players as CSV")
+        self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(self.export_button)
+        self.guild_add_button = owner.list.guild_add_button
+        self.guild_add_button.setObjectName("RevengeAdd")
+        self.guild_add_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(self.guild_add_button)
+        self.guild_export_button = owner.list.guild_export_button
+        self.guild_export_button.setObjectName("RevengeExport")
+        self.guild_export_button.setText("CSV")
+        self.guild_export_button.setToolTip("Copy guild reminders as CSV")
+        self.guild_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(self.guild_export_button)
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("Chip")
         self.close_button.setAccessibleName("Close revenge list popout")
@@ -747,6 +1069,7 @@ class _PopoutHeader(QFrame):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if not self._owner.locked and event.button() == Qt.MouseButton.LeftButton:
+            self._owner._show_header()
             self._drag = event.globalPosition().toPoint() - self._owner.pos()
             event.accept()
         else:
@@ -761,7 +1084,16 @@ class _PopoutHeader(QFrame):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         self._drag = None
+        self._owner._header_hide.start()
         super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(theme.qcolor("#ffffff", 0.14), 1))
+        painter.setBrush(theme.qcolor(theme.BG1, 0.97))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                                theme.RADIUS_CHIP, theme.RADIUS_CHIP)
 
 
 class RevengePopoutWindow(QWidget):
@@ -786,13 +1118,17 @@ class RevengePopoutWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 8)
         layout.setSpacing(0)
-        self.header = _PopoutHeader(self)
-        layout.addWidget(self.header)
-        self.list = RevengeList(controller, compact=True, allow_popout=False)
-        self.list.rows_scroll.setMaximumHeight(320)
+        self.list = RevengeList(controller, self, compact=True, allow_popout=False, minimal=True)
         layout.addWidget(self.list, 1)
-        self._grip = QSizeGrip(self)
+        # Floating controls reveal over the list without changing its viewport.
+        self.header = _PopoutHeader(self)
+        self._header_hide = QTimer(self)
+        self._header_hide.setSingleShot(True)
+        self._header_hide.setInterval(300)
+        self._header_hide.timeout.connect(self._hide_header)
+        self._grip = OverlaySizeGrip(self)
         self._grip.setAccessibleName("Resize revenge list popout")
+        self._grip.setToolTip("Drag to resize")
         self.setMinimumSize(360, 200)
         self.resize(460, 380)
         cfg = controller._cfg
@@ -805,6 +1141,8 @@ class RevengePopoutWindow(QWidget):
             font_scale = settings.value("overlay/font_scale", font_scale, type=float)
         self.set_appearance(opacity, font_scale)
         self.set_locked(locked)
+        self._watch_hover_targets()
+        self.header.hide()
         controller.saved_changed.connect(self._sync_visibility)
         controller.prompts_changed.connect(self._sync_visibility)
         self.hide()
@@ -835,14 +1173,59 @@ class RevengePopoutWindow(QWidget):
         self.setStyleSheet(theme.overlay_qss(self._opacity) + button_qss()
                           + f"QWidget {{ font-size: {px}px; }}")
         self.header.close_button.setFixedWidth(max(32, round(px * 2.5)))
-        self.setMinimumWidth(max(360, round(360 * self._font_scale)))
-        self._position_grip()
+        self.header.setStyleSheet(f"""
+            QPushButton#RevengeAdd, QPushButton#RevengeExport {{ background: transparent; color: {theme.MUTED};
+                border: none; border-radius: 6px; padding: 3px 8px; min-height: 20px; }}
+            QPushButton#RevengeAdd:hover, QPushButton#RevengeExport:hover {{
+                background: rgba(255,255,255,0.08); color: {theme.TEXT}; }}
+        """)
+        self.setMinimumWidth(max(360, round(360 * self._font_scale), self.header.sizeHint().width() + 10))
+        self._position_chrome()
         self.update()
 
-    def _position_grip(self) -> None:
+    def _position_chrome(self) -> None:
+        self.layout().activate()
+        self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
         self._grip.resize(16, 16)
         self._grip.move(self.width() - self._grip.width() - 2,
                         self.height() - self._grip.height() - 2)
+        self._grip.raise_()
+
+    def _watch_hover_targets(self) -> None:
+        for widget in (self, *self.findChildren(QWidget)):
+            if widget.window() is self and not widget.property("revengeHoverTracked"):
+                widget.setProperty("revengeHoverTracked", True)
+                widget.setMouseTracking(True)
+                widget.installEventFilter(self)
+
+    def _near_header(self, point: QPoint) -> bool:
+        return self.rect().contains(point) and point.y() <= self.header.geometry().bottom()
+
+    def _show_header(self) -> None:
+        self._header_hide.stop()
+        self.header.show()
+        self.header.raise_()
+
+    def _hide_header(self) -> None:
+        if self.header._drag is not None or self.list._manual_dialog is not None:
+            self._header_hide.start()
+        elif self._near_header(self.mapFromGlobal(QCursor.pos())):
+            return
+        else:
+            self.header.hide()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if isinstance(watched, QWidget) and watched.window() is self:
+            kind = event.type()
+            if kind in (QEvent.Type.Enter, QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress):
+                position = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
+                if self._near_header(self.mapFromGlobal(position)):
+                    self._show_header()
+                elif not self._header_hide.isActive():
+                    self._header_hide.start()
+            elif kind == QEvent.Type.Leave and not self._header_hide.isActive():
+                self._header_hide.start()
+        return super().eventFilter(watched, event)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         painter = QPainter(self)
@@ -855,9 +1238,16 @@ class RevengePopoutWindow(QWidget):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         if hasattr(self, "_grip"):
-            self._position_grip()
+            self._position_chrome()
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
+        self._header_hide.stop()
+        self.header._drag = None
+        self.header.hide()
+        super().hideEvent(event)
 
     def _sync_visibility(self):
+        self._watch_hover_targets()
         if not self.controller.enabled:
             self.hide()
 

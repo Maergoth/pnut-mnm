@@ -123,6 +123,7 @@ class RevengeOverlayTests(unittest.TestCase):
     def test_popout_background_alpha_changes_without_fading_text(self) -> None:
         window = self.popout()
         window.set_appearance(0.25, 1.0)
+        window._show_header()
         self.app.processEvents()
 
         def render() -> QImage:
@@ -152,6 +153,7 @@ class RevengeOverlayTests(unittest.TestCase):
 
     def test_popout_drag_respects_lock_and_cancels_an_active_drag(self) -> None:
         window = self.popout()
+        window._show_header()
         window.move(40, 40)
 
         def mouse(kind: QEvent.Type, global_point: QPoint, button: Qt.MouseButton,
@@ -184,6 +186,72 @@ class RevengeOverlayTests(unittest.TestCase):
               Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
         self.assertEqual(window.pos(), current)
         self.assertIsNone(window.header._drag)
+
+    def test_hover_header_preserves_list_space_and_stays_open_while_adding(self) -> None:
+        window = self.popout()
+        self.controller.save_attacker("Bandit")
+        window.resize(460, 640)
+        self.app.processEvents()
+        self.assertTrue(window.header.isHidden())
+        viewport = window.list.rows_scroll.geometry()
+        self.assertGreater(viewport.height(), 320)
+
+        point = QPoint(10, 10)
+        event = QMouseEvent(QEvent.Type.MouseMove, QPointF(point), QPointF(window.mapToGlobal(point)),
+                            Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+        self.app.sendEvent(window, event)
+        self.assertTrue(window.header.isVisible())
+        self.assertEqual(window.list.rows_scroll.geometry(), viewport)
+
+        outside = window.mapToGlobal(QPoint(20, window.height() + 20))
+        with patch("mnmparse.app.revenge.QCursor.pos", return_value=outside):
+            window.header.add_button.click()
+            dialog = window.list._manual_dialog
+            self.assertIsNotNone(dialog)
+            window._hide_header()
+            self.assertTrue(window.header.isVisible())
+            dialog.reject()
+            window._hide_header()
+            self.assertTrue(window.header.isHidden())
+        self.assertEqual(window.list.rows_scroll.geometry(), viewport)
+
+    def test_player_and_guild_columns_add_export_and_remove_independently(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+
+        window = self.popout()
+        self.controller.save_attacker("Bandit")
+        window._show_header()
+        window.header.guild_add_button.click()
+        dialog = window.list._manual_dialog
+        self.assertEqual(dialog.kind, "Guild")
+        dialog.setTextValue("Bandit")
+        dialog.accept()
+        self.app.processEvents()
+        self.assertEqual(set(window.list._rows), {"Bandit", ("Guild", "Bandit")})
+        player_row = window.list._rows["Bandit"]
+        guild_row = window.list._rows[("Guild", "Bandit")]
+        self.assertIs(player_row.parentWidget(), window.list.rows_scroll.widget())
+        self.assertIs(guild_row.parentWidget(), window.list.guild_rows_scroll.widget())
+        self.assertIn("Guild reminder", window.list._labels[("Guild", "Bandit")].toolTip())
+
+        clipboard = self.app.clipboard()
+        previous = clipboard.text()
+        try:
+            window.header.export_button.click()
+            self.assertIn("Player,Bandit", clipboard.text())
+            self.assertNotIn("Guild,Bandit", clipboard.text())
+            window.header.guild_export_button.click()
+            self.assertIn("Guild,Bandit", clipboard.text())
+            self.assertNotIn("Player,Bandit", clipboard.text())
+        finally:
+            clipboard.setText(previous)
+
+        guild_row.findChild(QPushButton).click()
+        self.assertEqual(set(window.list._rows), {"Bandit"})
+        self.controller.set_config(replace(self.cfg, revenge_enabled=False))
+        self.assertTrue(window.isHidden())
+        self.assertFalse(window.list.add_button.isEnabled())
+        self.assertFalse(window.list.guild_add_button.isEnabled())
 
 
 if __name__ == "__main__":
