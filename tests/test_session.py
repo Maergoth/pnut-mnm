@@ -205,6 +205,74 @@ class SessionGroupProjectionTests(unittest.TestCase):
         self.assertEqual((shown.items, filter_session(shown, PLAYER).items), (17, 12))
         self.assertEqual(project_session(shown, cfg).items, 17)
 
+    def former_member_session(self, change):
+        from mnmparse.party import PartyRoster
+
+        roster = PartyRoster(PLAYER)
+        session = SessionStats(PLAYER, started=0, roster=roster)
+        texts = ["Tovozen has joined the party.", "Former has joined the party."]
+        texts += ["You have slain a rat!"] * 2
+        texts += ["Your party member Tovozen has slain a beetle!"]
+        texts += ["You crafts Own Item(2).", "Tovozen crafts Group Item(3).",
+                  "Former crafts Foreign Item(4).", "Tovozen has been slain by a rat!",
+                  "Former has been slain by a rat!"]
+        texts += ["Your party member Former has slain a wolf!"] * 4
+        for ts, text in enumerate(texts, 1):
+            event = parse_line(text, ts, PLAYER)
+            roster.observe(event)
+            session.add(event)
+        before = session.snapshot(now=20, detail_limit=1)
+        for ts, text in enumerate(change, 30):
+            event = parse_line(text, ts, PLAYER)
+            roster.observe(event)
+            session.add(event)
+        return before, session.snapshot(now=40, detail_limit=1)
+
+    def test_leaving_or_disbanding_hides_former_killers_with_complete_bounded_totals(self):
+        from mnmparse.config import Config
+        from mnmparse.privacy import project_session
+
+        cfg = Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True)
+        for change in (["Former has left the party."],
+                       ["Your party has been disbanded.", "Tovozen has joined the party."]):
+            with self.subTest(change=change):
+                before, raw = self.former_member_session(change)
+                self.assertEqual(raw.party, ["Tovozen"])
+                self.assertEqual(raw.kills, 7, "Historical party kills stay in collected data")
+                self.assertEqual(raw.kill_entries[0][1], "Former")
+                shown = project_session(raw, cfg)
+                self.assertEqual(shown.kills, 3)
+                self.assertEqual(dict(shown.kills_by_killer), {PLAYER: 2, "Tovozen": 1})
+                self.assertEqual(dict(shown.kills_by_target), {"a rat": 2, "a beetle": 1})
+                self.assertEqual(shown.kill_entries, [])
+                self.assertEqual((shown.crafts, shown.deaths), (5, 1))
+                self.assertNotIn("Former", json.dumps(asdict(shown)))
+                mine = filter_session(shown, PLAYER)
+                self.assertEqual((mine.kills, mine.crafts), (2, 2))
+                self.assertEqual(mine.kills_by_target, [("a rat", 2)])
+                self.assertEqual(project_session(shown, cfg).kills_by_target, shown.kills_by_target)
+                self.assertIs(project_session(raw, replace(cfg, show_other_groups=True)), raw)
+                # A cached historical snapshot may arrive before its roster is
+                # refreshed. Its current roster still filters every identity.
+                before.party = ["Tovozen"]
+                historical = project_session(before, cfg)
+                self.assertEqual((historical.kills, historical.crafts, historical.deaths), (3, 5, 1))
+                self.assertEqual(dict(historical.crafts_by_item), {"Own Item": 2, "Group Item": 3})
+                self.assertNotIn("Former", json.dumps(asdict(historical)))
+
+    def test_legacy_bounded_kills_and_crafts_keep_totals_without_fabricating_breakdowns(self):
+        from mnmparse.config import Config
+        from mnmparse.privacy import project_session
+
+        before, _raw = self.former_member_session(["Former has left the party."])
+        legacy = replace(before, party=["Tovozen"])
+        cfg = Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True)
+        shown = project_session(legacy, cfg)
+        self.assertEqual((shown.kills, shown.crafts, shown.deaths), (3, 5, 1))
+        self.assertEqual((shown.kills_by_target, shown.crafts_by_item), ([], []))
+        self.assertEqual((shown.kill_entries, shown.craft_entries), ([], []))
+        self.assertNotIn("Former", json.dumps(asdict(shown)))
+
 
 
 class DeathAndKillTests(unittest.TestCase):

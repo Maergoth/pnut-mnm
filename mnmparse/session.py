@@ -220,10 +220,11 @@ LOOTED_BY_YOU = "Looted by you (gross)"
 
 
 def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
-    """Show the known group's loot and coin without changing the collected session.
+    """Show current-group totals without changing the collected session.
 
     Item counters are complete even when only recent loot details were loaded.
-    Kills, deaths and crafts already have group classification in SessionStats.
+    Historical party kills can name members who have since left. Complete
+    participant counters keep current-group totals accurate with bounded details.
     """
     members = {name.casefold() for name in snap.party if name}
     members.add((player or "You").casefold())
@@ -241,6 +242,51 @@ def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
                 by_looter[name] += count
         looter_counts = sorted(by_looter.items(), key=lambda pair: (-pair[1], pair[0]))
     coin = [(name, count) for name, count in snap.coin_by_looter if included(name)]
+    kills = [entry for entry in snap.kill_entries if included(entry[1])]
+    killers = [(name, count) for name, count in snap.kills_by_killer if included(name)]
+    if not snap.kills_by_killer and len(snap.kill_entries) == snap.kills:
+        killers = sorted(Counter(name for _ts, name, _target in kills).items(),
+                         key=lambda pair: (-pair[1], pair[0]))
+    kill_total = sum(count for _name, count in killers)
+    crafts = [entry for entry in snap.craft_entries if included(entry[1])]
+    crafters = [(name, count) for name, count in snap.crafts_by_crafter if included(name)]
+    if not snap.crafts_by_crafter and sum(entry[3] for entry in snap.craft_entries) == snap.crafts:
+        by_crafter: Counter[str] = Counter()
+        for _ts, name, _item, count in crafts:
+            by_crafter[name] += count
+        crafters = sorted(by_crafter.items(), key=lambda pair: (-pair[1], pair[0]))
+    craft_total = sum(count for _name, count in crafters)
+    deaths = [(name, count) for name, count in snap.deaths_by_player if included(name)]
+    allocations = getattr(snap, "_participant_totals", {})
+    filtered_allocations = {
+        kind: {key: count for key, count in counts.items() if included(key[0])}
+        for kind, counts in allocations.items()
+    }
+
+    def detail_counts(kind: str, total: int, aggregate: list[tuple[str, int]],
+                      original_total: int, details: Counter[str], complete: bool) -> list[tuple[str, int]]:
+        if kind in filtered_allocations:
+            counts: Counter[str] = Counter()
+            for (_actor, target), count in filtered_allocations[kind].items():
+                counts[target] += count
+            return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])) if sum(counts.values()) == total else []
+        if total == original_total:
+            return aggregate
+        # Older snapshots may only carry recent rows. Keep their complete
+        # participant totals without presenting partial details as full totals.
+        return sorted(details.items(), key=lambda pair: (-pair[1], pair[0])) if complete else []
+
+    kill_targets = detail_counts(
+        "kill_targets", kill_total, snap.kills_by_target, snap.kills,
+        Counter(target for _ts, _actor, target in kills), len(snap.kill_entries) == snap.kills,
+    )
+    craft_items: Counter[str] = Counter()
+    for _ts, _actor, item, count in crafts:
+        craft_items[item] += count
+    craft_targets = detail_counts(
+        "craft_items", craft_total, snap.crafts_by_item, snap.crafts, craft_items,
+        sum(entry[3] for entry in snap.craft_entries) == snap.crafts,
+    )
 
     def recent_included(entry: SessionEntry) -> bool:
         if entry.kind == "kill":
@@ -260,11 +306,16 @@ def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         coin_total=sum(count for _name, count in coin),
         coin_by_looter=coin,
         rewards=[entry for entry in snap.rewards if included(entry.looter)],
+        kills=kill_total, kills_by_killer=killers, kills_by_target=kill_targets, kill_entries=kills,
+        crafts=craft_total, crafts_by_crafter=crafters, crafts_by_item=craft_targets, craft_entries=crafts,
+        deaths=sum(count for _name, count in deaths), deaths_by_player=deaths,
         recent=[entry for entry in snap.recent if recent_included(entry)],
         outsider_deaths=[], outsider_kills=0, outsider_crafts=[],
     )
     if hasattr(snap, "_personal_totals"):
         projected._personal_totals = snap._personal_totals
+    if allocations:
+        projected._participant_totals = filtered_allocations
     return projected
 
 
@@ -595,11 +646,13 @@ class SessionStats:
         deaths = deque(maxlen=detail_limit)
         outsiders = deque(maxlen=detail_limit)
         totals = {name: Counter() for name in ("killers", "targets", "deaths", "outsiders", "own_targets")}
+        totals["kill_targets"] = Counter()
         def killed(ts: float, killer: str | None, victim: str) -> None:
             kills.append((ts, killer, victim))
             if killer:
                 totals["killers"][killer] += 1
             totals["targets"][victim] += 1
+            totals["kill_targets"][(killer, victim)] += 1
             if killer == you:
                 totals["own_targets"][victim] += 1
         outsider_kills = 0
@@ -651,6 +704,7 @@ class SessionStats:
         result = dataclasses.replace(content, elapsed=max(0.0, (time.time() if now is None else now) - self.started),
                                    player_status=_copy_player_status(content.player_status))
         result._personal_totals = content._personal_totals
+        result._participant_totals = content._participant_totals
         return result
 
     def _build_snapshot(self, now: float | None = None, *, detail_limit: int | None = None) -> SessionSnapshot:
@@ -708,6 +762,7 @@ class SessionStats:
         crafts = deque(maxlen=detail_limit)
         crafts_by_crafter: Counter[str] = Counter()
         crafts_by_item: Counter[str] = Counter()
+        craft_items_by_participant: Counter[tuple[str, str]] = Counter()
         own_crafts: Counter[str] = Counter()
         outsider_crafts: Counter[str] = Counter()
         for ts, raw, item, n in self._craft_entries:
@@ -718,6 +773,7 @@ class SessionStats:
             crafts.append((ts, crafter, item, n))
             crafts_by_crafter[crafter] += n
             crafts_by_item[item] += n
+            craft_items_by_participant[(crafter, item)] += n
             if crafter == you:
                 own_crafts[item] += n
         # What the viewer got: every split (theirs by definition), and their own loots without
@@ -784,6 +840,10 @@ class SessionStats:
         snap._personal_totals = dict(player=you, items=sum(own_items.values()), items_by_name=fold(Counter(own_items), lambda n: n),
                                     crafts=sum(own_crafts.values()), crafts_by_item=fold(own_crafts, lambda n: n),
                                     kills=sum(own_kills.values()), kills_by_target=fold(own_kills, lambda n: n))
+        # Complete participant allocations are internal like _personal_totals;
+        # bounded views can filter former members without scanning raw history.
+        snap._participant_totals = {"kill_targets": slain["kill_targets"],
+                                    "craft_items": craft_items_by_participant}
         return snap
 
     # ------------------------------------------------------------------

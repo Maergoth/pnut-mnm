@@ -37,7 +37,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Mez awakenings show targets and times, without guessed breakers.",
             "Revenge's compact header makes more room for names.",
             "Revenge alerts match participants, avoiding item names like Wolf Tooth.",
-            "Session loot honors Show other groups; its header indicates all zones.",
+            "Session honors your current group filter; its header indicates all zones.",
         ),
         settings_label="Mini stat settings",
         settings_target="player_status_enabled",
