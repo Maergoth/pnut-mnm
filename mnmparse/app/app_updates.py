@@ -1,7 +1,7 @@
 """Verified GitHub release downloads and a deferred Windows application swap.
 
-Checking for an update never executes the download or changes the installation.
-The caller explicitly invokes ``prepare_restart`` before quitting the application.
+Checking for an update never executes the download or replaces application files.
+Verified downloads survive quitting and install on the next interactive launch.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ import zipfile
 from PySide6.QtCore import QObject, Signal, Slot
 
 from mnmparse.app import APP_VERSION
-from mnmparse.app.launch_identity import EXECUTABLE, is_session_executable
+from mnmparse.app.launch_identity import EXECUTABLE, _guard_name, is_session_executable
 from mnmparse.provenance import validate_build_info
 from mnmparse.storage import atomic_json, atomic_write, mark_owned, prune_owned
 
@@ -231,7 +231,8 @@ def verify_package_version(package: Path, version: str) -> dict:
         raise UpdateError("The update package version/build provenance does not match its release.") from exc
 
 
-def download_update(cancelled: threading.Event, progress: Callable[[str], None]) -> tuple[str, Path] | None:
+def download_update(cancelled: threading.Event, progress: Callable[[str], None],
+                    installation: Path | None = None) -> tuple[str, Path] | None:
     progress("Checking GitHub for application updates…")
     payload = json.loads(_fetch(LATEST_URL, 1024 * 1024, cancelled))
     release = select_release(payload)
@@ -242,6 +243,7 @@ def download_update(cancelled: threading.Event, progress: Callable[[str], None])
     prune_owned(root, "update-stage", keep=3, max_age_days=7)
     staging = Path(tempfile.mkdtemp(prefix=f"{release.version}-", dir=root))
     mark_owned(staging, "update-stage", pinned=True)
+    persisted = False
     try:
         archive = staging / release.name
         checksum = _fetch(release.checksum_url, 4096, cancelled)
@@ -251,10 +253,17 @@ def download_update(cancelled: threading.Event, progress: Callable[[str], None])
         payload_dir = staging / "package"
         extract_archive(archive, payload_dir, cancelled)
         verify_package_version(payload_dir, release.version)
+        if cancelled.is_set():
+            raise _Cancelled("Update cancelled.")
+        if installation is not None:
+            atomic_write(staging / "release.sha256", checksum)
+            persist_pending_update(installation, staging, release)
+            persisted = True
         return release.version, payload_dir
     finally:
         try:
-            mark_owned(staging, "update-stage")
+            if not persisted:
+                mark_owned(staging, "update-stage")
         except OSError:
             log.warning("Could not unpin update staging directory %s", staging)
 
@@ -282,6 +291,91 @@ def installed_directory() -> Path:
         if path.exists() and _is_link(path):
             raise UpdateError("Automatic updates cannot replace a linked application directory.")
     return install.resolve()
+
+
+def _plain_path(path: Path) -> bool:
+    return not any(_is_link(part) for part in (path, *path.parents))
+
+
+def _pending_record(install: Path) -> tuple[dict, Path] | None:
+    """Accept only this installation's direct, owned download staging directory."""
+    path = install / ".pnut-pending-update.json"
+    if not path.exists() and not _is_link(path):
+        return None
+    try:
+        if not _plain_path(path) or path.stat().st_size > 4096:
+            raise ValueError("invalid pending record")
+        record = json.loads(path.read_text(encoding="utf-8-sig"))
+        if (not isinstance(record, dict) or type(record.get("schema")) is not int or record["schema"] != 1
+                or record.get("installation") != str(install.resolve())):
+            raise ValueError("wrong installation")
+        version = record.get("version")
+        version_tuple(version)
+        stage_name = record.get("stage", "")
+        if (not isinstance(stage_name, str) or not re.fullmatch(re.escape(version) + r"-[a-zA-Z0-9_-]+", stage_name)
+                or record.get("archive") != f"PNUT-MnM-{version}-windows.zip"):
+            raise ValueError("invalid staging path")
+        stage = _stage_root().absolute() / stage_name
+        marker = stage / ".pnut-owned.json"
+        if (not stage.is_dir() or not _plain_path(marker) or marker.stat().st_size > 4096):
+            raise ValueError("unavailable staging directory")
+        owned = json.loads(marker.read_text(encoding="utf-8-sig"))
+        if (not isinstance(owned, dict) or owned.get("schema") != 1 or owned.get("kind") != "update-stage"
+                or owned.get("installation") != str(install.resolve())):
+            raise ValueError("unowned staging directory")
+        for name, maximum in ((record["archive"], MAX_DOWNLOAD), ("release.sha256", 4096)):
+            file = stage / name
+            if not file.is_file() or not _plain_path(file) or not 0 < file.stat().st_size <= maximum:
+                raise ValueError("unavailable archive or checksum")
+        return record, stage
+    except (OSError, ValueError, TypeError) as exc:
+        raise UpdateError("The saved update is unavailable or invalid. Download it again.") from exc
+
+
+def _discard_pending(install: Path, stage: Path | None = None) -> None:
+    path = install / ".pnut-pending-update.json"
+    if path.is_file() and _plain_path(path):
+        path.unlink()
+    if stage is not None:
+        mark_owned(stage, "update-stage")
+
+
+def persist_pending_update(install: Path, stage: Path, release: Release) -> None:
+    """Publish readiness before returning the worker result, including during quit."""
+    install = Path(install).resolve()
+    stage = Path(stage).absolute()
+    if stage.parent != _stage_root().absolute() or not _plain_path(stage):
+        raise UpdateError("The update staging directory is invalid.")
+    try:
+        prior = _pending_record(install)
+    except UpdateError:
+        prior = None
+        _discard_pending(install)
+    # No expiring lease: this ready download remains protected until consumed.
+    atomic_json(stage / ".pnut-owned.json", {"schema": 1, "kind": "update-stage", "created": time.time(),
+                                             "pinned": True, "installation": str(install)})
+    atomic_json(install / ".pnut-pending-update.json", {"schema": 1, "installation": str(install),
+                "version": release.version, "stage": stage.name, "archive": release.name})
+    if prior is not None and prior[1] != stage:
+        mark_owned(prior[1], "update-stage")
+
+
+def prepare_pending_update(arguments: list[str] | None = None) -> tuple[bool, str]:
+    """Run only after acquiring instance guards, before initializing capture/UI."""
+    if os.environ.get("_PNUT_UPDATE_TOKEN"):
+        return False, ""
+    try:
+        installed_directory()
+    except UpdateError:
+        return False, ""
+    controller = AppUpdateController()
+    messages: list[str] = []
+    controller.finished.connect(messages.append)
+    try:
+        prepared = controller.restore_pending() and controller.prepare_restart(arguments)
+        return bool(prepared), messages[-1] if messages else ""
+    finally:
+        controller.shutdown()
 
 
 def make_restart_script(install: Path, package: Path, process_id: int, token: str,
@@ -322,9 +416,29 @@ $swapStarted = $false
 $rolledBack = $false
 $previousBackup = ''
 $previousBackupVersion = ''
+$sessionMutex = $null
+$sessionMutexHeld = $false
 # The new executable is an independent PyInstaller application, not a worker of
 # the old frozen process (which passed its bootloader environment to this helper).
 $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
+function Enter-SessionGuard {
+    if ($script:sessionMutexHeld) { return }
+    if ($null -eq $script:sessionMutex) {
+        $script:sessionMutex = [System.Threading.Mutex]::new($false, __SESSION_MUTEX__)
+    }
+    try {
+        $script:sessionMutexHeld = $script:sessionMutex.WaitOne(15000)
+    } catch [System.Threading.AbandonedMutexException] {
+        $script:sessionMutexHeld = $true
+    }
+    if (-not $script:sessionMutexHeld) { throw 'Another PNUT launch is preparing its session; the update could not acquire the application-file lock.' }
+}
+function Leave-SessionGuard {
+    if ($script:sessionMutexHeld) {
+        $script:sessionMutex.ReleaseMutex()
+        $script:sessionMutexHeld = $false
+    }
+}
 function Assert-PlainPath([string]$path, [string]$root) {
     $full = [IO.Path]::GetFullPath($path)
     $base = [IO.Path]::GetFullPath($root).TrimEnd('\')
@@ -398,6 +512,9 @@ try {
     }
     $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
     if ($owner -and -not $owner.WaitForExit(120000)) { throw 'PNUT did not exit in time; no application files were changed.' }
+    # The launcher holds the same mutex while copying and spawning its session.
+    # Keep those operations out of the interval where support files are replaced.
+    Enter-SessionGuard
     New-Item -ItemType Directory -Path $backup | Out-Null
     Write-Json (Join-Path $backup '.pnut-owned.json') @{schema=1; kind='application-backup'; created=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); pinned=$false}
     $swapStarted = $true
@@ -416,6 +533,7 @@ try {
     $record = @{schema=1; token=$token; status='pending'; version=$version; previous_version=$previousVersion; backup=$backup; previous_backup=$previousBackup; previous_backup_version=$previousBackupVersion; reported=$false}
     Write-Json $receipt $record
     Write-Json $result $record
+    Leave-SessionGuard
     # The helper is hidden, but the restarted interactive application must be visible.
     $env:_PNUT_UPDATE_TOKEN = $token
     if ($restartArgs) { $launchArguments = @{ArgumentList=$restartArgs} } else { $launchArguments = @{} }
@@ -470,6 +588,7 @@ try {
     $failure = $_.Exception.Message
     try {
         if ($swapStarted) {
+            Enter-SessionGuard
             New-Item -ItemType Directory -Path $failed | Out-Null
             Write-Json (Join-Path $failed '.pnut-owned.json') @{schema=1; kind='application-failed'; created=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); pinned=$false}
             foreach ($name in $movedNew) { Move-Owned (Join-Path $install $name) (Join-Path $failed $name) }
@@ -481,6 +600,7 @@ try {
     $record = @{schema=1; token=$token; status=$status; version=$version; previous_version=$previousVersion; error=$failure; backup=$backup; previous_backup=$previousBackup; previous_backup_version=$previousBackupVersion; reported=$false}
     Write-Json $receipt $record
     Write-Json $result $record
+    Leave-SessionGuard
     $env:_PNUT_UPDATE_TOKEN = ''
     $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
     if (-not $owner -and (Test-Path -LiteralPath (Join-Path $install 'PNUT M&M.exe'))) {
@@ -489,6 +609,9 @@ try {
     }
     exit 1
 } finally {
+    try { Leave-SessionGuard } finally {
+        if ($null -ne $sessionMutex) { $sessionMutex.Dispose() }
+    }
     $incomingMarker = Join-Path $incoming '.pnut-owned.json'
     if (Test-Path -LiteralPath $incomingMarker -PathType Leaf) {
         try { $owned = Get-Content -LiteralPath $incomingMarker -Raw | ConvertFrom-Json; $owned.pinned=$false; Write-Json $incomingMarker $owned } catch {}
@@ -508,6 +631,7 @@ try {
             .replace("__PID__", str(process_id)).replace("__TOKEN__", _quote_ps(token))
             .replace("__VERSION__", _quote_ps(version)).replace("__ARGUMENTS__", _quote_ps(argument_text))
             .replace("__RESULT_DIRECTORY__", _quote_ps(result_directory))
+            .replace("__SESSION_MUTEX__", _quote_ps(_guard_name(install)))
             .replace("__PREVIOUS_VERSION__", _quote_ps(APP_VERSION)).replace("__HEALTH_TIMEOUT__", str(health_timeout))
             .replace("__HEALTH_REQUIRED__", "$true" if health_required else "$false"))
 
@@ -627,7 +751,8 @@ class _Signals(QObject):
 
 
 class _Worker:
-    def __init__(self) -> None:
+    def __init__(self, installation: Path | None = None) -> None:
+        self.installation = installation
         self.cancelled = threading.Event()
         self.signals = _Signals()
 
@@ -640,8 +765,9 @@ class _Worker:
 
     def run(self) -> None:
         try:
-            result = download_update(self.cancelled, lambda message: self._emit(self.signals.progress, message))
-            message = f"PNUT {result[0]} is ready. Choose Restart to update to apply it." if result else f"PNUT {APP_VERSION} is up to date."
+            result = download_update(self.cancelled, lambda message: self._emit(self.signals.progress, message),
+                                     installation=self.installation)
+            message = f"PNUT {result[0]} is ready. Restart now or quit and reopen to install." if result else f"PNUT {APP_VERSION} is up to date."
             self._emit(self.signals.completed, result, message)
         except Exception as exc:
             log.warning("Application update failed: %s", exc)
@@ -670,20 +796,48 @@ class AppUpdateController(QObject):
     def ready_package(self) -> Path | None:
         return self._ready_package
 
+    def restore_pending(self) -> bool:
+        """Recover readiness without contacting GitHub or executing the package."""
+        if self._closed or self.is_running or self._restart_prepared:
+            return False
+        try:
+            install = installed_directory()
+            pending = _pending_record(install)
+            if pending is None:
+                return False
+            record, stage = pending
+            if version_tuple(record["version"]) <= version_tuple(APP_VERSION):
+                _discard_pending(install, stage)
+                return False
+            verify_archive(stage / record["archive"], (stage / "release.sha256").read_bytes(), record["archive"])
+            self._ready_version, self._ready_package = record["version"], stage / "package"
+            return True
+        except (OSError, UpdateError) as exc:
+            log.warning("Could not restore pending application update: %s", exc)
+            if "install" in locals():
+                try:
+                    _discard_pending(install, stage if "stage" in locals() else None)
+                except OSError:
+                    pass
+            self.finished.emit(f"Could not restore the saved update: {exc}")
+            return False
+
     @Slot()
     def start(self) -> bool:
         if self._closed or self.is_running or self._restart_prepared:
             return False
         try:
-            installed_directory()
+            install = installed_directory()
         except UpdateError as exc:
             self.finished.emit(str(exc))
             return False
+        if self._ready_package is None:
+            self.restore_pending()
         if self._ready_package is not None:
-            self.finished.emit(f"PNUT {self._ready_version} is ready. Choose Restart to update to apply it.")
+            self.finished.emit(f"PNUT {self._ready_version} is ready. Restart now or quit and reopen to install.")
             self.ready.emit(self._ready_version)
             return False
-        self._worker = worker = _Worker()
+        self._worker = worker = _Worker(install)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.completed.connect(self._on_completed)
         self.started.emit()
@@ -709,9 +863,27 @@ class AppUpdateController(QObject):
     def prepare_restart(self, arguments: list[str] | None = None) -> bool:
         if self._closed or self._ready_package is None or self._restart_prepared:
             return False
+        claimed: tuple[dict, Path] | None = None
         try:
             install = installed_directory()
             package = self._ready_package.resolve()
+            pending = _pending_record(install)
+            if pending is None:
+                raise UpdateError("The saved update is unavailable. Download it again.")
+            if pending is not None:
+                record, stage = pending
+                if (record["version"] != self._ready_version or package != (stage / "package").resolve()
+                        or version_tuple(record["version"]) <= version_tuple(APP_VERSION)):
+                    raise UpdateError("The staged update does not match the saved download.")
+                archive = stage / record["archive"]
+                verify_archive(archive, (stage / "release.sha256").read_bytes(), record["archive"])
+                # Re-extract authenticated bytes instead of trusting files left
+                # on disk between download, quit and the next launch.
+                package = stage / ("verified-" + uuid.uuid4().hex)
+                extract_archive(archive, package, threading.Event())
+            # Windows temporary roots can use 8.3 names while resolve() expands
+            # them. Compare canonical paths on both sides of this boundary.
+            package = package.resolve()
             if (not package.is_relative_to(_stage_root().resolve())
                     or not (package / EXECUTABLE).is_file() or not (package / "_internal").is_dir()):
                 self._ready_package, self._ready_version = None, ""
@@ -728,14 +900,32 @@ class AppUpdateController(QObject):
             script = package.parent / "install.ps1"
             atomic_write(script, make_restart_script(install, package, os.getpid(), token,
                                                      version=self._ready_version, arguments=arguments).encode("utf-8-sig"))
-            mark_owned(package.parent, "update-stage", pinned=True)
             powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            if pending is not None:
+                (install / ".pnut-pending-update.json").unlink()
+                claimed = pending
             subprocess.Popen([str(powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                              cwd=package.parent, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
             self._restart_prepared = True
+            try:
+                mark_owned(package.parent, "update-stage", pinned=True)
+            except OSError:
+                log.warning("Could not renew active update staging lease %s", package.parent)
             return True
         except Exception as exc:
+            if claimed is not None:
+                try:
+                    atomic_json(install / ".pnut-pending-update.json", claimed[0])
+                except OSError:
+                    log.exception("Could not restore saved update after helper launch failed")
+            elif isinstance(exc, (UpdateError, zipfile.BadZipFile)):
+                self._ready_package, self._ready_version = None, ""
+                try:
+                    if "pending" in locals() and pending is not None:
+                        _discard_pending(install, pending[1])
+                except OSError:
+                    log.warning("Could not discard invalid saved update")
             log.exception("Could not prepare application update")
             self.finished.emit(f"Could not install the update: {exc}. Check that the application folder is writable.")
             return False
@@ -746,6 +936,10 @@ class AppUpdateController(QObject):
             return False
         try:
             install = installed_directory()
+            try:
+                pending = _pending_record(install)
+            except UpdateError:
+                pending = None
             package = recovery_package(install)
             record = _receipt(install)
             if package is None or record is None:
@@ -774,6 +968,13 @@ class AppUpdateController(QObject):
                              cwd=staging, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
             self._restart_prepared = True
+            # Restoring a prior version is an explicit decision to cancel a
+            # downloaded upgrade, rather than reinstall it on the next launch.
+            try:
+                _discard_pending(install, pending[1] if pending else None)
+            except OSError:
+                log.warning("Could not cancel pending update during recovery", exc_info=True)
+            self._ready_package, self._ready_version = None, ""
             return True
         except Exception as exc:
             log.exception("Could not prepare application recovery")

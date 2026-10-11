@@ -80,7 +80,10 @@ import mnmparse.app as _app_pkg
 from mnmparse.app import theme
 from mnmparse.app.crop_picker import CropPicker, button_qss, css_color, qcolor
 from mnmparse.app.models import ActorRow, EncounterSnapshot, SkillRow, build_snapshot, merge_snapshots, owner_row, snapshot_rows_for_tab
-from mnmparse.app.widgets import ElidedLabel, FeedView, FlowLayout, MeterTable, SliderRow, StatusChip, ToggleSwitch, actor_display_name
+from mnmparse.app.widgets import (
+    ElidedLabel, FeedView, FlowLayout, MeterTable, SliderRow, StatusChip,
+    ToggleSwitch, actor_display_name, prevent_wheel_value_changes,
+)
 from mnmparse.config import (
     CAPTURE_BACKENDS,
     DEFAULT_CONFIG_PATH,
@@ -2211,6 +2214,7 @@ class SettingsPage(QWidget):
         self, engine: Engine, cfg: Config, settings: QSettings, parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
+        prevent_wheel_value_changes(self)
         self._engine = engine
         self._settings = settings
         self._cfg = cfg

@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from mnmparse.app.pages import _label, _page_qss, _panel
-from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, token
+from mnmparse.app.widgets import ElidedLabel, SliderRow, ToggleSwitch, prevent_wheel_value_changes, token
 from mnmparse.config import Config, project_path
 from mnmparse.privacy import (safe_static_trigger_title,
                              safe_trigger_label, safe_trigger_match)
@@ -102,6 +102,7 @@ class TriggersPage(QWidget):
 
     def __init__(self, engine: "Engine", cfg: Config, settings: QSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        prevent_wheel_value_changes(self)
         self._engine = engine
         self._cfg = cfg
         self._settings = settings

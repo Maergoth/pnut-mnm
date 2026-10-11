@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from mnmparse.app import theme
 from mnmparse.app.crop_picker import CropPicker, button_qss
 from mnmparse.app.morality import MoralityPanel
-from mnmparse.app.widgets import ToggleSwitch
+from mnmparse.app.widgets import ToggleSwitch, prevent_wheel_value_changes
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import Config
 from mnmparse.privacy import casual_enabled
@@ -262,6 +262,7 @@ class SetupWizard(QWizard):
 
     def __init__(self, engine: Any, cfg: Config, parent: QWidget | None = None, *, display_map: bool = True):
         super().__init__(parent)
+        prevent_wheel_value_changes(self)
         self._draft = replace(cfg)
         self._display_map_default = bool(display_map)
         self._frame_size: tuple[int, int] | None = None

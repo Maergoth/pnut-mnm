@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from mnmparse.app import theme
+from mnmparse.app.widgets import prevent_wheel_value_changes
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
@@ -524,6 +525,7 @@ class CropPicker(QWidget):
     def __init__(self, engine: Engine, cfg: Config, parent: QWidget | None = None,
                  *, calibration_preview: bool = False) -> None:
         super().__init__(parent)
+        prevent_wheel_value_changes(self)
         self._engine = engine
         self._cfg = cfg
         self._frame: np.ndarray | None = None

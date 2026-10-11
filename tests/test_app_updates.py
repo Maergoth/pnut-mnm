@@ -229,7 +229,7 @@ class ControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             install = root / "App"
-            package = root / "updates" / "download" / "package"
+            package = root / "updates" / "9.8.7-download" / "package"
             install.mkdir()
             package.mkdir(parents=True)
             (package / "_internal").mkdir()
@@ -237,9 +237,14 @@ class ControllerTests(unittest.TestCase):
             (package / "_internal" / "build-info.json").write_text(json.dumps({"schema": 1, "version": "9.8.7",
                 "commit": "a" * 40, "dirty": False, "built_at": "2026-10-10T12:00:00+00:00"}))
             (install / "config.json").write_text("personal")
+            archive = package.parent / "PNUT-MnM-9.8.7-windows.zip"
+            write_package(archive)
+            (package.parent / "release.sha256").write_text(
+                hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n")
             controller = updates.AppUpdateController()
             controller._on_completed(("9.8.7", package), "ready")
             with patch.object(updates, "installed_directory", return_value=install), patch.object(updates, "_stage_root", return_value=root / "updates"), patch.object(updates.subprocess, "Popen") as process:
+                updates.persist_pending_update(install, package.parent, updates.select_release(release_payload()))
                 self.assertTrue(controller.prepare_restart())
                 self.assertFalse(controller.prepare_restart())
             process.assert_called_once()
