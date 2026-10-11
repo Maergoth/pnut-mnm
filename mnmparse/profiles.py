@@ -9,7 +9,8 @@ from mnmparse.config import Config
 
 LEGACY_PROFILE_FIELDS = ("window_title", "capture_backend", "crop", "fps", "ocr_engine", "ocr_scale",
                          "preprocess", "player_name", "log_dir")
-PROFILE_FIELDS = (*LEGACY_PROFILE_FIELDS, "player_status_crop")
+STATS_PROFILE_FIELDS = (*LEGACY_PROFILE_FIELDS, "player_status_crop")
+PROFILE_FIELDS = (*STATS_PROFILE_FIELDS, "player_status_separate")
 
 
 def validate_profiles(profiles: Any) -> dict:
@@ -20,12 +21,16 @@ def validate_profiles(profiles: Any) -> dict:
             raise ValueError("Capture profile names must be between 1 and 80 characters.")
         if (not isinstance(profile, dict) or set(profile) - {"schema", "settings", "calibration"}
                 or profile.get("schema") != 1 or not isinstance(profile.get("settings"), dict)
-                or set(profile["settings"]) not in (set(LEGACY_PROFILE_FIELDS), set(PROFILE_FIELDS))):
+                or set(profile["settings"]) not in (set(LEGACY_PROFILE_FIELDS), set(STATS_PROFILE_FIELDS), set(PROFILE_FIELDS))):
             raise ValueError("Capture profile schema is unsupported.")
         values = profile["settings"]
         defaults = Config()
         for key in PROFILE_FIELDS:
             value = values.get(key)
+            if key == "player_status_separate":
+                if key in values and type(value) is not bool:
+                    raise ValueError("Capture profile separate-region setting must be true or false.")
+                continue
             if key == "player_status_crop" and value is None:
                 continue
             if key in ("crop", "player_status_crop"):
@@ -68,4 +73,5 @@ def apply_profile(cfg: Config, name: str) -> Config:
     values["crop"] = tuple(values["crop"])
     stats_crop = values.get("player_status_crop")
     values["player_status_crop"] = tuple(stats_crop) if stats_crop is not None else None
+    values.setdefault("player_status_separate", stats_crop is not None)
     return dataclasses.replace(cfg, **values, active_profile=name)

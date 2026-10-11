@@ -11,8 +11,8 @@ import re
 import time
 from typing import Any, Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QTimer, Signal, Slot, Qt
-from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QMouseEvent, QMoveEvent, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QTimer, Signal, Slot, Qt
+from PySide6.QtGui import QCloseEvent, QHideEvent, QMouseEvent, QMoveEvent, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from PySide6.QtWidgets import QSizePolicy
@@ -1053,59 +1053,6 @@ class RevengeList(QFrame):
         self._set_error(self.controller.last_error)
 
 
-class _PopoutHeader(QFrame):
-    def __init__(self, owner: "RevengePopoutWindow"):
-        super().__init__(owner)
-        self._owner = owner
-        self._drag: QPoint | None = None
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 4, 4)
-        layout.setSpacing(6)
-        self.heading = QLabel("Revenge")
-        self.heading.setTextFormat(Qt.TextFormat.PlainText)
-        self.heading.setProperty("class", "title")
-        layout.addWidget(self.heading, 1)
-        self.close_button = QPushButton("×")
-        self.close_button.setObjectName("Chip")
-        self.close_button.setAccessibleName("Close revenge list popout")
-        self.close_button.setFixedWidth(32)
-        self.close_button.clicked.connect(owner.hide)
-        layout.addWidget(self.close_button)
-
-    def update_cursor(self) -> None:
-        if self._owner.locked:
-            self._drag = None
-        self.setCursor(Qt.CursorShape.ArrowCursor if self._owner.locked else Qt.CursorShape.SizeAllCursor)
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if not self._owner.locked and event.button() == Qt.MouseButton.LeftButton:
-            self._owner._show_header()
-            self._drag = event.globalPosition().toPoint() - self._owner.pos()
-            event.accept()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if not self._owner.locked and self._drag is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self._owner.move(event.globalPosition().toPoint() - self._drag)
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        self._drag = None
-        self._owner._header_hide.start()
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(theme.qcolor("#ffffff", 0.14), 1))
-        painter.setBrush(theme.qcolor(theme.BG1, 0.97))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-                                theme.RADIUS_CHIP, theme.RADIUS_CHIP)
-
-
 class RevengePopoutWindow(QWidget):
     """A passive list with the combat overlay's glass, text scale and move lock."""
 
@@ -1119,6 +1066,7 @@ class RevengePopoutWindow(QWidget):
         self._closing = False
         self._wanted_visible = settings.value("revenge/visible", False, type=bool) if settings is not None else False
         self._locked = True
+        self._drag: QPoint | None = None
         self._opacity = 0.85
         self._font_scale = 1.0
         self.setObjectName("RevengePopout")
@@ -1135,12 +1083,18 @@ class RevengePopoutWindow(QWidget):
         layout.setSpacing(0)
         self.list = RevengeList(controller, self, compact=True, allow_popout=False, minimal=True)
         layout.addWidget(self.list, 1)
-        # Window controls reveal above the column actions without moving them.
-        self.header = _PopoutHeader(self)
-        self._header_hide = QTimer(self)
-        self._header_hide.setSingleShot(True)
-        self._header_hide.setInterval(300)
-        self._header_hide.timeout.connect(self._hide_header)
+        self.close_button = QPushButton("×", self)
+        self.close_button.setObjectName("RevengeClose")
+        self.close_button.setAccessibleName("Close revenge list popout")
+        self.close_button.setToolTip("Close")
+        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_button.setFixedSize(20, 20)
+        self.close_button.setStyleSheet(
+            f"#RevengeClose {{ background: transparent; color: {theme.MUTED}; border: 0;"
+            " border-radius: 4px; padding: 0; min-height: 0; font-size: 18px; }"
+            f"#RevengeClose:hover {{ background: rgba(255,255,255,0.08); color: {theme.TEXT}; }}")
+        self.close_button.clicked.connect(self.hide)
         self._grip = OverlaySizeGrip(self)
         self._grip.setAccessibleName("Resize revenge list popout")
         self._grip.setToolTip("Drag to resize")
@@ -1156,8 +1110,6 @@ class RevengePopoutWindow(QWidget):
             font_scale = settings.value("overlay/font_scale", font_scale, type=float)
         self.set_appearance(opacity, font_scale)
         self.set_locked(locked)
-        self._watch_hover_targets()
-        self.header.hide()
         if settings is not None:
             rect = settings.value("revenge/geometry")
             if isinstance(rect, QRect) and rect.isValid():
@@ -1176,7 +1128,7 @@ class RevengePopoutWindow(QWidget):
 
     def _restore_geometry(self, rect: QRect) -> None:
         area = self._available_area(rect)
-        self._fit_header(area)
+        self._fit_chrome(area)
         if area is None:
             self.setGeometry(rect)
             return
@@ -1219,7 +1171,9 @@ class RevengePopoutWindow(QWidget):
     def set_locked(self, locked: bool) -> None:
         """Prevent moving and resizing while keeping list controls interactive."""
         self._locked = bool(locked)
-        self.header.update_cursor()
+        if self._locked:
+            self._drag = None
+        self.setCursor(Qt.CursorShape.ArrowCursor if self._locked else Qt.CursorShape.SizeAllCursor)
         self._grip.setVisible(not self._locked)
 
     def set_appearance(self, opacity: float, font_scale: float) -> None:
@@ -1233,62 +1187,40 @@ class RevengePopoutWindow(QWidget):
         self._position_chrome()
         self.update()
 
-    def _fit_header(self, area: QRect | None) -> None:
-        """Keep controls reachable when a smaller monitor cannot fit their scale."""
-        normal_px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
-        for px in range(normal_px, 8, -1):
-            self.header.setStyleSheet(f"QWidget {{ font-size: {px}px; }}" if px < normal_px else "")
-            self.header.close_button.setFixedWidth(max(32, round(px * 2.5)))
-            self.header.layout().invalidate()
-            if area is None or self.header.sizeHint().width() + 10 <= area.width():
-                break
-        minimum = max(240, round(240 * self._font_scale), self.header.sizeHint().width() + 10)
+    def _fit_chrome(self, area: QRect | None) -> None:
+        """Keep the list reachable when restoring onto a smaller monitor."""
+        minimum = max(240, round(240 * self._font_scale))
         self.setMinimumWidth(min(minimum, area.width()) if area is not None else minimum)
 
     def _position_chrome(self) -> None:
-        self.layout().setContentsMargins(2, self.header.sizeHint().height() + 7, 2, 8)
+        # A narrow, stable strip leaves the close control clear of both columns.
+        self.layout().setContentsMargins(2, self.close_button.height() + 4, 2, 8)
         self.layout().activate()
-        self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
+        self.close_button.move(self.width() - self.close_button.width() - 4, 2)
+        self.close_button.raise_()
         self._grip.resize(16, 16)
         self._grip.move(self.width() - self._grip.width() - 2,
                         self.height() - self._grip.height() - 2)
         self._grip.raise_()
 
-    def _watch_hover_targets(self) -> None:
-        for widget in (self, *self.findChildren(QWidget)):
-            if widget.window() is self and not widget.property("revengeHoverTracked"):
-                widget.setProperty("revengeHoverTracked", True)
-                widget.setMouseTracking(True)
-                widget.installEventFilter(self)
-
-    def _near_header(self, point: QPoint) -> bool:
-        return self.rect().contains(point) and point.y() <= self.header.geometry().bottom()
-
-    def _show_header(self) -> None:
-        self._header_hide.stop()
-        self.header.show()
-        self.header.raise_()
-
-    def _hide_header(self) -> None:
-        if self.header._drag is not None or self.list._manual_dialog is not None:
-            self._header_hide.start()
-        elif self._near_header(self.mapFromGlobal(QCursor.pos())):
-            return
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if (not self._locked and event.button() == Qt.MouseButton.LeftButton
+                and event.position().y() < self.layout().contentsMargins().top()):
+            self._drag = event.globalPosition().toPoint() - self.pos()
+            event.accept()
         else:
-            self.header.hide()
+            super().mousePressEvent(event)
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
-        if isinstance(watched, QWidget) and watched.window() is self:
-            kind = event.type()
-            if kind in (QEvent.Type.Enter, QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress):
-                position = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
-                if self._near_header(self.mapFromGlobal(position)):
-                    self._show_header()
-                elif not self._header_hide.isActive():
-                    self._header_hide.start()
-            elif kind == QEvent.Type.Leave and not self._header_hide.isActive():
-                self._header_hide.start()
-        return super().eventFilter(watched, event)
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if not self._locked and self._drag is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        self._drag = None
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         painter = QPainter(self)
@@ -1315,13 +1247,10 @@ class RevengePopoutWindow(QWidget):
         super().closeEvent(event)
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
-        self._header_hide.stop()
-        self.header._drag = None
-        self.header.hide()
+        self._drag = None
         super().hideEvent(event)
 
     def _sync_visibility(self):
-        self._watch_hover_targets()
         if not self.controller.enabled:
             super().hide()
         elif self._restored and self._wanted_visible and not self._closing:

@@ -293,7 +293,7 @@ class Engine(QObject):
     encounter_closed = Signal(object)
     encounter_updated = Signal(object)
     session = Signal(object)  #: SessionSnapshot (loot, coin, kills, deaths, CC) for the whole run
-    low_health = Signal(float)  #: confirmed own HP below 10%; one alert per low-health episode
+    low_health = Signal(float)  #: confirmed own HP below the threshold; one alert per low-health episode
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -534,11 +534,15 @@ class Engine(QObject):
             previous = self._cfg
             self._cfg = dataclasses.replace(cfg)
             if any(getattr(previous, name, None) != getattr(cfg, name, None) for name in
-                   ("crop", "player_status_crop", "player_status_enabled", "player_status_xp", "player_name")):
+                   ("crop", "player_status_crop", "player_status_separate", "player_status_enabled", "player_status_xp", "player_name")):
                 self._pause_player_status()
                 self._player_panel_key = None
                 self._player_crop_warned = False
                 self._player_reader_warned = False
+            if (previous.low_health_threshold != cfg.low_health_threshold
+                    or previous.low_health_enabled != cfg.low_health_enabled):
+                self._telemetry().set_health_threshold(cfg.low_health_threshold)
+                self._low_health_alert_at = float("-inf")
             self._crop_warned = False
             self._row_frames = 0
             self._rows_warned = False
@@ -1604,7 +1608,7 @@ class Engine(QObject):
             self.notice.emit("Mini stats region does not fit the game window; select it again in Settings.")
 
     def _status_crop_for_source(self, source: Any, cfg: Config, frame: Any = None) -> Any:
-        crop = getattr(cfg, "player_status_crop", None) if cfg.player_status_enabled else None
+        crop = cfg.player_status_crop if cfg.player_status_enabled and cfg.player_status_separate else None
         if crop is None:
             return None
         if (not isinstance(crop, (list, tuple)) or len(crop) != 4
@@ -1625,7 +1629,8 @@ class Engine(QObject):
         """Live baselines belong to one session; restored totals need fresh observations."""
         if self._player_telemetry_owner is not self._session_stats:
             from mnmparse.player_telemetry import PlayerTelemetry
-            self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}))
+            self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}),
+                                                     low_health_threshold=self._cfg.low_health_threshold)
             self._player_telemetry_owner = self._session_stats
             self._player_panel_key = None
         return self._player_telemetry
@@ -1644,7 +1649,7 @@ class Engine(QObject):
 
     def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any) -> None:
         telemetry = self._telemetry()
-        key = (tuple(cfg.crop), getattr(cfg, "player_status_crop", None), tuple(shape),
+        key = (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop), tuple(shape),
                tuple(reading.panel_rect) if reading is not None else None)
         prior = self._player_panel_key
         if (prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None
@@ -1706,13 +1711,15 @@ class Engine(QObject):
             self._record_timing("preprocess", preprocess_started)
         lines = ocr.read(img)
         reading = None
-        separate = getattr(cfg, "player_status_crop", None) is not None
+        separate = cfg.player_status_separate
         status_raw = raw
         if cfg.player_status_enabled:
             from mnmparse.player_status import read_player_status
             try:
                 if separate:
-                    if status_frame is None and not cropped:
+                    if cfg.player_status_crop is None:
+                        status_frame = None
+                    elif status_frame is None and not cropped:
                         if self._status_crop_for_source(None, cfg, frame) is not None:
                             status_frame = crop_frame(frame, cfg.player_status_crop)
                     status_raw = status_frame

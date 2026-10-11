@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.9 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.10 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.9-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.10-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -299,11 +299,16 @@ Log imports run in the background and can be canceled; a canceled import is not 
 Carebear Mode also filters individual performance in historical and imported views and exports.
 
 **Mini stats.** Settings > Mini stat window can read your visible Health and XP bar.
-Choose **Separate stats region** to select that panel independently of the Combat chat crop;
-keep it clear of chat, since covered lines cannot be recovered. Without a separate region,
-the panel can be detected inside the chat crop. Its stat text is kept out of chat parsing.
-Below 10% HP, two fresh readings can sound an alert and briefly flash red screen edges.
-Choose the sound, volume and flash in the same section.
+New setups default to **Separate stats region**. In setup step 2, use **Select area** to
+choose Combat chat or optional Mini stats from the same frame. Select the stat panel,
+including its XP bar; readings begin after its rectangle is chosen. Keep it clear of chat,
+since covered lines cannot be recovered. You can also configure it in Settings.
+With **Separate stats region** off, the panel can be detected inside the chat crop; its stat text
+is kept out of chat parsing. Labels and values are paired by screen position, so their
+order in the OCR result list does not matter.
+Two fresh HP readings below your chosen threshold can sound an alert and briefly flash
+red screen edges. The threshold defaults to **10%**. Choose the threshold, sound, volume
+and flash in the same section; **Preview sound** plays the selected tone and volume.
 
 Session estimates **XP/hour** by comparing stable bar readings about five minutes apart.
 Yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
@@ -561,8 +566,8 @@ name. **Add** accepts any nonempty name or label, including spaces, symbols and 
 The main panel and overlay both offer **Pop out**, opening one synchronized passive window.
 The pop-out shares the overlay's colors, background opacity, text size and move/resize lock.
 Guilds and Players appear in separate lists side by side. Use **+** beside either heading
-to add entries; click **Guilds** or **Players** to copy that list's CSV. Hover near the
-pop-out's top edge to reveal Close.
+to add entries; click **Guilds** or **Players** to copy that list's CSV. The **×** in the
+top-right corner closes the pop-out.
 The pop-out remembers whether it was open, its position and its size between sessions.
 Removing a player or guild from the pop-out asks for confirmation.
 When unlocked, drag its dotted bottom-right grip to resize it.

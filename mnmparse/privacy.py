@@ -191,10 +191,10 @@ def safe_trigger_definition(trigger: Any, cfg: Any = None) -> dict[str, Any]:
 
 def safe_config_data(data: dict[str, Any]) -> dict[str, Any]:
     """Technical report settings never include arbitrary user text or peer data."""
-    keys = {"config_schema", "capture_backend", "crop", "player_status_crop", "fps", "ocr_engine", "ocr_scale",
+    keys = {"config_schema", "capture_backend", "crop", "player_status_crop", "player_status_separate", "fps", "ocr_engine", "ocr_scale",
             "preprocess", "encounter_timeout_s", "stats_interval_s", "feed_max_lines",
             "overlay_opacity", "overlay_font_scale", "casual_mode", "reduced_motion",
             "history_recent_fights", "history_retention_days", "revenge_enabled",
             "revenge_days", "revenge_entries", "player_status_enabled", "player_status_xp",
-            "low_health_enabled", "low_health_flash", "low_health_sound", "low_health_volume"}
+            "low_health_enabled", "low_health_threshold", "low_health_flash", "low_health_sound", "low_health_volume"}
     return {key: data[key] for key in keys if key in data}

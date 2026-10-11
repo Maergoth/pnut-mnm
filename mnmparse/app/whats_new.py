@@ -28,6 +28,16 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.10": ReleaseNotes(
+        changes=(
+            "First-time setup now selects Combat chat and optional Mini stats from one captured frame.",
+            "New setups default to a separate stats region. Select its rectangle to start HP and XP readings.",
+            "Choose your low-health threshold and preview its sound beside the dropdown in Mini stat settings.",
+            "The Revenge pop-out has a small always-visible close button instead of a hover header.",
+        ),
+        settings_label="Mini stat settings",
+        settings_target="player_status_enabled",
+    ),
     "1.0.9": ReleaseNotes(
         changes=(
             "Mini stats can use a separate capture region. Select it in Settings, clear of chat.",

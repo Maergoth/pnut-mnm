@@ -119,9 +119,11 @@ class Config:
     feed_max_lines: int = 500
     include_personal: bool = False  #: count lines only the viewer gets (skill-ups, faction, XP) in the Session tab
     player_status_enabled: bool = True  #: read the mini stat panel
-    player_status_crop: tuple[int, int, int, int] | None = None  #: None reads stats inside the chat crop
+    player_status_separate: bool = True  #: read a separate region after it is selected
+    player_status_crop: tuple[int, int, int, int] | None = None  #: None means no separate region selected
     player_status_xp: bool = True  #: estimate experience from its yellow/blue bar
-    low_health_enabled: bool = True  #: alert once when confirmed health falls below 10%
+    low_health_enabled: bool = True  #: alert once when confirmed health falls below the threshold
+    low_health_threshold: int = 10  #: health percentage; two fresh readings below it confirm an alert
     low_health_flash: bool = True  #: briefly color the screen edges red
     low_health_sound: str = "Alert"
     low_health_volume: int = 80  #: percent of the trigger master volume
@@ -188,7 +190,7 @@ class Config:
             issues.append("revenge_days must be an integer between 0 (all) and 3650")
         if type(self.revenge_entries) is not int or not 0 <= self.revenge_entries <= 1000:
             issues.append("revenge_entries must be an integer between 0 (all) and 1000")
-        for name in ("revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_xp",
+        for name in ("revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_separate", "player_status_xp",
                      "low_health_enabled", "low_health_flash"):
             if type(getattr(self, name)) is not bool:
                 issues.append(f"{name} must be true or false")
@@ -200,6 +202,8 @@ class Config:
             issues.append("low_health_sound must be a built-in sound or empty (silent)")
         if type(self.low_health_volume) is not int or not 0 <= self.low_health_volume <= 100:
             issues.append("low_health_volume must be an integer between 0 and 100")
+        if type(self.low_health_threshold) is not int or not 1 <= self.low_health_threshold <= 100:
+            issues.append("low_health_threshold must be an integer between 1 and 100")
         for name, minimum, maximum in (("revenge_alert_cooldown", 0, 3600), ("revenge_alert_duration", 1, 60)):
             if not _bounded_number(getattr(self, name), minimum, maximum):
                 issues.append(f"{name} must be a finite number between {minimum} and {maximum}")
@@ -259,13 +263,16 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
     if name == "capture_profiles":
         from mnmparse.profiles import validate_profiles
         return validate_profiles(value)
-    if name in {"revenge_days", "revenge_entries", "revenge_alert_volume", "low_health_volume"}:
+    if name in {"revenge_days", "revenge_entries", "revenge_alert_volume", "low_health_volume", "low_health_threshold"}:
         if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise ValueError("expected a whole number")
         number = int(value)
         maximum = {"revenge_days": 3650, "revenge_entries": 1000, "revenge_alert_volume": 100,
-                   "low_health_volume": 100}[name]
-        if not 0 <= number <= maximum:
+                   "low_health_volume": 100, "low_health_threshold": 100}[name]
+        minimum = 1 if name == "low_health_threshold" else 0
+        if not minimum <= number <= maximum:
+            if minimum:
+                raise ValueError(f"expected {minimum} through {maximum}")
             label = "0" if name in {"revenge_alert_volume", "low_health_volume"} else "0 (all)"
             raise ValueError(f"expected {label} through {maximum}")
         return number
@@ -284,7 +291,7 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         if value not in ("", *BUILTIN_SOUNDS):
             raise ValueError("expected a built-in sound or empty (silent)")
         return value
-    if name in {"revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_xp",
+    if name in {"revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_separate", "player_status_xp",
                 "low_health_enabled", "low_health_flash"} and not isinstance(value, (bool, str)):
         if type(value) is not int or value not in (0, 1):
             raise ValueError("expected true or false")
@@ -373,11 +380,16 @@ def load_config(path: str | None = None) -> Config:
         return cfg
     log.debug("Loaded config from %s", cfg_path)
     loaded = _apply_overrides(cfg, data, source=str(cfg_path))
+    return _migrate_saved_config(loaded, data)
+
+
+def _migrate_saved_config(loaded: Config, data: dict[str, Any]) -> Config:
+    """Preserve prior capture choices before materializing new defaults."""
     # The setup wizard was introduced after existing users had already saved
     # their character and crop. Do not force them through first-run calibration.
     if "setup_complete" not in data and loaded.player_name.strip() and loaded.window_title.strip():
         try:
-            left, top, right, bottom = _coerce("crop", data.get("crop"), cfg.crop)
+            left, top, right, bottom = _coerce("crop", data.get("crop"), loaded.crop)
             calibrated = (0 <= left < right and 0 <= top < bottom
                           and loaded.capture_backend in CAPTURE_BACKENDS
                           and loaded.ocr_engine in OCR_ENGINES)
@@ -385,6 +397,10 @@ def load_config(path: str | None = None) -> Config:
             calibrated = False
         if calibrated:
             loaded = dataclasses.replace(loaded, setup_complete=True)
+    # Preserve the mode of installed, calibrated versions before separate capture
+    # had its own flag. New first-run configurations keep separate capture pending.
+    if "player_status_separate" not in data and loaded.setup_complete:
+        loaded = dataclasses.replace(loaded, player_status_separate=loaded.player_status_crop is not None)
     return loaded
 
 

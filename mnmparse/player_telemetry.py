@@ -38,7 +38,7 @@ class PlayerTelemetry:
     are internal alert signals. Own level-up chat can confirm XP bar wraps.
     """
 
-    def __init__(self, initial: dict[str, Any] | None = None):
+    def __init__(self, initial: dict[str, Any] | None = None, *, low_health_threshold: int = 10):
         initial = initial if isinstance(initial, dict) else {}
         self._hp_seconds = _nonnegative(initial.get("hp_observed_seconds"))
         self._hp_low_seconds = _nonnegative(initial.get("hp_below10_seconds"))
@@ -55,6 +55,17 @@ class PlayerTelemetry:
             self._xp_gain = self._xp_gain or 0.0
         self._xp_wraps = int(_nonnegative(initial.get("xp_level_ups"), 0))
         self._clear_live()
+        self.set_health_threshold(low_health_threshold)
+
+    def set_health_threshold(self, threshold: int) -> None:
+        """Require fresh HP confirmation after changes, preserving the XP window."""
+        if type(threshold) is not int or not 1 <= threshold <= 100:
+            raise ValueError("Health threshold must be an integer between 1 and 100.")
+        self.low_health_threshold = threshold
+        self._hp_previous = None
+        self._hp_percent = None
+        self._hp_low_count = 0
+        self._hp_low = False
 
     def _clear_xp(self) -> None:
         self._xp_previous_ts: float | None = None
@@ -127,9 +138,9 @@ class PlayerTelemetry:
         else:
             self._hp_low_count = 0
             self._hp_low = False
-        if percent < 10:
+        if percent < self.low_health_threshold:
             self._hp_low_count += 1
-            if contiguous and previous[1] < 10:
+            if contiguous and previous[1] < self.low_health_threshold:
                 self._hp_low_seconds += ts - previous[0]
             if self._hp_low_count >= 2 and not self._hp_low:
                 self._hp_episodes += 1
