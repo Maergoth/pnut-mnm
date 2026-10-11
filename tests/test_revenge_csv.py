@@ -64,7 +64,7 @@ class RevengeCsvTests(unittest.TestCase):
         self.assertEqual(parse_csv("Name\nGuild name\n", default_kind="Guild"), (CsvEntry("Guild name", "Guild"),))
         self.assertEqual(parse_names("Nameless\nName with symbols []\n", kind="Guild"),
                          (CsvEntry("Nameless", "Guild"), CsvEntry("Name with symbols []", "Guild")))
-        self.assertEqual(parse_csv('First, Second,"Name, with comma"', default_kind="Guild"),
+        self.assertEqual(parse_csv('First, Second, "Name, with comma"', default_kind="Guild"),
                          (CsvEntry("First", "Guild"), CsvEntry("Second", "Guild"), CsvEntry("Name, with comma", "Guild")))
         self.assertEqual(parse_csv("Name"), (CsvEntry("Name"),))
         self.assertEqual(parse_csv("Type,Name"), (CsvEntry("Type"), CsvEntry("Name")))

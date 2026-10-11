@@ -64,7 +64,7 @@ def parse_csv(text: str, *, default_kind: str = "Player") -> tuple[CsvEntry, ...
     if default_kind not in KINDS:
         raise RevengeCsvError("Choose a Player or Guild list.")
     text = text.lstrip("\ufeff")
-    reader = csv.reader(io.StringIO(text, newline=""), strict=True)
+    reader = csv.reader(io.StringIO(text, newline=""), strict=True, skipinitialspace=True)
     try:
         rows = (row for row in reader if row)
         first = next(rows, None)
