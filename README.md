@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.6 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.7 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.6-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.7-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -546,7 +546,9 @@ name. **Add** accepts any nonempty name or label, including spaces, symbols and 
 The main panel and overlay both offer **Pop out**, opening one synchronized passive window.
 The pop-out shares the overlay's colors, background opacity, text size and move/resize lock.
 Guilds and Players appear in separate lists side by side. Hover near the pop-out's top edge
-to reveal their compact Add and Export controls and Close.
+to reveal their compact Add, clipboard copy/import controls and Close.
+The pop-out remembers whether it was open, its position and its size between sessions.
+Removing a player or guild from the pop-out asks for confirmation.
 When unlocked, drag its dotted bottom-right grip to resize it.
 Both lists show newest activity first. Settings limits the display to **30 days / 100
 entries** per list by default; choose **All** for either limit. Filters never delete saved entries.
@@ -557,9 +559,11 @@ for CSV imports. Its **Export** copies that list as CSV with `Type,Name` columns
 merge entries into the selected list without replacing saved activity dates. Player
 entries can trigger sighting alerts; Guild entries are reminders, since combat chat does
 not identify guild membership.
+The pop-out's **Copy CSV to Clipboard** and **Import CSV from Clipboard** icons work
+per list. Import opens that list's Add dialog with a preview; choose **Add** to confirm.
 
-After an update, **What's New!** highlights that release's new features once, with a
-shortcut to their settings.
+After an update, **What's New!** includes every release since the last version you
+acknowledged, each labeled with its version number and shortcuts to relevant settings.
 
 **Combat log alerts** show a fading notification when a saved name appears, with a soft
 flash and quiet tone. Customize the flash, sound, volume, display time and repeat delay

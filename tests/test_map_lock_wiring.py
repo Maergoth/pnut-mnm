@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QObject, QRect, QSettings, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -168,6 +168,24 @@ class MapLockWiringTests(unittest.TestCase):
         host.shutdown()
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
         self.assertFalse(reopened.value("map/visible", True, type=bool))
+
+    def test_bootstrap_and_shutdown_preserve_open_revenge_popout_state(self):
+        saved = QRect(80, 60, 480, 420)
+        self.settings.setValue("revenge/visible", True)
+        self.settings.setValue("revenge/geometry", saved)
+        self.settings.setValue("overlay/locked", False)
+        self.settings.setValue("overlay/opacity", 0.42)
+        host = self.bootstrap(Config(revenge_enabled=True))
+        self.qt_app.processEvents()
+        self.assertTrue(host.revenge_popout.isVisible())
+        self.assertEqual(host.revenge_popout.geometry(), saved)
+        self.assertFalse(host.revenge_popout.locked)
+        self.assertAlmostEqual(host.revenge_popout.opacity, 0.42)
+        host.shutdown()
+        self.assertTrue(host.revenge_popout.isHidden())
+        reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
+        self.assertTrue(reopened.value("revenge/visible", False, type=bool))
+        self.assertEqual(reopened.value("revenge/geometry", QRect()), saved)
 
     def test_bootstrap_uses_persisted_effective_lock_and_appearance(self):
         self.settings.setValue("overlay/locked", True)

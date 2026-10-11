@@ -43,6 +43,42 @@ def write_package(path: Path, extras=()):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_previous_update_version_only_uses_current_successful_update_receipt(self):
+        current = "1.0.7"
+        valid = {"schema": 1, "token": "a" * 32, "status": "healthy",
+                 "version": current, "previous_version": "1.0.5"}
+        missing_previous = dict(valid)
+        missing_previous.pop("previous_version")
+        cases = (
+            ("healthy", valid, "1.0.5"),
+            ("pending", {**valid, "status": "pending", "previous_version": "1.0.6"}, "1.0.6"),
+            ("stale receipt", {**valid, "version": "1.0.6"}, ""),
+            ("rolled back", {**valid, "status": "rolled_back"}, ""),
+            ("failed", {**valid, "status": "failed"}, ""),
+            ("missing previous", missing_previous, ""),
+            ("null previous", {**valid, "previous_version": None}, ""),
+            ("malformed previous", {**valid, "previous_version": "1.0"}, ""),
+            ("nontext previous", {**valid, "previous_version": 12}, ""),
+            ("same previous", {**valid, "previous_version": current}, ""),
+            ("future previous", {**valid, "previous_version": "1.0.8"}, ""),
+            ("invalid receipt schema", {**valid, "schema": 2}, ""),
+            ("invalid receipt token", {**valid, "token": "invalid"}, ""),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp)
+            receipt = install / ".pnut-update.json"
+            with patch.object(updates, "installed_directory", return_value=install), \
+                    patch.object(updates, "APP_VERSION", current):
+                self.assertEqual(updates.previous_update_version(), "")
+                for label, record, expected in cases:
+                    with self.subTest(case=label):
+                        receipt.write_text(json.dumps(record), encoding="utf-8")
+                        self.assertEqual(updates.previous_update_version(), expected)
+                receipt.write_text("not json", encoding="utf-8")
+                self.assertEqual(updates.previous_update_version(), "")
+            with patch.object(updates, "installed_directory", side_effect=updates.UpdateError("Source build")):
+                self.assertEqual(updates.previous_update_version(), "")
+
     def test_numeric_versions_and_no_downgrades(self):
         self.assertGreater(updates.version_tuple("v1.10.0"), updates.version_tuple("1.9.9"))
         self.assertIsNone(updates.select_release(release_payload("0.1.1"), "0.1.2"))

@@ -11,9 +11,9 @@ import re
 import time
 from typing import Any, Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QTimer, Signal, Slot, Qt
-from PySide6.QtGui import QCursor, QHideEvent, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
-from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QTimer, Signal, Slot, Qt
+from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QMouseEvent, QMoveEvent, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from PySide6.QtWidgets import QSizePolicy
 
@@ -675,6 +675,7 @@ class _RevengeAddDialog(QDialog):
         self.name_input.setAccessibleName(f"{kind} name to add")
         layout.addWidget(self.name_input)
         self.from_clipboard = QPushButton("From Clipboard")
+        self.from_clipboard.setToolTip("Import CSV from Clipboard")
         self.from_clipboard.clicked.connect(self._read_clipboard)
         layout.addWidget(self.from_clipboard)
         self.summary = QLabel()
@@ -905,10 +906,12 @@ class RevengeList(QFrame):
         if self.allow_popout and self.controller.available:
             self.controller.pop_out_requested.emit()
 
-    def _open_manual(self, _checked: bool = False, *, kind: str = "Player"):
+    def _open_manual(self, _checked: bool = False, *, kind: str = "Player", from_clipboard: bool = False):
         if not self.controller.available:
             return
         if self._manual_dialog is not None:
+            if from_clipboard and self._manual_dialog.kind == kind:
+                self._manual_dialog._read_clipboard()
             self._manual_dialog.raise_()
             self._manual_dialog.activateWindow()
             return
@@ -917,6 +920,8 @@ class RevengeList(QFrame):
         dialog = _RevengeAddDialog(self.controller, kind, self.window())
         if kind == "Player" and self.name_input.text():
             dialog.setTextValue(self.name_input.text())
+        if from_clipboard:
+            dialog._read_clipboard()
         self._manual_dialog = dialog
         dialog.finished.connect(lambda result: self._finish_manual(dialog, result))
         dialog.open()
@@ -924,6 +929,28 @@ class RevengeList(QFrame):
 
     def _open_guild_manual(self, _checked: bool = False):
         self._open_manual(kind="Guild")
+
+    def _open_clipboard(self, *, kind: str = "Player") -> None:
+        self._open_manual(kind=kind, from_clipboard=True)
+
+    def _remove_saved(self, name: str, *, kind: str = "Player") -> bool:
+        if not self.controller.available:
+            return False
+        if self.minimal:
+            dialog = QMessageBox(self.window())
+            dialog.setWindowTitle(window_title("revenge-remove"))
+            dialog.setStyleSheet(theme.main_qss() + button_qss())
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(f"Remove {name} from {'guilds' if kind == 'Guild' else 'players'}?")
+            dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+            dialog.button(QMessageBox.StandardButton.Yes).setText("Remove")
+            dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+            dialog.setEscapeButton(QMessageBox.StandardButton.Cancel)
+            accepted = dialog.exec() == QMessageBox.StandardButton.Yes
+            dialog.deleteLater()
+            if not accepted:
+                return False
+        return self.controller.remove_saved(name, kind=kind)
 
     def _export_csv(self, _checked: bool = False, *, kind: str = "Player"):
         text = self.controller.export_csv(kind)
@@ -996,7 +1023,7 @@ class RevengeList(QFrame):
                 if self.compact:
                     remove.setFixedWidth(24)
                     remove.setStyleSheet("QPushButton { padding: 3px 4px; }")
-                remove.clicked.connect(lambda _checked=False, n=name, k=kind: self.controller.remove_saved(n, kind=k))
+                remove.clicked.connect(lambda _checked=False, n=name, k=kind: self._remove_saved(n, kind=k))
                 line.addWidget(remove)
                 self._rows[key], self._dates[key], self._labels[key] = row, date, label
             self._labels[key].setText(name)
@@ -1041,20 +1068,36 @@ class _PopoutHeader(QFrame):
         layout.addWidget(self.add_button)
         self.export_button = owner.list.export_button
         self.export_button.setObjectName("RevengeExport")
-        self.export_button.setText("CSV")
-        self.export_button.setToolTip("Copy players as CSV")
+        self.export_button.setText("📋")
+        self.export_button.setToolTip("Copy CSV to Clipboard")
+        self.export_button.setAccessibleName("Copy players CSV to clipboard")
         self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.export_button)
+        self.import_button = QPushButton("📥")
+        self.import_button.setObjectName("RevengeExport")
+        self.import_button.setToolTip("Import CSV from Clipboard")
+        self.import_button.setAccessibleName("Import players CSV from clipboard")
+        self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_button.clicked.connect(lambda: owner.list._open_clipboard(kind="Player"))
+        layout.addWidget(self.import_button)
         self.guild_add_button = owner.list.guild_add_button
         self.guild_add_button.setObjectName("RevengeAdd")
         self.guild_add_button.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.guild_add_button)
         self.guild_export_button = owner.list.guild_export_button
         self.guild_export_button.setObjectName("RevengeExport")
-        self.guild_export_button.setText("CSV")
-        self.guild_export_button.setToolTip("Copy guild reminders as CSV")
+        self.guild_export_button.setText("📋")
+        self.guild_export_button.setToolTip("Copy CSV to Clipboard")
+        self.guild_export_button.setAccessibleName("Copy guilds CSV to clipboard")
         self.guild_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.guild_export_button)
+        self.guild_import_button = QPushButton("📥")
+        self.guild_import_button.setObjectName("RevengeExport")
+        self.guild_import_button.setToolTip("Import CSV from Clipboard")
+        self.guild_import_button.setAccessibleName("Import guilds CSV from clipboard")
+        self.guild_import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.guild_import_button.clicked.connect(lambda: owner.list._open_clipboard(kind="Guild"))
+        layout.addWidget(self.guild_import_button)
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("Chip")
         self.close_button.setAccessibleName("Close revenge list popout")
@@ -1103,6 +1146,11 @@ class RevengePopoutWindow(QWidget):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.controller = controller
+        self._settings = settings
+        self._state_ready = False
+        self._restored = False
+        self._closing = False
+        self._wanted_visible = settings.value("revenge/visible", False, type=bool) if settings is not None else False
         self._locked = True
         self._opacity = 0.85
         self._font_scale = 1.0
@@ -1143,9 +1191,51 @@ class RevengePopoutWindow(QWidget):
         self.set_locked(locked)
         self._watch_hover_targets()
         self.header.hide()
+        if settings is not None:
+            rect = settings.value("revenge/geometry")
+            if isinstance(rect, QRect) and rect.isValid():
+                self._restore_geometry(rect)
         controller.saved_changed.connect(self._sync_visibility)
         controller.prompts_changed.connect(self._sync_visibility)
-        self.hide()
+        self._state_ready = True
+
+    def _available_area(self, rect: QRect) -> QRect | None:
+        screens = QApplication.screens()
+        if not screens:
+            return None
+        screen = next((screen for screen in screens if screen.availableGeometry().contains(rect.center())),
+                      QApplication.primaryScreen() or screens[0])
+        return screen.availableGeometry()
+
+    def _restore_geometry(self, rect: QRect) -> None:
+        area = self._available_area(rect)
+        self._fit_header(area)
+        if area is None:
+            self.setGeometry(rect)
+            return
+        width = min(area.width(), max(self.minimumWidth(), rect.width()))
+        height = min(area.height(), max(self.minimumHeight(), rect.height()))
+        x = min(max(rect.x(), area.left()), area.right() - width + 1)
+        y = min(max(rect.y(), area.top()), area.bottom() - height + 1)
+        self.setGeometry(x, y, width, height)
+
+    def save_state(self) -> None:
+        if self._settings is not None and self._state_ready and not self._closing:
+            rect = self.geometry()
+            if rect.isValid():
+                self._settings.setValue("revenge/geometry", rect)
+            self._settings.setValue("revenge/visible", self._wanted_visible)
+
+    def restore_state(self) -> None:
+        """Restore the user's pop-out choice after startup appearance is applied."""
+        self._restored = True
+        self._sync_visibility()
+
+    def shutdown(self) -> None:
+        """Freeze the open preference before teardown hides the window."""
+        self.save_state()
+        self._closing = True
+        self.close()
 
     @property
     def locked(self) -> bool:
@@ -1172,16 +1262,27 @@ class RevengePopoutWindow(QWidget):
         px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
         self.setStyleSheet(theme.overlay_qss(self._opacity) + button_qss()
                           + f"QWidget {{ font-size: {px}px; }}")
-        self.header.close_button.setFixedWidth(max(32, round(px * 2.5)))
-        self.header.setStyleSheet(f"""
+        self._restore_geometry(self.geometry())
+        self._position_chrome()
+        self.update()
+
+    def _fit_header(self, area: QRect | None) -> None:
+        """Keep controls reachable when a smaller monitor cannot fit their scale."""
+        normal_px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
+        style = f"""
             QPushButton#RevengeAdd, QPushButton#RevengeExport {{ background: transparent; color: {theme.MUTED};
                 border: none; border-radius: 6px; padding: 3px 8px; min-height: 20px; }}
             QPushButton#RevengeAdd:hover, QPushButton#RevengeExport:hover {{
                 background: rgba(255,255,255,0.08); color: {theme.TEXT}; }}
-        """)
-        self.setMinimumWidth(max(360, round(360 * self._font_scale), self.header.sizeHint().width() + 10))
-        self._position_chrome()
-        self.update()
+        """
+        for px in range(normal_px, 8, -1):
+            self.header.setStyleSheet(style + (f"QWidget {{ font-size: {px}px; }}" if px < normal_px else ""))
+            self.header.close_button.setFixedWidth(max(32, round(px * 2.5)))
+            self.header.layout().invalidate()
+            if area is None or self.header.sizeHint().width() + 10 <= area.width():
+                break
+        minimum = max(360, round(360 * self._font_scale), self.header.sizeHint().width() + 10)
+        self.setMinimumWidth(min(minimum, area.width()) if area is not None else minimum)
 
     def _position_chrome(self) -> None:
         self.layout().activate()
@@ -1239,6 +1340,17 @@ class RevengePopoutWindow(QWidget):
         super().resizeEvent(event)
         if hasattr(self, "_grip"):
             self._position_chrome()
+        self.save_state()
+
+    def moveEvent(self, event: QMoveEvent) -> None:  # noqa: N802
+        super().moveEvent(event)
+        self.save_state()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if not self._closing:
+            self._wanted_visible = False
+            self.save_state()
+        super().closeEvent(event)
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
         self._header_hide.stop()
@@ -1249,10 +1361,21 @@ class RevengePopoutWindow(QWidget):
     def _sync_visibility(self):
         self._watch_hover_targets()
         if not self.controller.enabled:
-            self.hide()
+            super().hide()
+        elif self._restored and self._wanted_visible and not self._closing:
+            super().show()
+
+    def hide(self):
+        if self._state_ready and not self._closing:
+            self._wanted_visible = False
+            self.save_state()
+        super().hide()
 
     def show(self):
         if self.controller.enabled:
+            self._restored = True
+            self._wanted_visible = True
+            self.save_state()
             # No activation or raising: adding a name uses the explicit normal
             # input dialog, while the passive list leaves game focus untouched.
             super().show()

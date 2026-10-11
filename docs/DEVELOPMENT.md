@@ -38,8 +38,14 @@ the released package's embedded provenance must identify that exact commit.
 
 Every release must update the in-app **What's New!** notes for its version in
 `mnmparse/app/whats_new.py`, alongside `docs/RELEASE_<version>.md`. Keep the pop-up concise,
-describe the new behavior and point to the relevant features or Settings section. It
-appears once per version after interactive startup; never show it during smoke tests.
+describe the new behavior and point to the relevant features or Settings section.
+Retain historical records: an update that skips versions must show every release newer
+than the last acknowledged version through the running version, with each release
+clearly labeled by its version number. Compare version numbers numerically. Acknowledge
+the running version only when the user dismisses the announcement or follows one of
+its links; shutdown and deferred first-time setup must not discard unread notes.
+Verify skipped-version catch-up when changing this flow. Show it after interactive
+startup; never show it during smoke tests.
 
 `tests/test_native_window_visibility.py` also exercises the real Windows Qt platform on
 an isolated desktop that is never displayed. It reproduces the hidden launch used by

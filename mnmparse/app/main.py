@@ -1364,6 +1364,8 @@ class App(QApplication):
         self.set_overlay_visible(bool(show_overlay))
         self._sync_overlay_settings()  # Settings > Overlay shows what the overlay really uses
         self.set_map_visible(self.settings.value("map/visible", True, type=bool))
+        if selftest_seconds is None:
+            self.revenge_popout.restore_state()
         if selftest_seconds is None and self.settings.value("map/download_on_startup", False, type=bool):
             QTimer.singleShot(0, self.map_downloads.start)
         if selftest_seconds is None and self.settings.value("app/update_on_startup", False, type=bool):
@@ -1387,12 +1389,15 @@ class App(QApplication):
 
     def _start_whats_new(self, *, wait_for_setup: bool) -> None:
         from mnmparse.app.whats_new import WhatsNewController
+        from mnmparse.app.app_updates import previous_update_version
 
         self._whats_new_waiting_setup = wait_for_setup
         self._whats_new = WhatsNewController(
             self.settings, self.window, eligible=self._whats_new_eligible,
             open_settings=self.window.open_release_settings,
-            open_feature=self.window.show_page, version=APP_VERSION)
+            open_settings_target=self.window._open_settings_option,
+            open_feature=self.window.show_page, version=APP_VERSION,
+            upgrade_from=previous_update_version() or ("" if wait_for_setup else "0.0.0"))
         self._whats_new.request()
 
     def _whats_new_eligible(self) -> bool:
@@ -2260,7 +2265,7 @@ class App(QApplication):
             log.warning("Revenge List changes could not be saved")
         revenge_popout = self.__dict__.get("revenge_popout")
         if revenge_popout is not None:
-            revenge_popout.close()
+            revenge_popout.shutdown()
         if self.app_updates is not None:
             self.app_updates.shutdown()
         if self.map_downloads is not None:
