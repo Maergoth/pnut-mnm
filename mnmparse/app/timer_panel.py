@@ -9,6 +9,8 @@ are displayed (unless "always show" is on) and docks / undocks like the auto-att
 (:mod:`mnmparse.app.docked_panel`).
 Accepted triggers without a countdown append a brief notification below the running
 timers. Notifications fade away after four seconds; timed triggers show only their timer.
+Revenge candidates share the scrollable timer rows and offer a + until their original
+30-second prompt expires.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from PySide6.QtGui import (
     QColor, QFont, QFontMetricsF, QIcon, QPainter, QPainterPath, QPaintEvent, QPen, QPixmap,
     QResizeEvent, QWheelEvent,
 )
-from PySide6.QtWidgets import QMenu, QPushButton, QScrollBar
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QMenu, QPushButton, QScrollBar
 
 from mnmparse.app.docked_panel import DockedPanel
 from mnmparse.app.widgets import make_font, qcolor, token
@@ -32,6 +34,7 @@ from mnmparse.triggers import ActiveTimer, Match, fill_placeholders
 
 if TYPE_CHECKING:
     from mnmparse.app.overlay import OverlayWindow
+    from mnmparse.app.revenge import AttackerCandidate, RevengeController
     from mnmparse.app.triggers_runtime import TriggerRunner
 
 FRAME_MS = 33
@@ -119,17 +122,20 @@ class TimerPanel(DockedPanel):
     def __init__(self, owner: "OverlayWindow", settings: QSettings, flags: Qt.WindowType) -> None:
         super().__init__(owner, settings, flags)
         self.runner: "TriggerRunner | None" = None
+        self.revenge: "RevengeController | None" = None
+        self._revenge_keys: set[str] = set()
         self.always_show = str(settings.value(f"{self.SETTINGS_GROUP}/always_show", "false")).lower() in ("true", "1")
         self._px = 13.0
         self._f_label = make_font(self._px * 0.95, weight=QFont.Weight.DemiBold)
         self._f_time = make_font(self._px * 1.05, weight=QFont.Weight.DemiBold, tabular=True)
         self._rows: list[tuple[QRectF, str]] = []  #: (row rect, timer id) from the last paint
         self._expired_buttons: dict[str, tuple[QPushButton, QPushButton]] = {}
+        self._revenge_buttons: dict[str, QPushButton] = {}
         self._scroll = QScrollBar(Qt.Orientation.Vertical, self)
         self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._scroll.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
-        self._scroll.setAccessibleName("Timer rows")
-        self._scroll.setToolTip("Scroll to see more timers")
+        self._scroll.setAccessibleName("Timer and Revenge rows")
+        self._scroll.setToolTip("Scroll to see more timers and attackers")
         self._scroll.setStyleSheet(
             "QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }"
             "QScrollBar::handle:vertical { background: rgba(255,255,255,0.25); border-radius: 3px; min-height: 20px; }"
@@ -148,6 +154,33 @@ class TimerPanel(DockedPanel):
         self._resize_for(1)
 
     # -- wiring --------------------------------------------------------------------------
+    def set_revenge_controller(self, controller: "RevengeController | None") -> None:
+        if controller is self.revenge:
+            self.refresh()
+            return
+        if self.revenge is not None:
+            for signal in (self.revenge.prompts_changed, self.revenge.saved_changed):
+                try:
+                    signal.disconnect(self._revenge_changed)
+                except (RuntimeError, TypeError):
+                    pass
+        self.revenge = controller
+        self._revenge_keys.clear()
+        if controller is not None:
+            controller.prompts_changed.connect(self._revenge_changed)
+            controller.saved_changed.connect(self._revenge_changed)
+        self._revenge_changed()
+
+    def _revenge_changed(self) -> None:
+        keys = {candidate.name.casefold() for candidate in self._revenge_candidates()}
+        if keys - self._revenge_keys:
+            # A newly attacked player should not miss the prompt merely because
+            # eight long-running timers already fill the panel.
+            with QSignalBlocker(self._scroll):
+                self._scroll.setValue(0)
+        self._revenge_keys = keys
+        self.refresh()
+
     def set_runner(self, runner: "TriggerRunner | None") -> None:
         if runner is self.runner:
             self.refresh()
@@ -190,15 +223,28 @@ class TimerPanel(DockedPanel):
         return self.runner.board.ordered() if self.runner is not None else []
 
     def _visible_timers(self) -> list[ActiveTimer]:
+        candidate_count = len(self._revenge_candidates())
         offset = self._scroll.value()
-        return self.timers()[offset:offset + MAX_ROWS]
+        return self.timers()[max(0, offset - candidate_count):max(0, offset + MAX_ROWS - candidate_count)]
+
+    def _revenge_candidates(self) -> tuple["AttackerCandidate", ...]:
+        if self.revenge is None or not self.revenge.available:
+            return ()
+        now = self.revenge._clock()
+        # Do not wait for the controller's one-second expiry tick, and never
+        # restart a hidden prompt's original lifetime when the overlay returns.
+        return tuple(candidate for candidate in reversed(self.revenge.pending_candidates) if candidate.expires_at > now)
+
+    def _visible_revenge_candidates(self) -> tuple["AttackerCandidate", ...]:
+        offset = self._scroll.value()
+        return self._revenge_candidates()[offset:offset + MAX_ROWS]
 
     def _needs_animation(self) -> bool:
-        return bool(self._popups) or any(not (timer.ended and getattr(timer, "keep_until_dismissed", False))
+        return bool(self._popups) or bool(self._revenge_candidates()) or any(not (timer.ended and getattr(timer, "keep_until_dismissed", False))
                                         for timer in self.timers())
 
     def wants_visible(self) -> bool:
-        return self.always_show or bool(self.timers()) or bool(self._popups)
+        return self.always_show or bool(self.timers()) or bool(self._popups) or bool(self._revenge_candidates())
 
     def set_always_show(self, on: bool) -> None:
         self.always_show = bool(on)
@@ -220,12 +266,14 @@ class TimerPanel(DockedPanel):
         # The owner also calls sync when an overlay is re-shown. Expire notifications
         # before showing anything; their lifetime never pauses while the panel is hidden.
         self._prune_popups()
+        row_count = len(self.timers()) + len(self._revenge_candidates())
         with QSignalBlocker(self._scroll):
-            self._scroll.setRange(0, max(0, len(self.timers()) - MAX_ROWS))
+            self._scroll.setRange(0, max(0, row_count - MAX_ROWS))
             self._scroll.setPageStep(MAX_ROWS)
-        self._scroll.setVisible(len(self.timers()) > MAX_ROWS)
-        self._resize_for(max(1, min(MAX_ROWS, len(self.timers())) + len(self._popups)))
+        self._scroll.setVisible(row_count > MAX_ROWS)
+        self._resize_for(max(1, min(MAX_ROWS, row_count) + len(self._popups)))
         self._sync_expired_buttons()
+        self._sync_revenge_buttons()
         super().sync()
         self._position_controls()
         if self.isVisible() and self._needs_animation():
@@ -241,8 +289,11 @@ class TimerPanel(DockedPanel):
         return int(round(self._px * 2.3))
 
     def _frame(self) -> None:
-        if self._prune_popups():
+        if self._prune_popups() or self._revenge_buttons.keys() != {
+            candidate.name.casefold() for candidate in self._visible_revenge_candidates()
+        }:
             self.refresh()
+        self._update_revenge_opacity()
         if not self.isVisible() or not self._needs_animation():
             self._anim.stop()
         self.update()
@@ -292,11 +343,54 @@ class TimerPanel(DockedPanel):
         needed = math.ceil(16 + self._row_h() - 6 + 8 + self._px * 3 + 6 + restart_w + dismiss_w + gap)
         self.setMinimumWidth(needed + (14 if self._scroll.maximum() > 0 else 0) if expired else 0)
 
+    def _sync_revenge_buttons(self) -> None:
+        candidates = {candidate.name.casefold(): candidate for candidate in self._visible_revenge_candidates()}
+        for key in self._revenge_buttons.keys() - candidates.keys():
+            button = self._revenge_buttons.pop(key)
+            button.hide()
+            button.setToolTip("")
+            button.setAccessibleName("")
+            button.deleteLater()
+        for key, candidate in candidates.items():
+            if key not in self._revenge_buttons:
+                button = QPushButton("+", self)
+                button.setGraphicsEffect(QGraphicsOpacityEffect(button))
+                button.clicked.connect(lambda _checked=False, name=candidate.name: self._save_revenge_attacker(name))
+                self._revenge_buttons[key] = button
+            button = self._revenge_buttons[key]
+            button.setFont(self._f_time)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(f"Save {candidate.name} to revenge list")
+            button.setToolTip(f"Add {candidate.name} to Revenge")
+            button.setStyleSheet(
+                f"QPushButton {{ color: {token('TEXT')}; background: rgba(255,255,255,0.06); "
+                f"border: 1px solid {token('LINE')}; border-radius: 4px; padding: 0; "
+                f"font-size: {self._f_time.pixelSize()}px; font-weight: 600; min-height: 0; }}"
+                "QPushButton:hover { background: rgba(255,255,255,0.13); }"
+                "QPushButton:pressed { background: rgba(255,255,255,0.20); }"
+            )
+            button.show()
+        self._update_revenge_opacity()
+
+    def _update_revenge_opacity(self) -> None:
+        now = self.revenge._clock() if self.revenge is not None else 0.0
+        for candidate in self._visible_revenge_candidates():
+            button = self._revenge_buttons.get(candidate.name.casefold())
+            if button is not None:
+                button.graphicsEffect().setOpacity(max(0.0, min(1.0, candidate.expires_at - now)))
+
+    def _save_revenge_attacker(self, name: str) -> None:
+        if self.revenge is not None:
+            self.revenge.save_attacker(name, from_prompt=True)
+        self.refresh()
+
     def _position_controls(self) -> None:
         restart_w, dismiss_w, gap = self._button_widths()
         button_h = restart_w
         icon_side = max(10, button_h - 4)
-        for index, timer in enumerate(self._visible_timers()):
+        for index, timer in enumerate(self._visible_timers(), start=len(self._visible_revenge_candidates())):
             buttons = self._expired_buttons.get(timer.id)
             if buttons is None:
                 continue
@@ -307,8 +401,16 @@ class TimerPanel(DockedPanel):
             buttons[1].setGeometry(right - dismiss_w, top, dismiss_w, button_h)
             for button in buttons:
                 button.setIconSize(QSize(icon_side, icon_side))
+        for index, candidate in enumerate(self._visible_revenge_candidates()):
+            button = self._revenge_buttons.get(candidate.name.casefold())
+            if button is None:
+                continue
+            row = self._row_rect(index)
+            button.setGeometry(math.floor(row.right()) - button_h, round(row.center().y() - button_h / 2),
+                               button_h, button_h)
+        row_count = len(self._visible_timers()) + len(self._visible_revenge_candidates())
         self._scroll.setGeometry(self.width() - 14, 5, 8,
-                                 max(1, len(self._visible_timers()) * (self._row_h() + 4) - 4))
+                                 max(1, row_count * (self._row_h() + 4) - 4))
 
     def _restart_timer(self, timer_id: str) -> None:
         if self.runner is not None:
@@ -344,9 +446,10 @@ class TimerPanel(DockedPanel):
         p.drawPath(path)
         now = time.time()
         timers = self._visible_timers()
+        candidates = self._visible_revenge_candidates()
         self._rows = []
         row_h = self._row_h()
-        if not timers and not self._popups:
+        if not timers and not self._popups and not candidates:
             p.setFont(self._f_label)
             p.setPen(qcolor(token("MUTED")))
             p.drawText(r.adjusted(10, 0, -10, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
@@ -356,7 +459,7 @@ class TimerPanel(DockedPanel):
         fm_time = QFontMetricsF(self._f_time)
         time_w = fm_time.horizontalAdvance("88:88") + 6
         fm_label = QFontMetricsF(self._f_label)
-        for i, t in enumerate(timers):
+        for i, t in enumerate(timers, start=len(candidates)):
             row = self._row_rect(i)
             self._rows.append((row, t.id))
             left = t.remaining(now)
@@ -397,8 +500,31 @@ class TimerPanel(DockedPanel):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(qcolor(color.name(), 0.55))
             p.drawRoundedRect(line, 1, 1)
+        revenge_now = self.revenge._clock() if self.revenge is not None else 0.0
+        for i, candidate in enumerate(candidates):
+            row = self._row_rect(i)
+            remaining = max(0.0, candidate.expires_at - revenge_now)
+            p.save()
+            p.setOpacity(min(1.0, remaining))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(qcolor(token("DANGER"), 0.15))
+            p.drawRoundedRect(row, 5, 5)
+            p.setBrush(qcolor(token("DANGER")))
+            p.drawRoundedRect(QRectF(row.left() + 2, row.top() + 6, 3, row.height() - 12), 1.5, 1.5)
+            button_w, _, gap = self._button_widths()
+            counter_rect = QRectF(row.right() - button_w - gap - time_w, row.top(), time_w, row.height())
+            p.setFont(self._f_time)
+            p.setPen(qcolor(token("MUTED")))
+            p.drawText(counter_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
+                       f"{math.ceil(remaining)}s")
+            label_rect = QRectF(row.left() + 12, row.top(), max(0, counter_rect.left() - row.left() - 18), row.height())
+            p.setFont(self._f_label)
+            p.setPen(qcolor(token("TEXT")))
+            p.drawText(label_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                       fm_label.elidedText(f"Revenge: {candidate.name}", Qt.TextElideMode.ElideRight, label_rect.width()))
+            p.restore()
         popup_now = time.monotonic()
-        for i, popup in enumerate(self._popups, start=len(timers)):
+        for i, popup in enumerate(self._popups, start=len(timers) + len(candidates)):
             row = self._row_rect(i)
             p.save()
             p.setOpacity(popup.opacity(popup_now))
@@ -448,6 +574,7 @@ class TimerPanel(DockedPanel):
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802
         self.set_runner(None)
+        self.set_revenge_controller(None)
         self._anim.stop()
         super().closeEvent(event)
 

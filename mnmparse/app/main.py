@@ -968,9 +968,15 @@ class MainWindow(QMainWindow):
                 if panel is not None and panel.isAncestorOf(toggle):
                     target = panel
                     break
-        scroll.ensureWidgetVisible(target)
+        def reveal_option() -> None:
+            # A calibration panel can be taller than the viewport. Showing its
+            # full extent would scroll the option at its top out of sight.
+            anchor = toggle if target.height() > scroll.viewport().height() else target
+            scroll.ensureWidgetVisible(anchor, 50, 80)
+
+        reveal_option()
         # A page created on navigation gets its first layout on the next event.
-        QTimer.singleShot(0, page, lambda: scroll.ensureWidgetVisible(target))
+        QTimer.singleShot(0, page, reveal_option)
         toggle.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # -- pages ---------------------------------------------------------------------------
@@ -1545,6 +1551,7 @@ class App(QApplication):
             self._connect_optional(settings_page, "capture_restart_requested", self.restart_capture)
             self._connect_optional(settings_page, "sound_preview_requested", self.play_sound)
             self._connect_optional(settings_page, "revenge_alert_preview_requested", self._preview_revenge_alert)
+            self._connect_optional(settings_page, "low_health_preview_requested", self._preview_revenge_alert)
             self._connect_optional(settings_page, "overlay_reset_requested", self.reset_overlay_position)
             self._connect_optional(settings_page, "overlay_setting_changed", self._on_overlay_setting)
             if self.app_updates is not None:
@@ -1736,6 +1743,7 @@ class App(QApplication):
 
     def _on_low_health(self, percent: float) -> None:
         if (not self.cfg.player_status_enabled or not self.cfg.low_health_enabled
+                or not 0 <= percent < self.cfg.low_health_threshold
                 or self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)):
             return
         if self.triggers is not None:
@@ -1744,7 +1752,7 @@ class App(QApplication):
             trigger = Trigger(id="low-health", name="Low HP", category="Personal",
                               action="sound" if sound else "none", sound=sound,
                               volume=self.cfg.low_health_volume, timer=False,
-                              timer_label=f"Low HP: {percent:.0f}%", timer_color=theme.DANGER)
+                              timer_label=f"Low HP: {percent:.1f}%", timer_color=theme.DANGER)
             self.triggers.fire(Match(trigger, "", "", {}, notification_seconds=3.0))
         if self.cfg.low_health_flash:
             from mnmparse.app.low_health import LowHealthFlash
@@ -2081,9 +2089,11 @@ class App(QApplication):
 
     def on_config_changed(self, cfg: Config) -> None:
         """The Settings page saved ``cfg``: adopt it in the shell and the overlay."""
+        previous = self.cfg
         self.cfg = cfg
         flash = self.__dict__.get("_low_health_flash")
-        if flash is not None and not (cfg.player_status_enabled and cfg.low_health_enabled and cfg.low_health_flash):
+        if flash is not None and (previous.low_health_threshold != cfg.low_health_threshold
+                                 or not (cfg.player_status_enabled and cfg.low_health_enabled and cfg.low_health_flash)):
             flash.stop()
         revenge = self.__dict__.get("revenge")
         if revenge is not None:

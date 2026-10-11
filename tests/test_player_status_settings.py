@@ -58,6 +58,7 @@ class PlayerStatusConfigTests(unittest.TestCase):
         profile = capture_profile(cfg, (1920, 1080))
         legacy = json.loads(json.dumps(profile))
         del legacy["settings"]["player_status_crop"]
+        del legacy["settings"]["player_status_separate"]
         cfg = dataclasses.replace(cfg, capture_profiles={"New": profile, "Old": legacy})
         self.assertIs(validate_profiles(cfg.capture_profiles), cfg.capture_profiles)
         restored = apply_profile(dataclasses.replace(cfg, player_status_crop=None), "New")
@@ -114,8 +115,7 @@ class PlayerStatusSettingsTests(unittest.TestCase):
         self.assertIsNone(self.page.player_status_picker._job)
 
     def test_region_toggle_save_revert_and_master_toggle_preserve_chat(self):
-        self.assertTrue(self.page.player_status_region.isHidden())
-        self.page.player_status_separate.setChecked(True)
+        self.assertTrue(self.page.player_status_separate.isChecked())
         self.assertFalse(self.page.player_status_region.isHidden())
         self.page.player_status_picker.set_crop((850, 50, 1150, 320))
         self.page.save()
@@ -132,6 +132,38 @@ class PlayerStatusSettingsTests(unittest.TestCase):
         self.page.revert()
         self.assertEqual(self.page.form_config(), saved)
         self.assertFalse(self.page.player_status_region.isHidden())
+
+    def test_default_region_stays_pending_until_selected_even_when_frame_fits_crop(self):
+        self.assertIsNone(self.page.form_config().player_status_crop)
+        self.page.low_health_threshold.setValue(25)
+        self.page.save()
+        saved = load_config(str(self.path))
+        self.assertTrue(saved.player_status_separate)
+        self.assertIsNone(saved.player_status_crop)
+        self.assertEqual(saved.low_health_threshold, 25)
+        # Preview fitting can adjust the initial rectangle, but is not a selection.
+        self.page.player_status_picker.set_frame(np.zeros((100, 200, 3), dtype=np.uint8))
+        self.assertIsNone(self.page.form_config().player_status_crop)
+        self.page.player_status_use_crop.click()
+        self.assertEqual(self.page.form_config().player_status_crop, self.page.player_status_picker.crop())
+        self.page.revert()
+        self.assertIsNone(self.page.form_config().player_status_crop)
+
+    def test_low_health_preview_uses_unsaved_sound_and_volume_and_skips_silence(self):
+        emitted = []
+        self.page.low_health_preview_requested.connect(lambda sound, volume: emitted.append((sound, volume)))
+        self.page.low_health_sound.setCurrentText("Dink")
+        self.page.low_health_volume.set_value(35)
+        self.page.low_health_preview.click()
+        self.assertEqual(emitted, [("Dink", 35)])
+        self.assertEqual(self.page._cfg.low_health_sound, "Alert")
+        self.page.low_health_sound.setCurrentText("None")
+        self.assertFalse(self.page.low_health_preview.isEnabled())
+        self.page._preview_low_health_alert()
+        self.assertEqual(emitted, [("Dink", 35)])
+        self.page.low_health_enabled.setChecked(False)
+        self.assertFalse(self.page.low_health_threshold.isEnabled())
+        self.assertFalse(self.page.low_health_preview.isEnabled())
 
     def test_stats_frame_and_ocr_use_full_frame_without_applying_chat_crop(self):
         self.page.player_status_separate.setChecked(True)

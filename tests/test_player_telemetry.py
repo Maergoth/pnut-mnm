@@ -62,6 +62,23 @@ class PlayerTelemetryTests(unittest.TestCase):
         self.assertEqual(snap["hp_below10_seconds"], 3)
         self.assertEqual(snap["hp_lowest_percent"], 2)
 
+    def test_cadence_budget_is_bounded_and_missing_readings_still_reset(self):
+        telemetry = PlayerTelemetry()
+        for invalid in (0, -1, 10.01, float("inf"), float("nan"), True, None):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                telemetry.update(reading(hp=5, xp=.5), 1, max_gap=invalid)
+        telemetry.update(reading(hp=5, xp=.5), 1, max_gap=4)
+        telemetry.update(reading(hp=5, xp=.5), 4, max_gap=4)
+        self.assertTrue(telemetry.snapshot()["hp_low"])
+        self.assertIsNotNone(telemetry._xp_baseline)
+        telemetry.update(None, 5, max_gap=4)
+        telemetry.update(reading(hp=5, xp=.5), 7, max_gap=4)
+        self.assertFalse(telemetry.snapshot()["hp_low"])
+        self.assertIsNone(telemetry._xp_baseline)
+        telemetry.update(reading(hp=5, xp=.5), 12, max_gap=4)
+        self.assertFalse(telemetry.snapshot()["hp_low"])
+        self.assertIsNone(telemetry._xp_baseline)
+
     def test_no_gain_or_rate_until_five_minutes_after_initial_stability(self):
         telemetry = PlayerTelemetry()
         telemetry.update(reading(xp=.5), 0)

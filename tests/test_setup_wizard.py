@@ -263,6 +263,98 @@ class SetupWizardTests(unittest.TestCase):
         self.assertFalse(self.wizard.crop_page.isComplete())
         self.assertIsNone(self.wizard.crop_picker.frame())
 
+    def test_optional_stats_can_be_skipped_without_changing_chat_or_ocr_proof(self):
+        self.calibrate()
+        self.wizard.back()
+        self.assertTrue(self.wizard._draft.player_status_separate)
+        self.assertIsNone(self.wizard._draft.player_status_crop)
+        frame = self.wizard.crop_picker.frame()
+        signature = self.wizard._tested_signature
+        self.wizard.crop_page.region.setCurrentIndex(1)
+        self.assertIs(self.wizard.crop_picker.frame(), frame)
+        self.assertEqual(self.wizard._tested_signature, signature)
+        self.assertTrue(self.wizard.crop_page.isComplete())
+        self.assertTrue(self.wizard.crop_picker._test.isHidden())
+        self.assertIsNone(self.wizard._draft.player_status_crop)
+        self.wizard.next()
+        self.wizard.next()
+        self.wizard.accept()
+        self.assertEqual(self.finished[0].crop, (10, 20, 500, 300))
+        self.assertIsNone(self.finished[0].player_status_crop)
+        self.assertTrue(self.finished[0].player_status_separate)
+        self.engine.test_ocr.assert_not_called()
+
+    def test_stats_rectangle_is_independent_and_survives_region_and_page_navigation(self):
+        self.calibrate()
+        self.wizard.back()
+        self.wizard.crop_page.region.setCurrentIndex(1)
+        self.wizard.crop_picker.set_crop((700, 20, 940, 180))
+        self.assertEqual(self.wizard._draft.player_status_crop, (700, 20, 940, 180))
+        self.assertEqual(self.wizard._draft.crop, (10, 20, 500, 300))
+        self.assertTrue(self.wizard._has_ocr_proof())
+        self.wizard.crop_page.region.setCurrentIndex(0)
+        self.assertEqual(self.wizard.crop_picker.crop(), (10, 20, 500, 300))
+        self.wizard.crop_page.region.setCurrentIndex(1)
+        self.assertEqual(self.wizard.crop_picker.crop(), (700, 20, 940, 180))
+        self.wizard.next()
+        self.wizard.back()
+        self.assertEqual(self.wizard.crop_picker.crop(), (700, 20, 940, 180))
+        self.wizard.next()
+        self.wizard.next()
+        self.wizard.accept()
+        self.assertEqual(self.finished[0].crop, (10, 20, 500, 300))
+        self.assertEqual(self.finished[0].player_status_crop, (700, 20, 940, 180))
+        self.assertIsNone(self.cfg.player_status_crop)
+
+    def test_frame_fitting_never_activates_stats_until_use_rectangle_is_clicked(self):
+        self.reach_crop()
+        page = self.wizard.crop_page
+        page.region.setCurrentIndex(1)
+        picker = self.wizard.crop_picker
+        picker.set_frame(np.ones((100, 150, 3), dtype=np.uint8))
+        self.assertIsNone(self.wizard._draft.player_status_crop)
+        picker.set_frame(np.ones((90, 140, 3), dtype=np.uint8))
+        self.assertIsNone(self.wizard._draft.player_status_crop)
+        self.assertTrue(page.use_stats.isEnabled())
+        page.use_stats.click()
+        self.assertEqual(self.wizard._draft.player_status_crop, picker.crop())
+        self.assertTrue(self.wizard._draft.player_status_separate)
+        self.assertIsNone(self.cfg.player_status_crop)
+
+    def test_skip_stats_and_source_changes_clear_preview_without_committing_selection(self):
+        self.calibrate()
+        self.wizard.back()
+        page = self.wizard.crop_page
+        page.region.setCurrentIndex(1)
+        self.wizard.crop_picker.set_crop((700, 20, 940, 180))
+        page.skip_stats.click()
+        self.assertIsNone(self.wizard._draft.player_status_crop)
+        self.assertTrue(self.wizard._has_ocr_proof())
+        page.title.setText("Changed game title")
+        self.assertIsNone(self.wizard.crop_picker.frame())
+        self.assertIsNone(self.wizard._draft.player_status_crop)
+        self.assertFalse(self.wizard._has_ocr_proof())
+        self.wizard.reject()
+        self.assertIsNone(self.cfg.player_status_crop)
+        self.assertEqual(self.finished, [])
+
+    def test_out_of_frame_configured_stats_blocks_save_but_overlap_is_guidance_only(self):
+        self.calibrate()
+        self.wizard.back()
+        self.wizard._draft.player_status_crop = (1200, 0, 1400, 180)
+        self.wizard.next()
+        self.assertEqual(self.wizard.currentId(), 1)
+        self.assertIn("inside the captured frame", self.wizard.crop_page.status.text())
+        self.wizard.crop_page.region.setCurrentIndex(1)
+        self.assertEqual(self.wizard._draft.player_status_crop, (1200, 0, 1400, 180),
+                         "Fitting an existing selection must not silently save changed bounds")
+        self.wizard.crop_picker.set_crop((20, 30, 200, 180))
+        self.wizard.next()
+        self.assertEqual(self.wizard.currentId(), 2, "Overlap guidance must not block a valid crop")
+        self.wizard.next()
+        self.wizard.accept()
+        self.assertEqual(self.finished[0].player_status_crop, (20, 30, 200, 180))
+
     def test_setup_and_settings_canvas_show_local_frame_without_changing_mode(self):
         self.reach_crop()
         frame = np.ones((720, 1280, 3), dtype=np.uint8) * 99

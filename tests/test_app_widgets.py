@@ -526,6 +526,59 @@ class SettingsAndDetailsTests(unittest.TestCase):
             panel.deleteLater()
             self.app.processEvents()
 
+    def test_skill_damage_share_uses_actor_total_even_when_carebear_hides_skills(self) -> None:
+        from mnmparse.app.pages import _DetailsPanel
+        from mnmparse.privacy import project_encounter
+
+        panel = _DetailsPanel()
+        panel.setStyleSheet(theme.main_qss())
+        try:
+            self.assertEqual(panel._skills.horizontalHeaderItem(3).text(), "Damage%")
+            self.assertIn("actor", panel._skills.horizontalHeaderItem(3).toolTip())
+            self.assertEqual(panel._skills.horizontalHeaderItem(6).text(), "Hit%")
+            self.assertIn("accuracy", panel._skills.horizontalHeaderItem(6).toolTip())
+            visible = SkillRow("crush", 4, 250, 100, 250 / 3, 3, 1)
+            for total, hidden_damage, expected in ((1000, 750, "25.0%"), (2000, 1750, "12.5%")):
+                with self.subTest(total=total):
+                    own = _actor("Hero", total, is_you=True, skills=[
+                        visible, SkillRow("Peer: bite", 3, hidden_damage, hidden_damage,
+                                          float(hidden_damage), 3, 0)])
+                    raw = _snapshot(1.0, [own, _actor("Peer", 9000), _actor("Other", 7000)])
+                    raw.group_members = ["Hero", "Peer", "Other"]
+                    safe = project_encounter(raw, Config(player_name="Hero"))
+                    panel.set_actor(next(row for row in safe.rows if row.is_you))
+                    self.assertEqual(panel._skills.rowCount(), 1)
+                    self.assertEqual(panel._skills.item(0, 0).text(), "crush")
+                    self.assertEqual(panel._skills.item(0, 3).text(), expected,
+                                     "Hidden skill damage still belongs in the actor's denominator")
+                    self.assertEqual(panel._skills.item(0, 6).text(), "75%",
+                                     "Hit% must remain accuracy, independent of damage share")
+            panel.set_actor(next(row for row in safe.rows if not row.is_you))
+            self.assertEqual(panel._skills.rowCount(), 0, "A group average has no individual skills")
+            zero = _actor("Hero", 0, is_you=True, skills=[SkillRow("kick", 1, 0, 0, 0.0, 0, 1)])
+            panel.set_actor(zero)
+            self.assertEqual(panel._skills.item(0, 3).text(), "0.0%")
+            self.assertEqual(panel._skills.item(0, 6).text(), "0%")
+            panel.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+            panel.resize(300, 420)
+            panel.show()
+            self.app.processEvents()
+            table = panel._skills
+            scrollbar = table.horizontalScrollBar()
+            self.assertTrue(scrollbar.isVisible(), "Narrow breakdowns must keep every column reachable")
+            self.assertGreater(scrollbar.maximum(), 0)
+            self.assertGreaterEqual(table.viewport().height(), table.verticalHeader().defaultSectionSize())
+            scrollbar.setValue(scrollbar.maximum())
+            header = table.horizontalHeader()
+            self.assertLessEqual(header.sectionViewportPosition(6) + header.sectionSize(6),
+                                 table.viewport().width())
+            panel.resize(700, 420)
+            self.app.processEvents()
+            self.assertFalse(scrollbar.isVisible(), "Wide breakdowns should not reserve a scrollbar")
+        finally:
+            panel.deleteLater()
+            self.app.processEvents()
+
     def test_crop_spin_rejects_collapse(self) -> None:
         from mnmparse.app.crop_picker import CropPicker
         from mnmparse.app.main import _MissingEngine

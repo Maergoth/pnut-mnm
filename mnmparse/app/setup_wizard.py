@@ -89,6 +89,23 @@ class _CalibrationEngine:
         return self.engine.test_ocr(frame, crop, cfg)
 
 
+class _SetupCropPicker(CropPicker):
+    """Frame resizing must not silently save a provisional stats rectangle."""
+
+    def __init__(self, engine, cfg, owner, **kwargs):
+        self._setup_owner = owner
+        super().__init__(engine, cfg, owner, **kwargs)
+
+    def set_frame(self, frame):
+        owner = self._setup_owner
+        previous = owner._changing_region
+        owner._changing_region = True
+        try:
+            super().set_frame(frame)
+        finally:
+            owner._changing_region = previous
+
+
 class _CharacterPage(QWizardPage):
     def __init__(self, wizard: "SetupWizard"):
         super().__init__(wizard)
@@ -126,8 +143,8 @@ class _CropPage(QWizardPage):
     def __init__(self, wizard: "SetupWizard"):
         super().__init__(wizard)
         self.owner = wizard
-        self.setTitle("2 · Combat chat crop")
-        self.setSubTitle("Open Combat chat, capture a frame, and place the rectangle over its text.")
+        self.setTitle("2 · Capture areas")
+        self.setSubTitle("Capture a frame, select Combat chat, then optional Mini stats.")
         layout = _body(self)
         fields = QHBoxLayout()
         self.title = QLineEdit(wizard._draft.window_title)
@@ -149,12 +166,31 @@ class _CropPage(QWizardPage):
         layout.addWidget(self.status)
         self.privacy_hint = _text("Setup preview shows chat. It is cleared when setup closes.")
         layout.addWidget(self.privacy_hint)
+        regions = QHBoxLayout()
+        regions.addWidget(QLabel("Select area"))
+        self.region = QComboBox()
+        self.region.setAccessibleName("Capture area")
+        self.region.addItem("Combat chat", "chat")
+        self.region.addItem("Mini stats (optional)", "stats")
+        regions.addWidget(self.region, 1)
+        self.use_stats = QPushButton("Use rectangle")
+        self.use_stats.setObjectName("Chip")
+        self.use_stats.clicked.connect(wizard._use_stats_rectangle)
+        regions.addWidget(self.use_stats)
+        self.skip_stats = QPushButton("Skip mini stats")
+        self.skip_stats.setObjectName("Chip")
+        self.skip_stats.clicked.connect(wizard._skip_stats)
+        regions.addWidget(self.skip_stats)
+        layout.addLayout(regions)
+        self.stats_hint = _text("Optional: select HP and the XP bar. Keep Mini stats clear of Combat chat.")
+        layout.addWidget(self.stats_hint)
         layout.addWidget(wizard.crop_picker, 1)
         self.ocr_status = _text("Test OCR to continue.")
         self.ocr_status.setAccessibleName("Setup OCR validation result")
         layout.addWidget(self.ocr_status)
         self.title.textChanged.connect(self._source_changed)
         self.backend.currentIndexChanged.connect(self._source_changed)
+        self.region.currentIndexChanged.connect(wizard._region_changed)
 
     def _source_changed(self, *_args):
         owner = self.owner
@@ -164,6 +200,7 @@ class _CropPage(QWizardPage):
         owner._invalidate_ocr()
         owner.crop_picker.set_frame(None)
         owner.crop_picker.set_config(owner._draft)
+        owner._show_region()
         self.completeChanged.emit()
 
     def _detect(self):
@@ -183,13 +220,19 @@ class _CropPage(QWizardPage):
     def validatePage(self):  # noqa: N802
         if not self.isComplete():
             return False
-        left, top, right, bottom = self.owner.crop_picker.crop()
+        left, top, right, bottom = self.owner._draft.crop
         width, height = self.owner._frame_size
         valid = 0 <= left < right <= width and 0 <= top < bottom <= height
         if not valid:
             self.status.setText("Keep the entire Combat chat rectangle inside the captured frame.")
             return False
         self.owner._draft.crop = (left, top, right, bottom)
+        stats = self.owner._draft.player_status_crop
+        if self.owner._draft.player_status_separate and stats is not None:
+            left, top, right, bottom = stats
+            if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+                self.status.setText("Keep Mini stats inside the captured frame, or choose Skip mini stats.")
+                return False
         return True
 
 
@@ -244,6 +287,7 @@ class _ReadyPage(QWizardPage):
     def initializePage(self):  # noqa: N802
         cfg = self.owner._draft
         self.summary.setText(f"Character: {cfg.player_name}\nCombat crop: {cfg.crop}\n"
+                             f"Mini stats: {cfg.player_status_crop or 'Set up later'}\n"
                              f"OCR: {self.owner._ocr_count} readable lines\n"
                              f"Mode: {'Carebear Mode' if casual_enabled(cfg) else 'Elitist Scumbag Mode'}")
         self.next_step.setText("Save setup to start capture." if cfg.start_capture_on_launch
@@ -264,6 +308,8 @@ class SetupWizard(QWizard):
         super().__init__(parent)
         prevent_wheel_value_changes(self)
         self._draft = replace(cfg)
+        self._changing_region = False
+        self._region = "chat"
         self._display_map_default = bool(display_map)
         self._frame_size: tuple[int, int] | None = None
         self._ocr_count: int | None = None
@@ -280,7 +326,7 @@ class SetupWizard(QWizard):
         self.setAutoFillBackground(True)
         self.setStyleSheet(_setup_qss())
         self._adapter = _CalibrationEngine(engine, self._draft)
-        self.crop_picker = CropPicker(self._adapter, self._draft, self, calibration_preview=True)
+        self.crop_picker = _SetupCropPicker(self._adapter, self._draft, self, calibration_preview=True)
         self.setWindowTitle(window_title("setup"))
         screen = parent.screen() if parent is not None else QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
@@ -311,14 +357,67 @@ class SetupWizard(QWizard):
         self.crop_picker._test.clicked.connect(self._begin_ocr)
         self.crop_picker.frame_captured.connect(self._frame_captured)
         self.crop_picker.ocr_test_completed.connect(self._ocr_completed)
+        self._show_region()
         # Button roles and page hierarchy now exist; repolish the role-specific
         # selectors after Qt created its own header/footer widgets.
         self.setStyleSheet(_setup_qss())
 
     def _signature(self):
         cfg = self._draft
-        return (cfg.window_title, cfg.capture_backend, self.crop_picker.crop(),
+        return (cfg.window_title, cfg.capture_backend, cfg.crop,
                 cfg.ocr_engine, cfg.ocr_scale, cfg.preprocess, cfg.player_name)
+
+    def _region_changed(self, _index):
+        region = str(self.crop_page.region.currentData())
+        if self.crop_picker._job is not None:
+            self.crop_page.region.blockSignals(True)
+            self.crop_page.region.setCurrentIndex(self.crop_page.region.findData(self._region))
+            self.crop_page.region.blockSignals(False)
+            return
+        self._region = region
+        self._show_region()
+
+    def _show_region(self):
+        page = getattr(self, "crop_page", None)
+        if page is None:
+            return
+        stats = self._region == "stats"
+        rectangle = self._draft.player_status_crop if stats else self._draft.crop
+        previous = self._changing_region
+        self._changing_region = True
+        try:
+            self.crop_picker.set_crop(rectangle or (0, 0, 220, 180))
+        finally:
+            self._changing_region = previous
+        self.crop_picker.canvas.set_boxes([])
+        self.crop_picker._lines.clear()
+        self.crop_picker.canvas.setAccessibleName("Mini stats crop" if stats else "Combat chat crop")
+        self.crop_picker._test.setVisible(not stats)
+        self.crop_picker._lines.setVisible(not stats)
+        for label in self.crop_picker.findChildren(QLabel):
+            if label.text() == "OCR result":
+                label.setVisible(not stats)
+        page.stats_hint.setVisible(stats)
+        page.use_stats.setVisible(stats)
+        page.use_stats.setEnabled(self._frame_size is not None)
+        page.skip_stats.setVisible(stats)
+        if not stats and self._frame_size is not None and self.crop_picker.crop() != self._draft.crop:
+            self._draft.crop = self.crop_picker.crop()
+            self._invalidate_ocr()
+        self._update_validation()
+
+    def _use_stats_rectangle(self):
+        if self._frame_size is None or self._region != "stats":
+            return
+        self._draft.player_status_separate = True
+        self._draft.player_status_crop = self.crop_picker.crop()
+        self.crop_page.stats_hint.setText("Mini stats selected. Keep the panel clear of Combat chat.")
+
+    def _skip_stats(self):
+        self._draft.player_status_separate = True
+        self._draft.player_status_crop = None
+        self._show_region()
+        self.crop_page.stats_hint.setText("Mini stats can be set up later in Settings.")
 
     @property
     def display_map(self) -> bool:
@@ -340,6 +439,7 @@ class SetupWizard(QWizard):
         self._pending_capture_signature = (self._draft.window_title, self._draft.capture_backend)
         self._frame_size = None
         self._invalidate_ocr()
+        self.crop_page.use_stats.setEnabled(False)
         self.crop_page.completeChanged.emit()
 
     def _frame_captured(self, size: tuple):
@@ -352,9 +452,18 @@ class SetupWizard(QWizard):
             return
         self._frame_size = tuple(size) if len(size) == 2 and all(int(v) > 0 for v in size) else None
         self._invalidate_ocr()
+        self._show_region()
         self.crop_page.completeChanged.emit()
 
     def _crop_changed(self, crop: tuple):
+        if self._changing_region:
+            return
+        if self._region == "stats":
+            if self._frame_size is not None:
+                self._draft.player_status_separate = True
+                self._draft.player_status_crop = tuple(crop)
+                self.crop_page.stats_hint.setText("Mini stats selected. Keep the panel clear of Combat chat.")
+            return
         self._draft.crop = tuple(crop)
         self._invalidate_ocr()
 
@@ -365,6 +474,9 @@ class SetupWizard(QWizard):
             self._update_validation()
 
     def _begin_ocr(self):
+        if self._region != "chat":
+            self._pending_test_signature = None
+            return
         self._invalidate_ocr()
         self._pending_test_signature = self._signature()
 
@@ -386,15 +498,16 @@ class SetupWizard(QWizard):
     def _update_validation(self):
         count = self._ocr_count
         self.crop_page.ocr_status.setText(
+            "Test OCR in Combat chat to continue." if self._region == "stats" and not self._has_ocr_proof() else
             f"Found {count} readable lines." if count else
             "No readable lines. Adjust the crop or chat font, then test again." if count == 0 else
             "Test OCR to continue.")
+        self.crop_page.ocr_status.setVisible(self._region == "chat" or not self._has_ocr_proof())
         self.crop_page.completeChanged.emit()
 
     def accept(self):
-        if self.currentId() != self.pageIds()[-1] or not self.crop_page.isComplete():
+        if self.currentId() != self.pageIds()[-1] or not self.crop_page.validatePage():
             return
-        self._draft.crop = self.crop_picker.crop()
         self._draft.setup_complete = True
         configured = replace(self._draft)
         self._clear_calibration_preview()

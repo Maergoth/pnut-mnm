@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 MAX_GAP = 2.0
+MAX_SAMPLE_GAP = 10.0
 XP_INTERVAL = 300.0
 LEVEL_GRACE = 8.0
 PENDING_LIMIT = 64
@@ -38,7 +39,7 @@ class PlayerTelemetry:
     are internal alert signals. Own level-up chat can confirm XP bar wraps.
     """
 
-    def __init__(self, initial: dict[str, Any] | None = None):
+    def __init__(self, initial: dict[str, Any] | None = None, *, low_health_threshold: int = 10):
         initial = initial if isinstance(initial, dict) else {}
         self._hp_seconds = _nonnegative(initial.get("hp_observed_seconds"))
         self._hp_low_seconds = _nonnegative(initial.get("hp_below10_seconds"))
@@ -55,6 +56,17 @@ class PlayerTelemetry:
             self._xp_gain = self._xp_gain or 0.0
         self._xp_wraps = int(_nonnegative(initial.get("xp_level_ups"), 0))
         self._clear_live()
+        self.set_health_threshold(low_health_threshold)
+
+    def set_health_threshold(self, threshold: int) -> None:
+        """Require fresh HP confirmation after changes, preserving the XP window."""
+        if type(threshold) is not int or not 1 <= threshold <= 100:
+            raise ValueError("Health threshold must be an integer between 1 and 100.")
+        self.low_health_threshold = threshold
+        self._hp_previous = None
+        self._hp_percent = None
+        self._hp_low_count = 0
+        self._hp_low = False
 
     def _clear_xp(self) -> None:
         self._xp_previous_ts: float | None = None
@@ -82,7 +94,11 @@ class PlayerTelemetry:
         """Clear live baselines, preserving completed measurements and totals."""
         self._clear_live()
 
-    def update(self, reading: Mapping[str, Any] | None, ts: float) -> bool:
+    def update(self, reading: Mapping[str, Any] | None, ts: float, *, max_gap: float = MAX_GAP) -> bool:
+        """Observe a fresh sample within the caller's bounded capture cadence."""
+        gap = _number(max_gap)
+        if gap is None or not 0 < gap <= MAX_SAMPLE_GAP:
+            raise ValueError("Sample gap must be a finite number greater than zero and at most 10 seconds.")
         before = self.snapshot()
         now = _number(ts)
         if now is None or not isinstance(reading, Mapping):
@@ -94,7 +110,7 @@ class PlayerTelemetry:
         current, maximum = _number(reading.get("hp_current")), _number(reading.get("hp_max"))
         hp = (100.0 * current / maximum if current is not None and maximum is not None
               and maximum > 0 and 0 <= current <= maximum else None)
-        self._update_hp(hp, now)
+        self._update_hp(hp, now, gap)
         fraction = _number(reading.get("xp_fraction"))
         if fraction is not None and not 0 <= fraction <= 1:
             fraction = None
@@ -103,12 +119,12 @@ class PlayerTelemetry:
         resolution = _number(reading.get("xp_resolution_points"))
         tolerance = (resolution / 100.0 if resolution is not None and 0 < resolution <= 100
                      else 1.0 / max(2.0, pixels or 200.0))
-        self._update_xp(fraction, now, tolerance, pixels)
+        self._update_xp(fraction, now, tolerance, pixels, gap)
         if hp is not None or fraction is not None:
             self._last_seen = now
         return self.snapshot() != before
 
-    def _update_hp(self, percent: float | None, ts: float) -> None:
+    def _update_hp(self, percent: float | None, ts: float, max_gap: float) -> None:
         if percent is None:
             self._hp_previous = None
             self._hp_percent = None
@@ -116,7 +132,7 @@ class PlayerTelemetry:
             self._hp_low = False
             return
         previous = self._hp_previous
-        contiguous = previous is not None and ts - previous[0] <= MAX_GAP
+        contiguous = previous is not None and ts - previous[0] <= max_gap
         if self._hp_seconds is None:
             self._hp_seconds = self._hp_low_seconds = 0.0
             self._hp_episodes = 0
@@ -127,9 +143,9 @@ class PlayerTelemetry:
         else:
             self._hp_low_count = 0
             self._hp_low = False
-        if percent < 10:
+        if percent < self.low_health_threshold:
             self._hp_low_count += 1
-            if contiguous and previous[1] < 10:
+            if contiguous and previous[1] < self.low_health_threshold:
                 self._hp_low_seconds += ts - previous[0]
             if self._hp_low_count >= 2 and not self._hp_low:
                 self._hp_episodes += 1
@@ -161,11 +177,11 @@ class PlayerTelemetry:
         self._checkpoint = None
 
     def _update_xp(self, fraction: float | None, ts: float, tolerance: float,
-                   width: float | None) -> None:
+                   width: float | None, max_gap: float) -> None:
         if fraction is None:
             self._clear_xp()
             return
-        contiguous = (self._xp_previous_ts is not None and ts - self._xp_previous_ts <= MAX_GAP
+        contiguous = (self._xp_previous_ts is not None and ts - self._xp_previous_ts <= max_gap
                       and width == self._xp_width)
         if not contiguous:
             self._clear_xp()

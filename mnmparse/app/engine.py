@@ -43,6 +43,7 @@ from PySide6.QtCore import QObject, Signal
 
 from mnmparse.app.models import EncounterSnapshot, build_snapshot
 from mnmparse.config import Config, project_path
+from mnmparse.player_telemetry import MAX_GAP, MAX_SAMPLE_GAP
 from mnmparse.replay import BACKLOG_S
 from mnmparse.session import SessionSnapshot, SessionStats
 from mnmparse.vocab import GLOBAL as VOCAB
@@ -293,7 +294,7 @@ class Engine(QObject):
     encounter_closed = Signal(object)
     encounter_updated = Signal(object)
     session = Signal(object)  #: SessionSnapshot (loot, coin, kills, deaths, CC) for the whole run
-    low_health = Signal(float)  #: confirmed own HP below 10%; one alert per low-health episode
+    low_health = Signal(float)  #: confirmed own HP below the threshold; one alert per low-health episode
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -534,11 +535,15 @@ class Engine(QObject):
             previous = self._cfg
             self._cfg = dataclasses.replace(cfg)
             if any(getattr(previous, name, None) != getattr(cfg, name, None) for name in
-                   ("crop", "player_status_crop", "player_status_enabled", "player_status_xp", "player_name")):
+                   ("crop", "player_status_crop", "player_status_separate", "player_status_enabled", "player_status_xp", "player_name")):
                 self._pause_player_status()
                 self._player_panel_key = None
                 self._player_crop_warned = False
                 self._player_reader_warned = False
+            if (previous.low_health_threshold != cfg.low_health_threshold
+                    or previous.low_health_enabled != cfg.low_health_enabled):
+                self._telemetry().set_health_threshold(cfg.low_health_threshold)
+                self._low_health_alert_at = float("-inf")
             self._crop_warned = False
             self._row_frames = 0
             self._rows_warned = False
@@ -1604,7 +1609,7 @@ class Engine(QObject):
             self.notice.emit("Mini stats region does not fit the game window; select it again in Settings.")
 
     def _status_crop_for_source(self, source: Any, cfg: Config, frame: Any = None) -> Any:
-        crop = getattr(cfg, "player_status_crop", None) if cfg.player_status_enabled else None
+        crop = cfg.player_status_crop if cfg.player_status_enabled and cfg.player_status_separate else None
         if crop is None:
             return None
         if (not isinstance(crop, (list, tuple)) or len(crop) != 4
@@ -1625,7 +1630,8 @@ class Engine(QObject):
         """Live baselines belong to one session; restored totals need fresh observations."""
         if self._player_telemetry_owner is not self._session_stats:
             from mnmparse.player_telemetry import PlayerTelemetry
-            self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}))
+            self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}),
+                                                     low_health_threshold=self._cfg.low_health_threshold)
             self._player_telemetry_owner = self._session_stats
             self._player_panel_key = None
         return self._player_telemetry
@@ -1642,14 +1648,21 @@ class Engine(QObject):
             self._telemetry().pause()
             self._save_player_status()
 
-    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any) -> None:
+    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any, *, ocr_ms: float = 0.0) -> None:
         telemetry = self._telemetry()
-        key = (tuple(cfg.crop), getattr(cfg, "player_status_crop", None), tuple(shape),
+        key = (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop), tuple(shape),
                tuple(reading.panel_rect) if reading is not None else None)
         prior = self._player_panel_key
-        if (prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None
-                and max(abs(a - b) for a, b in zip(key[3], prior[3])) <= 8):
-            key = prior  # Small OCR-coordinate jitter cannot break an otherwise stable observation.
+        if prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None:
+            current, previous_panel = key[3], prior[3]
+            intersection = (max(0, min(current[2], previous_panel[2]) - max(current[0], previous_panel[0]))
+                            * max(0, min(current[3], previous_panel[3]) - max(current[1], previous_panel[1])))
+            union = ((current[2] - current[0]) * (current[3] - current[1])
+                     + (previous_panel[2] - previous_panel[0]) * (previous_panel[3] - previous_panel[1])
+                     - intersection)
+            if union > 0 and intersection / union >= .8:
+                # Derived padding magnifies a one-pixel OCR label-height change.
+                key = prior
         if key != self._player_panel_key:
             telemetry.pause()
             self._player_panel_key = key
@@ -1662,7 +1675,8 @@ class Engine(QObject):
                            "xp_pixels": reading.xp_bar_rect[2] - reading.xp_bar_rect[0]
                            if reading.xp_bar_rect else None,
                            "xp_resolution_points": reading.xp_resolution_points}
-        telemetry.update(measurement, now)
+        max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * max(1.0 / max(cfg.fps, .1), ocr_ms / 1000.0)))
+        telemetry.update(measurement, now, max_gap=max_gap)
         summary = telemetry.snapshot()
         if (cfg.low_health_enabled and (summary.get("hp_below10_episodes") or 0) > previous
                 and now - self._low_health_alert_at >= 10.0):
@@ -1706,13 +1720,15 @@ class Engine(QObject):
             self._record_timing("preprocess", preprocess_started)
         lines = ocr.read(img)
         reading = None
-        separate = getattr(cfg, "player_status_crop", None) is not None
+        separate = cfg.player_status_separate
         status_raw = raw
         if cfg.player_status_enabled:
             from mnmparse.player_status import read_player_status
             try:
                 if separate:
-                    if status_frame is None and not cropped:
+                    if cfg.player_status_crop is None:
+                        status_frame = None
+                    elif status_frame is None and not cropped:
                         if self._status_crop_for_source(None, cfg, frame) is not None:
                             status_frame = crop_frame(frame, cfg.player_status_crop)
                     status_raw = status_frame
@@ -1730,7 +1746,8 @@ class Engine(QObject):
         now = time.time()
         with self._lock:
             if fresh and cfg.player_status_enabled:
-                self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else ())
+                self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else (),
+                                            ocr_ms=ocr_ms)
             self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
             tracking_started = time.perf_counter()
             chat_lines = lines

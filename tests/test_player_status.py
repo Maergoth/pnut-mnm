@@ -60,6 +60,20 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertEqual(reading.hp_percent, current)
                 self.assertEqual(reading.hp_current, current)
 
+    def test_shuffled_ocr_uses_geometry_for_split_health_and_xp(self):
+        lines = panel()
+        image, rect = pixels(73.2)
+        for order in ((7, 6, 5, 4, 3, 2, 1, 0), (3, 6, 1, 4, 0, 7, 5, 2)):
+            with self.subTest(order=order):
+                # Keep x/y geometry while moving HEALTH away from its ratio in list order.
+                shuffled = [lines[index] for index in order]
+                reading = read_player_status(shuffled, image, xp_bar_confirmed=True)
+                self.assertIsNotNone(reading)
+                self.assertEqual((reading.hp_current, reading.hp_max), (601, 733))
+                self.assertAlmostEqual(reading.hp_percent, 81.99, places=2)
+                self.assertEqual(reading.xp_bar_rect, rect)
+                self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
+
     def test_unanchored_chat_invalid_health_and_ambiguous_panels_are_ignored(self):
         inputs = [
             [OcrLine(10, 20, 10, "My Health 10/100, mana 60/200")],

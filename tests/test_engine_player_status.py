@@ -30,7 +30,8 @@ class EnginePlayerStatusTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.cfg = Config(player_name="Owner", log_dir=self.tmp.name, crop=(0, 0, 8, 8))
+        self.cfg = Config(player_name="Owner", log_dir=self.tmp.name, crop=(0, 0, 8, 8),
+                          player_status_separate=False)
         self.engine = Engine(self.cfg)
         self.engine._tracker = Tracker()
 
@@ -39,7 +40,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
         return PlayerStatusReading(hp, 100, (0, 0, 8, 8), (0,), 20.0, (0, 6, 8, 8), .1)
 
     def test_second_region_uses_original_pixels_and_never_enters_chat(self):
-        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8), ocr_scale=2)
+        cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8), ocr_scale=2)
         chat = np.full((8, 8, 3), (8, 30, 60), np.uint8)
         stats = np.full((8, 8, 3), (2, 100, 200), np.uint8)
         chat_lines = [OcrLine(0, 0, 1, "You begin casting Heal.")]
@@ -86,7 +87,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
 
     def test_invalid_stats_crop_does_not_stop_chat_capture(self):
-        self.engine.update_config(dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8)))
+        self.engine.update_config(dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8)))
         source = SimpleNamespace(full_frame_dimensions=(8, 8), frame_count=1,
                                  latest_region=Mock(return_value=np.zeros((8, 8, 3), np.uint8)),
                                  latest_regions=Mock())
@@ -100,7 +101,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertIsNone(self.engine._process_frame.call_args.kwargs["status_frame"])
 
     def test_native_multiple_regions_and_compatibility_fallback_use_one_frame(self):
-        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8))
+        cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8))
         self.engine.update_config(cfg)
         full = np.full((8, 32, 3), 23, np.uint8)
         original_chat = np.full((8, 8, 3), 9, np.uint8)
@@ -130,7 +131,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
                     self.assertEqual(int(kwargs["status_frame"][0, 0, 0]), 23)
 
     def test_optional_reader_failure_keeps_chat_and_warns_once(self):
-        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8))
+        cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8))
         chat = [OcrLine(0, 0, 1, "You begin casting Heal.")]
         frame = np.zeros((8, 8, 3), np.uint8)
         self.engine._ocr = Mock(read=Mock(side_effect=[chat, RuntimeError("stats OCR unavailable"),
@@ -147,8 +148,8 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertEqual(self.engine.session_snapshot().player_status, {})
 
     def test_small_ocr_position_jitter_does_not_reset_low_hp_confirmation(self):
-        first = self.reading()
-        shifted = dataclasses.replace(first, panel_rect=(3, 2, 11, 10))
+        first = dataclasses.replace(self.reading(), panel_rect=(10, 3, 319, 248))
+        shifted = dataclasses.replace(first, panel_rect=(13, 5, 322, 250))
         self.engine._ocr = Mock(read=Mock(return_value=[]))
         signals = []
         self.engine.low_health.connect(signals.append)
@@ -157,6 +158,105 @@ class EnginePlayerStatusTests(unittest.TestCase):
             for _ in range(2):
                 self.engine._process_frame(np.zeros((8, 8, 3), np.uint8), self.cfg, cropped=True)
         self.assertEqual(signals, [8.0])
+
+    def test_one_pixel_label_height_change_preserves_actual_panel_confirmation(self):
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        first = PlayerStatusReading(73, 767, (10, 3, 319, 248), (), 7.0, (37, 212, 276, 231), .08368)
+        second = dataclasses.replace(first, panel_rect=(17, 7, 307, 248))
+        for now, reading in ((100, first), (100.25, second), (100.5, first)):
+            self.engine._observe_player_status(reading, self.cfg, now, (248, 324, 3))
+        self.assertEqual(signals, [round(100 * 73 / 767, 6)])
+        self.assertIsNotNone(self.engine._telemetry()._xp_baseline)
+        # A missing panel or a different, distant rectangle needs a new baseline.
+        self.engine._observe_player_status(None, self.cfg, 100.75, (248, 324, 3))
+        self.engine._observe_player_status(first, self.cfg, 101, (248, 324, 3))
+        self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+        distant = dataclasses.replace(first, panel_rect=(100, 3, 324, 248))
+        self.engine._observe_player_status(distant, self.cfg, 101.25, (248, 324, 3))
+        self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+        self.assertIsNone(self.engine._telemetry()._xp_baseline)
+
+    def test_slow_ocr_and_poll_cadences_confirm_health_and_complete_xp_window(self):
+        for fps, ocr_ms in ((4, 1500), (1 / 3, 0)):
+            with self.subTest(fps=fps, ocr_ms=ocr_ms):
+                cfg = dataclasses.replace(self.cfg, fps=fps)
+                engine = Engine(cfg)
+                signals = []
+                engine.low_health.connect(signals.append)
+                for now in range(100, 404, 3):
+                    reading = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 400 else 20.0)
+                    engine._observe_player_status(reading, cfg, now, (8, 8, 3), ocr_ms=ocr_ms)
+                    if now == 100:
+                        self.assertEqual(signals, [])
+                self.assertEqual(signals, [8.0])
+                snap = engine._telemetry().snapshot()
+                self.assertEqual(snap["xp_observed_seconds"], 300)
+                self.assertAlmostEqual(snap["xp_points_per_hour"], 24)
+                # A very slow pass cannot grant an unbounded continuity budget.
+                engine._observe_player_status(reading, cfg, 414, (8, 8, 3), ocr_ms=60_000)
+                self.assertFalse(engine._telemetry().snapshot()["hp_low"])
+                self.assertIsNone(engine._telemetry()._xp_baseline)
+
+    def test_pending_separate_region_does_not_read_stats_or_hide_chat(self):
+        cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=None)
+        chat = [OcrLine(0, 0, 1, "You begin casting Heal.")]
+        self.engine._ocr = Mock(read=Mock(return_value=chat))
+        self.engine._tracker.update = Mock(return_value=[])
+        frame = np.zeros((8, 8, 3), np.uint8)
+        with patch("mnmparse.player_status.read_player_status") as reader:
+            self.engine._process_frame(frame, cfg, cropped=True, status_frame=frame)
+        reader.assert_not_called()
+        self.assertEqual(self.engine._ocr.read.call_count, 1)
+        self.assertEqual(self.engine._tracker.update.call_args.args[0], chat)
+        self.assertEqual(self.engine.session_snapshot().player_status, {})
+        self.assertIsNone(self.engine._status_crop_for_source(None, cfg))
+
+    def test_explicit_shared_mode_ignores_retained_separate_rectangle(self):
+        cfg = dataclasses.replace(self.cfg, player_status_crop=(20, 0, 28, 8))
+        self.assertIsNone(self.engine._status_crop_for_source(None, cfg))
+        self.engine._ocr = Mock(read=Mock(return_value=[]))
+        frame = np.zeros((8, 8, 3), np.uint8)
+        with patch("mnmparse.player_status.read_player_status", return_value=self.reading()) as reader:
+            self.engine._process_frame(frame, cfg, cropped=True)
+        self.assertIs(reader.call_args.args[1], frame)
+        self.assertEqual(self.engine._ocr.read.call_count, 1)
+
+    def test_threshold_change_and_reenable_require_fresh_confirmation_preserve_xp(self):
+        cfg = dataclasses.replace(self.cfg, low_health_threshold=25)
+        self.engine.update_config(cfg)
+        self.engine._ocr = Mock(read=Mock(return_value=[]))
+        frame = np.zeros((8, 8, 3), np.uint8)
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        now = [100.0]
+        with patch("mnmparse.player_status.read_player_status", return_value=self.reading(hp=20)), patch(
+                "mnmparse.app.engine.time.time", side_effect=lambda: now[0]):
+            self.engine._process_frame(frame, cfg, cropped=True)
+            now[0] += .25
+            self.engine._process_frame(frame, cfg, cropped=True)
+            self.assertEqual(signals, [20.0])
+            baseline = self.engine._telemetry()._xp_baseline
+            cfg = dataclasses.replace(cfg, low_health_threshold=30)
+            self.engine.update_config(cfg)
+            self.assertEqual(self.engine._telemetry()._xp_baseline, baseline)
+            now[0] += .25
+            self.engine._process_frame(frame, cfg, cropped=True)
+            self.assertEqual(signals, [20.0])
+            now[0] += .25
+            self.engine._process_frame(frame, cfg, cropped=True)
+            self.assertEqual(signals, [20.0, 20.0])
+            self.engine.update_config(dataclasses.replace(cfg, low_health_enabled=False))
+            now[0] += .25
+            self.engine._process_frame(frame, self.engine._cfg, cropped=True)
+            self.engine.update_config(cfg)
+            now[0] += .25
+            self.engine._process_frame(frame, cfg, cropped=True)
+            self.assertEqual(signals, [20.0, 20.0])
+            now[0] += .25
+            self.engine._process_frame(frame, cfg, cropped=True)
+            self.assertEqual(signals, [20.0, 20.0, 20.0])
+            self.assertEqual(self.engine._telemetry()._xp_baseline, baseline)
 
     def test_session_owner_change_restarts_live_baseline_and_hp_confirmation(self):
         from mnmparse.session import SessionStats

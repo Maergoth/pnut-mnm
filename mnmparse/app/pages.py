@@ -680,7 +680,7 @@ class _DetailsPanel(QFrame):
     keeps its room.
     """
 
-    _SKILL_COLUMNS = ("Skill", "Hits", "Total", "Max", "Avg", "Hit%")
+    _SKILL_COLUMNS = ("Skill", "Hits", "Total", "Damage%", "Max", "Avg", "Hit%")
     #: ``(key, caption)`` of the summary chips, in display order.
     _CHIPS: tuple[tuple[str, str], ...] = (
         ("damage", "Damage"),
@@ -744,6 +744,8 @@ class _DetailsPanel(QFrame):
 
         self._skills = QTableWidget(0, len(self._SKILL_COLUMNS), content)
         self._skills.setHorizontalHeaderLabels(self._SKILL_COLUMNS)
+        self._skills.horizontalHeaderItem(3).setToolTip("Share of the selected actor's total damage.")
+        self._skills.horizontalHeaderItem(6).setToolTip("Hit accuracy: hits divided by hits plus misses.")
         self._skills.verticalHeader().setVisible(False)
         self._skills.setShowGrid(False)
         self._skills.setAlternatingRowColors(False)
@@ -751,7 +753,7 @@ class _DetailsPanel(QFrame):
         self._skills.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._skills.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._skills.setFrameShape(QFrame.Shape.NoFrame)
-        self._skills.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._skills.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._skills.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # the panel scrolls
         header = self._skills.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -760,13 +762,15 @@ class _DetailsPanel(QFrame):
         _tabular(self._skills)
         outer.addWidget(self._skills)
         outer.addStretch(1)
+        self._skills.horizontalScrollBar().rangeChanged.connect(
+            lambda _minimum, _maximum: self._fit_skills_height())
         self._fit_skills_height()
 
     def set_actor(self, row: ActorRow | None) -> None:
         """Show ``row`` (``None`` resets the panel).
 
         Called on every snapshot (up to 10 Hz); unchanged rows are skipped and the
-        skills table is only rebuilt when the skill breakdown itself changed, so it
+        skills table is only rebuilt when its breakdown or damage total changed, so it
         keeps its scroll position during a long fight.
         """
         last = self._last_row
@@ -825,16 +829,20 @@ class _DetailsPanel(QFrame):
         for key, text in values.items():
             self._cells[key].setText(text)
             self._chip_widgets[key].setToolTip(tips.get(key, ""))
-        if last is None or last.name != row.name or last.skills != row.skills:
-            self._fill_skills(row.skills, misses_shown=bool(getattr(row, "misses_shown", True)))
+        if last is None or last.name != row.name or last.skills != row.skills or last.damage != row.damage:
+            self._fill_skills(row.skills, total_damage=row.damage,
+                              misses_shown=bool(getattr(row, "misses_shown", True)))
 
     def _fit_skills_height(self) -> None:
         """Size the skills table to its rows (one empty row at least); the panel scrolls."""
         header = self._skills.horizontalHeader().sizeHint().height()
         rows = max(1, self._skills.rowCount()) * self._skills.verticalHeader().defaultSectionSize()
-        self._skills.setFixedHeight(header + rows + 2 * self._skills.frameWidth() + 2)
+        scrollbar = self._skills.horizontalScrollBar()
+        horizontal = scrollbar.sizeHint().height() if scrollbar.maximum() > 0 else 0
+        self._skills.setFixedHeight(header + rows + horizontal + 2 * self._skills.frameWidth() + 2)
 
-    def _fill_skills(self, skills: Iterable[SkillRow], *, misses_shown: bool = True) -> None:
+    def _fill_skills(self, skills: Iterable[SkillRow], *, total_damage: float,
+                     misses_shown: bool = True) -> None:
         rows = list(skills)
         self._skills.setRowCount(len(rows))
         for r, skill in enumerate(rows):
@@ -845,6 +853,7 @@ class _DetailsPanel(QFrame):
                 skill.skill,
                 _num(skill.hits),
                 _num(skill.total),
+                _share(skill.total / total_damage if total_damage > 0 else 0.0),
                 _num(skill.max_hit),
                 f"{skill.avg:,.1f}",
                 hit_text,
@@ -2204,6 +2213,19 @@ def _export_preview(fmt: Any, player: str = "") -> str:
     return format_snapshot(snap, fmt) or "(nothing to show)"
 
 
+class _StatsCropPicker(CropPicker):
+    """Fitting a preview must not count as choosing a pending stats rectangle."""
+
+    _fitting_frame = False
+
+    def set_frame(self, frame: Any) -> None:
+        self._fitting_frame = True
+        try:
+            super().set_frame(frame)
+        finally:
+            self._fitting_frame = False
+
+
 class SettingsPage(QWidget):
     """The configuration form.  Save writes ``config.json`` and emits :attr:`config_changed`."""
 
@@ -2218,6 +2240,8 @@ class SettingsPage(QWidget):
     sound_preview_requested = Signal(str)
     #: Preview the Revenge List alert with its own percentage volume.
     revenge_alert_preview_requested = Signal(str, int)
+    #: Preview the low-health alert with its current percentage volume.
+    low_health_preview_requested = Signal(str, int)
     #: Download the latest wiki maps into the local cache without blocking Settings.
     map_download_requested = Signal()
     #: Check GitHub for an app update and download it in the background.
@@ -2332,7 +2356,7 @@ class SettingsPage(QWidget):
             combo.currentIndexChanged.connect(self._on_form_changed)
         for spin in (self.feed_max_lines, self.fps, self.encounter_timeout, self.log_break, self.log_max,
                      self.revenge_days, self.revenge_entries, self.revenge_alert_duration,
-                     self.revenge_alert_cooldown):
+                     self.revenge_alert_cooldown, self.low_health_threshold):
             spin.valueChanged.connect(self._on_form_changed)
         for toggle in (self.start_on_launch, self.minimize_to_tray, self.include_personal, self.show_other_groups,
                        self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled,
@@ -2935,7 +2959,7 @@ class SettingsPage(QWidget):
     def _build_player_status(self) -> None:
         from mnmparse.triggers import BUILTIN_SOUNDS
 
-        form = self._section("Mini stat window", "XP readings are estimates. Select a separate region if your stats are outside chat.")
+        form = self._section("Mini stat window", "Select the stat panel separately to keep combat chat clear. XP readings are estimates.")
         self.player_status_enabled = ToggleSwitch()
         self._row(form, "Read mini stats", self.player_status_enabled)
         self.player_status_separate = ToggleSwitch()
@@ -2948,23 +2972,48 @@ class SettingsPage(QWidget):
         hint.setWordWrap(True)
         region_layout.addWidget(hint)
         stats_cfg = dataclasses.replace(self._cfg, crop=self._cfg.player_status_crop or self._cfg.crop)
-        self.player_status_picker = CropPicker(self._engine, stats_cfg, calibration_preview=True)
+        self._player_status_crop_selected = self._cfg.player_status_crop is not None
+        self.player_status_picker = _StatsCropPicker(self._engine, stats_cfg, calibration_preview=True)
         self.player_status_picker.canvas.setAccessibleName("Mini stats crop")
         for caption, spin in self.player_status_picker._spins.items():
             spin.setAccessibleName(f"Mini stats {caption.title()}")
         self.player_status_picker.setMinimumHeight(320)
         self.player_status_picker.crop_changed.connect(self._on_player_status_crop)
         region_layout.addWidget(self.player_status_picker)
+        region_actions = QHBoxLayout()
+        self.player_status_use_crop = QPushButton("Use rectangle")
+        self.player_status_use_crop.setObjectName("Chip")
+        self.player_status_use_crop.clicked.connect(self._use_player_status_crop)
+        region_actions.addWidget(self.player_status_use_crop)
+        self.player_status_selection = _label("", "Muted")
+        region_actions.addWidget(self.player_status_selection, 1)
+        region_layout.addLayout(region_actions)
+        self.player_status_picker.frame_captured.connect(self._refresh_player_status_selection)
         form.addRow(self.player_status_region)
         self.player_status_region.hide()
         self.player_status_xp = ToggleSwitch()
         self._row(form, "Track XP", self.player_status_xp)
         self.low_health_enabled = ToggleSwitch()
-        self._row(form, "Alert below 10% HP", self.low_health_enabled)
+        self._row(form, "Low-health alert", self.low_health_enabled)
+        self.low_health_threshold = QSpinBox()
+        self.low_health_threshold.setRange(1, 100)
+        self.low_health_threshold.setSuffix("%")
+        self.low_health_threshold.setFixedWidth(100)
+        self.low_health_threshold.setAccessibleName("Low-health threshold")
+        self._row(form, "Alert below", self.low_health_threshold)
         self.low_health_flash = ToggleSwitch()
         self._row(form, "Flash screen edges red", self.low_health_flash)
         self.low_health_sound = self._combo(["None", *BUILTIN_SOUNDS], 160)
-        self._row(form, "Alert sound", self.low_health_sound)
+        self.low_health_preview = QPushButton("Preview sound")
+        self.low_health_preview.setObjectName("Chip")
+        self.low_health_preview.setToolTip("Play at the selected volume using the Triggers audio settings.")
+        self.low_health_preview.clicked.connect(self._preview_low_health_alert)
+        sound_row = QHBoxLayout()
+        sound_row.setSpacing(8)
+        sound_row.addWidget(self.low_health_sound)
+        sound_row.addWidget(self.low_health_preview)
+        sound_row.addStretch(1)
+        self._row(form, "Alert sound", sound_row)
         self.low_health_volume = SliderRow("", 0, 100, 80, formatter=_percent_text)
         self.low_health_volume.setFixedWidth(360)
         self._row(form, "Alert volume", self.low_health_volume)
@@ -2973,6 +3022,8 @@ class SettingsPage(QWidget):
             lambda _enabled: self._sync_player_status_controls(self.player_status_enabled.isChecked()))
         self.low_health_enabled.toggled.connect(
             lambda _enabled: self._sync_player_status_controls(self.player_status_enabled.isChecked()))
+        self.low_health_sound.currentIndexChanged.connect(
+            lambda _index: self._sync_player_status_controls(self.player_status_enabled.isChecked()))
 
     def _sync_player_status_controls(self, enabled: bool) -> None:
         self.player_status_separate.setEnabled(enabled)
@@ -2980,12 +3031,33 @@ class SettingsPage(QWidget):
         self.player_status_xp.setEnabled(enabled)
         self.low_health_enabled.setEnabled(enabled)
         alerts = enabled and self.low_health_enabled.isChecked()
-        for control in (self.low_health_flash, self.low_health_sound, self.low_health_volume):
+        for control in (self.low_health_threshold, self.low_health_flash, self.low_health_sound, self.low_health_volume):
             control.setEnabled(alerts)
+        self.low_health_preview.setEnabled(alerts and self.low_health_sound.currentText() not in ("", "None"))
+        self._refresh_player_status_selection()
+
+    def _refresh_player_status_selection(self, *_args: Any) -> None:
+        self.player_status_selection.setText("Region selected." if self._player_status_crop_selected
+                                             else "No region selected yet.")
+        self.player_status_use_crop.setEnabled(self.player_status_picker.frame() is not None)
+
+    def _use_player_status_crop(self) -> None:
+        if self.player_status_picker.frame() is not None:
+            self._player_status_crop_selected = True
+            self._refresh_player_status_selection()
+            self._on_form_changed()
+
+    def _preview_low_health_alert(self) -> None:
+        sound = self.low_health_sound.currentText()
+        if sound and sound != "None":
+            self.low_health_preview_requested.emit(sound, self.low_health_volume.value())
 
     def _on_player_status_crop(self, crop: tuple) -> None:
         if not self._loading:
+            if not self.player_status_picker._fitting_frame:
+                self._player_status_crop_selected = True
             self.player_status_picker.set_config(dataclasses.replace(self.form_config(), crop=crop))
+            self._refresh_player_status_selection()
             self._on_form_changed()
 
     _SORT_TITLES = {"damage": "Damage", "healing": "Healing", "taken": "Damage taken", "utility": "Utility"}
@@ -3156,12 +3228,14 @@ class SettingsPage(QWidget):
             self.reduced_motion.setChecked(cfg.reduced_motion)
             self.include_personal.setChecked(bool(_cfg_get(cfg, "include_personal", False)))
             self.player_status_enabled.setChecked(cfg.player_status_enabled)
-            self.player_status_separate.setChecked(cfg.player_status_crop is not None)
+            self.player_status_separate.setChecked(cfg.player_status_separate)
+            self._player_status_crop_selected = cfg.player_status_crop is not None
             self.player_status_picker.set_crop(cfg.player_status_crop or cfg.crop)
             self.player_status_picker.set_config(
                 dataclasses.replace(cfg, crop=cfg.player_status_crop or cfg.crop))
             self.player_status_xp.setChecked(cfg.player_status_xp)
             self.low_health_enabled.setChecked(cfg.low_health_enabled)
+            self.low_health_threshold.setValue(cfg.low_health_threshold)
             self.low_health_flash.setChecked(cfg.low_health_flash)
             self._select(self.low_health_sound, cfg.low_health_sound or "None")
             self.low_health_volume.set_value(cfg.low_health_volume)
@@ -3221,10 +3295,12 @@ class SettingsPage(QWidget):
             "reduced_motion": self.reduced_motion.isChecked(),
             "include_personal": self.include_personal.isChecked(),
             "player_status_enabled": self.player_status_enabled.isChecked(),
+            "player_status_separate": self.player_status_separate.isChecked(),
             "player_status_crop": (tuple(self.player_status_picker.crop())
-                                   if self.player_status_separate.isChecked() else None),
+                                   if self.player_status_separate.isChecked() and self._player_status_crop_selected else None),
             "player_status_xp": self.player_status_xp.isChecked(),
             "low_health_enabled": self.low_health_enabled.isChecked(),
+            "low_health_threshold": self.low_health_threshold.value(),
             "low_health_flash": self.low_health_flash.isChecked(),
             "low_health_sound": ("" if self.low_health_sound.currentText() == "None"
                                  else self.low_health_sound.currentText()),

@@ -131,7 +131,7 @@ class RevengeOverlayTests(unittest.TestCase):
         self.assertTrue(screen.availableGeometry().contains(window.geometry()),
                         f"Restored {window.geometry()} outside {screen.availableGeometry()}")
 
-    def test_popout_large_text_and_header_fit_a_narrow_replacement_monitor(self) -> None:
+    def test_popout_large_text_and_controls_fit_a_narrow_replacement_monitor(self) -> None:
         area = QRect(0, 0, 640, 480)
         screen = Mock()
         screen.availableGeometry.return_value = area
@@ -143,17 +143,18 @@ class RevengeOverlayTests(unittest.TestCase):
             window = self.popout(show=False)
             window.restore_state()
             window.set_appearance(0.85, 2.0)
-            window._show_header()
             self.app.processEvents()
             self.assertTrue(area.contains(window.geometry()),
                             f"Restored {window.geometry()} outside narrow monitor {area}")
             self.assertEqual(window.font_scale, 2.0)
-            for control in (*window.header.findChildren(QLabel), *window.header.findChildren(QPushButton)):
+            for control in (window.close_button, window.list.export_button, window.list.add_button,
+                            window.list.guild_export_button, window.list.guild_add_button):
                 with self.subTest(control=control.objectName() or control.text()):
-                    self.assertTrue(window.header.rect().contains(control.geometry()),
-                                    f"Header control {control.geometry()} clipped by {window.header.rect()}")
+                    self.assertTrue(control.parentWidget().rect().contains(control.geometry()))
                     bounds = QRect(control.mapTo(window, QPoint()), control.size())
                     self.assertTrue(window.rect().contains(bounds))
+                    if control is not window.close_button:
+                        self.assertFalse(window.close_button.geometry().intersects(bounds))
 
     def test_refresh_does_not_reveal_revenge_controls_on_other_tabs(self) -> None:
         window = self.overlay()
@@ -219,7 +220,6 @@ class RevengeOverlayTests(unittest.TestCase):
     def test_popout_background_alpha_changes_without_fading_text(self) -> None:
         window = self.popout()
         window.set_appearance(0.25, 1.0)
-        window._show_header()
         self.app.processEvents()
 
         def render() -> QImage:
@@ -234,7 +234,7 @@ class RevengeOverlayTests(unittest.TestCase):
         center = QPoint(window.width() // 2, window.height() - 16)
         self.assertLessEqual(abs(first.pixelColor(center).alpha() - 64), 1)
         self.assertEqual(first.pixelColor(0, 0).alpha(), 0)
-        heading = window.header.heading
+        heading = window.list.export_button
         top_left = heading.mapTo(window, QPoint())
         alpha = max(first.pixelColor(top_left.x() + x, top_left.y() + y).alpha()
                     for x in range(heading.width()) for y in range(heading.height()))
@@ -249,18 +249,17 @@ class RevengeOverlayTests(unittest.TestCase):
 
     def test_popout_drag_respects_lock_and_cancels_an_active_drag(self) -> None:
         window = self.popout()
-        window._show_header()
         window.move(40, 40)
 
         def mouse(kind: QEvent.Type, global_point: QPoint, button: Qt.MouseButton,
                   buttons: Qt.MouseButton) -> None:
-            local = window.header.mapFromGlobal(global_point)
+            local = window.mapFromGlobal(global_point)
             event = QMouseEvent(kind, QPointF(local), QPointF(global_point), button, buttons,
                                 Qt.KeyboardModifier.NoModifier)
-            self.app.sendEvent(window.header, event)
+            self.app.sendEvent(window, event)
 
         def drag(offset: QPoint, *, finish: bool = True) -> None:
-            origin = window.header.mapToGlobal(QPoint(10, 10))
+            origin = window.mapToGlobal(QPoint(10, 10))
             mouse(QEvent.Type.MouseButtonPress, origin, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
             mouse(QEvent.Type.MouseMove, origin + offset, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
             if finish:
@@ -271,24 +270,27 @@ class RevengeOverlayTests(unittest.TestCase):
         window.set_locked(True)
         drag(QPoint(30, 20))
         self.assertEqual(window.pos(), start)
-        self.assertEqual(window.header.cursor().shape(), Qt.CursorShape.ArrowCursor)
+        self.assertEqual(window.cursor().shape(), Qt.CursorShape.ArrowCursor)
         window.set_locked(False)
         drag(QPoint(30, 20), finish=False)
         self.assertEqual(window.pos(), start + QPoint(30, 20))
-        self.assertEqual(window.header.cursor().shape(), Qt.CursorShape.SizeAllCursor)
+        self.assertEqual(window.cursor().shape(), Qt.CursorShape.SizeAllCursor)
         window.set_locked(True)
         current = window.pos()
-        mouse(QEvent.Type.MouseMove, window.header.mapToGlobal(QPoint(60, 60)),
+        mouse(QEvent.Type.MouseMove, window.mapToGlobal(QPoint(60, 60)),
               Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
         self.assertEqual(window.pos(), current)
-        self.assertIsNone(window.header._drag)
+        self.assertIsNone(window._drag)
 
-    def test_hover_header_preserves_list_space_and_stays_open_while_adding(self) -> None:
+    def test_popout_close_is_always_visible_and_remembers_dismissal(self) -> None:
         window = self.popout()
         self.controller.save_attacker("Bandit")
         window.resize(460, 640)
         self.app.processEvents()
-        self.assertTrue(window.header.isHidden())
+        self.assertTrue(window.close_button.isVisible())
+        self.assertEqual(window.close_button.text(), "×")
+        self.assertEqual(window.close_button.focusPolicy(), Qt.FocusPolicy.NoFocus)
+        self.assertFalse(any(label.text() == "Revenge" for label in window.findChildren(QLabel)))
         viewport = window.list.rows_scroll.geometry()
         self.assertGreater(viewport.height(), 320)
 
@@ -296,25 +298,24 @@ class RevengeOverlayTests(unittest.TestCase):
         event = QMouseEvent(QEvent.Type.MouseMove, QPointF(point), QPointF(window.mapToGlobal(point)),
                             Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
         self.app.sendEvent(window, event)
-        self.assertTrue(window.header.isVisible())
+        self.app.sendEvent(window, QEvent(QEvent.Type.Leave))
+        self.assertTrue(window.close_button.isVisible())
         self.assertEqual(window.list.rows_scroll.geometry(), viewport)
 
-        outside = window.mapToGlobal(QPoint(20, window.height() + 20))
-        with patch("mnmparse.app.revenge.QCursor.pos", return_value=outside):
-            window.list.add_button.click()
-            dialog = window.list._manual_dialog
-            self.assertIsNotNone(dialog)
-            window._hide_header()
-            self.assertTrue(window.header.isVisible())
-            dialog.reject()
-            window._hide_header()
-            self.assertTrue(window.header.isHidden())
+        window.list.add_button.click()
+        dialog = window.list._manual_dialog
+        self.assertIsNotNone(dialog)
+        self.assertTrue(window.close_button.isVisible())
+        dialog.reject()
         self.assertEqual(window.list.rows_scroll.geometry(), viewport)
+        with patch.object(window, "activateWindow", side_effect=AssertionError("Activated game overlay")):
+            window.close_button.click()
+        self.assertTrue(window.isHidden())
+        self.assertFalse(self.settings.value("revenge/visible", True, type=bool))
 
     def test_player_and_guild_columns_add_export_and_remove_independently(self) -> None:
         window = self.popout()
         self.controller.save_attacker("Bandit")
-        window._show_header()
         window.list.guild_add_button.click()
         dialog = window.list._manual_dialog
         self.assertEqual(dialog.kind, "Guild")
@@ -392,9 +393,6 @@ class RevengeOverlayTests(unittest.TestCase):
 
     def test_popout_clipboard_actions_review_only_the_chosen_csv_list(self) -> None:
         window = self.popout()
-        headings = [label.text() for label in window.header.findChildren(QLabel)]
-        self.assertEqual(headings, ["Revenge"])
-        self.assertEqual([button.text() for button in window.header.findChildren(QPushButton)], ["×"])
         clipboard = self.app.clipboard()
         previous = clipboard.text()
         try:
@@ -443,7 +441,6 @@ class RevengeOverlayTests(unittest.TestCase):
         overlay = self.overlay()
         overlay.set_tab("revenge")
         popout = self.popout()
-        popout._show_header()
         for name in ("First", "Second", "Third"):
             self.controller.save_attacker(name)
         self.app.processEvents()
@@ -465,15 +462,18 @@ class RevengeOverlayTests(unittest.TestCase):
         for control in (popout.list.export_button, popout.list.add_button,
                         popout.list.guild_export_button, popout.list.guild_add_button):
             bounds = QRect(control.mapTo(popout, QPoint()), control.size())
-            self.assertFalse(popout.header.geometry().intersects(bounds),
-                             "Hovering over the window controls must not cover the list actions")
+            self.assertFalse(popout.close_button.geometry().intersects(bounds),
+                             "The close control must not cover the list actions")
         popout.resize(240, 380)
         self.app.processEvents()
         self.assertEqual(popout.width(), 240)
+        self.assertTrue(popout.rect().contains(popout.close_button.geometry()))
         for control in (popout.list.export_button, popout.list.add_button,
                         popout.list.guild_export_button, popout.list.guild_add_button):
             self.assertTrue(control.parentWidget().rect().contains(control.geometry()),
                             f"Column action {control.text()} must fit the narrow list")
+            bounds = QRect(control.mapTo(popout, QPoint()), control.size())
+            self.assertFalse(popout.close_button.geometry().intersects(bounds))
 
 
 if __name__ == "__main__":

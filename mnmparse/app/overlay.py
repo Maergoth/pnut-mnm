@@ -1577,6 +1577,7 @@ class OverlayWindow(QWidget):
 
     def set_revenge_controller(self, controller: Any) -> None:
         from mnmparse.app.revenge import RevengeList
+        self._timer_panel.set_revenge_controller(controller)
         old = self._revenge_page
         # Only the stack controls this page's visibility. The list refreshes its
         # own feature visibility, which must not re-show a hidden stack page.

@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 
 from mnmparse import __version__
-from mnmparse.config import Config
+from mnmparse.config import Config, _migrate_saved_config
 from mnmparse.storage import atomic_write
 
 MAX_BACKUP = 8 * 1024 * 1024
@@ -58,7 +58,7 @@ def _config_bytes(data: dict) -> bytes:
         if "capture_profiles" in data:
             from mnmparse.profiles import validate_profiles
             validate_profiles(data["capture_profiles"])
-        candidate = Config(**data)
+        candidate = _migrate_saved_config(Config(**data), data)
         problems = candidate.problems()
     except (TypeError, ValueError, AttributeError, OverflowError) as exc:
         raise BackupError("Backup configuration has invalid setting types.") from exc
