@@ -28,6 +28,15 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.8": ReleaseNotes(
+        changes=(
+            "Each Revenge pop-out list now has a + button and a clipboard copy icon.",
+            "Use + to enter names or choose CSV from clipboard. Preview entries, then choose Add to save.",
+            "CSV now uses one comma-separated row of names. Older CSV imports still work.",
+        ),
+        settings_label="Revenge settings",
+        settings_target="revenge_enabled",
+    ),
     "1.0.7": ReleaseNotes(
         changes=(
             "The Revenge pop-out remembers whether it was open, its position and its size after restart.",

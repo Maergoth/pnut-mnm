@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSettings, Qt
 from PySide6.QtGui import QImage, QMouseEvent, QPainter
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 
 from mnmparse.app import theme
 from mnmparse.app.overlay import OverlayWindow
@@ -147,10 +147,7 @@ class RevengeOverlayTests(unittest.TestCase):
             self.assertTrue(area.contains(window.geometry()),
                             f"Restored {window.geometry()} outside narrow monitor {area}")
             self.assertEqual(window.font_scale, 2.0)
-            for control in (window.header.heading, window.header.add_button, window.header.export_button,
-                            window.header.import_button, window.header.guild_add_button,
-                            window.header.guild_export_button, window.header.guild_import_button,
-                            window.header.close_button):
+            for control in (*window.header.findChildren(QLabel), *window.header.findChildren(QPushButton)):
                 with self.subTest(control=control.objectName() or control.text()):
                     self.assertTrue(window.header.rect().contains(control.geometry()),
                                     f"Header control {control.geometry()} clipped by {window.header.rect()}")
@@ -334,11 +331,9 @@ class RevengeOverlayTests(unittest.TestCase):
         previous = clipboard.text()
         try:
             window.header.export_button.click()
-            self.assertIn("Player,Bandit", clipboard.text())
-            self.assertNotIn("Guild,Bandit", clipboard.text())
+            self.assertEqual(clipboard.text().rstrip("\r\n"), "Bandit")
             window.header.guild_export_button.click()
-            self.assertIn("Guild,Bandit", clipboard.text())
-            self.assertNotIn("Player,Bandit", clipboard.text())
+            self.assertEqual(clipboard.text().rstrip("\r\n"), "Bandit")
         finally:
             clipboard.setText(previous)
 
@@ -396,27 +391,43 @@ class RevengeOverlayTests(unittest.TestCase):
 
     def test_popout_clipboard_actions_review_only_the_chosen_csv_list(self) -> None:
         window = self.popout()
+        headings = [label.text() for label in window.header.findChildren(QLabel)]
+        self.assertIn("Players", headings)
+        self.assertIn("Guilds", headings)
+        self.assertFalse(any(button.text() == "📥" for button in window.header.findChildren(QPushButton)))
         clipboard = self.app.clipboard()
         previous = clipboard.text()
         try:
-            clipboard.setText("Type,Name\nPlayer,Raider\nGuild,Friends\n")
-            for import_button, export_button, kind, name in (
-                    (window.header.import_button, window.header.export_button, "Player", "Raider"),
-                    (window.header.guild_import_button, window.header.guild_export_button, "Guild", "Friends")):
+            for add_button, export_button, kind, name in (
+                    (window.header.add_button, window.header.export_button, "Player", "Raider"),
+                    (window.header.guild_add_button, window.header.guild_export_button, "Guild", "Friends")):
                 with self.subTest(kind=kind):
-                    self.assertEqual(import_button.toolTip(), "Import CSV from Clipboard")
+                    clipboard.setText(f'{name},"Name, with comma"')
+                    self.assertEqual(add_button.text(), "+")
                     self.assertEqual(export_button.toolTip(), "Copy CSV to Clipboard")
-                    import_button.click()
+                    with patch("mnmparse.app.revenge.QApplication.clipboard",
+                               side_effect=AssertionError("Adding a name should not read the clipboard automatically")):
+                        add_button.click()
                     dialog = window.list._manual_dialog
                     self.assertIsNotNone(dialog)
                     self.assertEqual(dialog.kind, kind)
-                    self.assertEqual(dialog.preview.toPlainText(), name)
+                    self.assertEqual(dialog.name_input.text(), "")
+                    self.assertTrue(dialog.name_input.isVisible())
+                    self.assertFalse(dialog.preview.isVisible())
+                    self.assertFalse(dialog.add_button.isEnabled())
+                    self.assertEqual(dialog.from_clipboard.text(), "CSV from clipboard")
+                    dialog.from_clipboard.click()
+                    self.assertEqual(dialog.preview.toPlainText(), name + "\nName, with comma")
                     key = name if kind == "Player" else (kind, name)
+                    quoted_key = "Name, with comma" if kind == "Player" else (kind, "Name, with comma")
                     self.assertNotIn(key, window.list._rows, "Import preview must wait for Add before saving")
+                    self.assertNotIn(quoted_key, window.list._rows)
                     dialog.accept()
                     self.app.processEvents()
                     self.assertIn(key, window.list._rows)
-            self.assertEqual(set(window.list._rows), {"Raider", ("Guild", "Friends")})
+                    self.assertIn(quoted_key, window.list._rows)
+            self.assertEqual(set(window.list._rows), {"Raider", "Name, with comma", ("Guild", "Friends"),
+                                                     ("Guild", "Name, with comma")})
         finally:
             clipboard.setText(previous)
 

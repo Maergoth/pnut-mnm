@@ -674,7 +674,7 @@ class _RevengeAddDialog(QDialog):
         self.name_input.setPlaceholderText(f"{kind} name")
         self.name_input.setAccessibleName(f"{kind} name to add")
         layout.addWidget(self.name_input)
-        self.from_clipboard = QPushButton("From Clipboard")
+        self.from_clipboard = QPushButton("CSV from clipboard")
         self.from_clipboard.setToolTip("Import CSV from Clipboard")
         self.from_clipboard.clicked.connect(self._read_clipboard)
         layout.addWidget(self.from_clipboard)
@@ -906,12 +906,10 @@ class RevengeList(QFrame):
         if self.allow_popout and self.controller.available:
             self.controller.pop_out_requested.emit()
 
-    def _open_manual(self, _checked: bool = False, *, kind: str = "Player", from_clipboard: bool = False):
+    def _open_manual(self, _checked: bool = False, *, kind: str = "Player"):
         if not self.controller.available:
             return
         if self._manual_dialog is not None:
-            if from_clipboard and self._manual_dialog.kind == kind:
-                self._manual_dialog._read_clipboard()
             self._manual_dialog.raise_()
             self._manual_dialog.activateWindow()
             return
@@ -920,8 +918,6 @@ class RevengeList(QFrame):
         dialog = _RevengeAddDialog(self.controller, kind, self.window())
         if kind == "Player" and self.name_input.text():
             dialog.setTextValue(self.name_input.text())
-        if from_clipboard:
-            dialog._read_clipboard()
         self._manual_dialog = dialog
         dialog.finished.connect(lambda result: self._finish_manual(dialog, result))
         dialog.open()
@@ -929,9 +925,6 @@ class RevengeList(QFrame):
 
     def _open_guild_manual(self, _checked: bool = False):
         self._open_manual(kind="Guild")
-
-    def _open_clipboard(self, *, kind: str = "Player") -> None:
-        self._open_manual(kind=kind, from_clipboard=True)
 
     def _remove_saved(self, name: str, *, kind: str = "Player") -> bool:
         if not self.controller.available:
@@ -1060,9 +1053,12 @@ class _PopoutHeader(QFrame):
         self.heading.setTextFormat(Qt.TextFormat.PlainText)
         self.heading.setProperty("class", "title")
         layout.addWidget(self.heading, 1)
+        layout.addWidget(QLabel("Players"))
         self.add_button = owner.list.add_button
-        self.add_button.setText("Add Player(s)")
+        self.add_button.setText("+")
         self.add_button.setObjectName("RevengeAdd")
+        self.add_button.setToolTip("Add Player(s)")
+        self.add_button.setAccessibleName("Add players manually or from clipboard")
         self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_button.clicked.connect(owner._show_header)
         layout.addWidget(self.add_button)
@@ -1073,16 +1069,14 @@ class _PopoutHeader(QFrame):
         self.export_button.setAccessibleName("Copy players CSV to clipboard")
         self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.export_button)
-        self.import_button = QPushButton("📥")
-        self.import_button.setObjectName("RevengeExport")
-        self.import_button.setToolTip("Import CSV from Clipboard")
-        self.import_button.setAccessibleName("Import players CSV from clipboard")
-        self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.import_button.clicked.connect(lambda: owner.list._open_clipboard(kind="Player"))
-        layout.addWidget(self.import_button)
+        layout.addWidget(QLabel("Guilds"))
         self.guild_add_button = owner.list.guild_add_button
+        self.guild_add_button.setText("+")
         self.guild_add_button.setObjectName("RevengeAdd")
+        self.guild_add_button.setToolTip("Add Guild(s)")
+        self.guild_add_button.setAccessibleName("Add guilds manually or from clipboard")
         self.guild_add_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.guild_add_button.clicked.connect(owner._show_header)
         layout.addWidget(self.guild_add_button)
         self.guild_export_button = owner.list.guild_export_button
         self.guild_export_button.setObjectName("RevengeExport")
@@ -1091,13 +1085,6 @@ class _PopoutHeader(QFrame):
         self.guild_export_button.setAccessibleName("Copy guilds CSV to clipboard")
         self.guild_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.guild_export_button)
-        self.guild_import_button = QPushButton("📥")
-        self.guild_import_button.setObjectName("RevengeExport")
-        self.guild_import_button.setToolTip("Import CSV from Clipboard")
-        self.guild_import_button.setAccessibleName("Import guilds CSV from clipboard")
-        self.guild_import_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.guild_import_button.clicked.connect(lambda: owner.list._open_clipboard(kind="Guild"))
-        layout.addWidget(self.guild_import_button)
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("Chip")
         self.close_button.setAccessibleName("Close revenge list popout")
