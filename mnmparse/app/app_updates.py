@@ -881,6 +881,9 @@ class AppUpdateController(QObject):
                 # on disk between download, quit and the next launch.
                 package = stage / ("verified-" + uuid.uuid4().hex)
                 extract_archive(archive, package, threading.Event())
+            # Windows temporary roots can use 8.3 names while resolve() expands
+            # them. Compare canonical paths on both sides of this boundary.
+            package = package.resolve()
             if (not package.is_relative_to(_stage_root().resolve())
                     or not (package / EXECUTABLE).is_file() or not (package / "_internal").is_dir()):
                 self._ready_package, self._ready_version = None, ""

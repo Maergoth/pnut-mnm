@@ -148,6 +148,42 @@ class PendingUpdateTests(unittest.TestCase):
         self.assertEqual(second._ready_version, first._ready_version)
         self.assertEqual((self.install / "config.json").read_text(), "personal configuration")
 
+    def test_windows_short_staging_path_installs_inside_its_resolved_directory(self):
+        if os.name != "nt":
+            self.skipTest("The Windows 8.3 path API is unavailable.")
+        import ctypes
+        from ctypes import wintypes
+
+        long_root = self.root / "Pending update staging directory with spaces"
+        long_root.mkdir()
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        get_short_path.restype = wintypes.DWORD
+        length = get_short_path(str(long_root), None, 0)
+        if not length:
+            self.skipTest("GetShortPathNameW could not provide an 8.3 alias.")
+        buffer = ctypes.create_unicode_buffer(length)
+        written = get_short_path(str(long_root), buffer, length)
+        if not written or written >= length:
+            self.skipTest("GetShortPathNameW could not provide an 8.3 alias.")
+        short_root = Path(buffer.value)
+        if str(short_root).casefold() == str(long_root).casefold():
+            self.skipTest("This filesystem does not provide a distinct 8.3 alias.")
+        self.assertEqual(short_root.resolve(), long_root.resolve())
+        with patch.object(updates, "_stage_root", return_value=short_root):
+            self.download()
+            controller = self.restore()
+            with patch.object(updates, "make_restart_script", wraps=updates.make_restart_script) as script, \
+                 patch.object(updates.subprocess, "Popen") as process:
+                self.assertTrue(controller.prepare_restart())
+        package = script.call_args.args[1]
+        self.assertTrue(package.is_relative_to(long_root.resolve()))
+        self.assertEqual((package / updates.EXECUTABLE).read_bytes(), b"verified replacement application")
+        process.assert_called_once()
+        self.assertFalse(self.receipt.exists())
+        self.assertEqual((self.install / updates.EXECUTABLE).read_bytes(), b"original application")
+        self.assertEqual((self.install / "config.json").read_text(), "personal configuration")
+
     def test_next_launch_prepares_once_with_requested_profile_arguments(self):
         self.download()
         arguments = ["--config", str(self.root / "My character's profile.json")]
