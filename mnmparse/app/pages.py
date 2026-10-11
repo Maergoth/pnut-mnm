@@ -2171,7 +2171,7 @@ def _field_lines(fields: dict[str, str], tail: str = "", per_line: int = 6) -> s
 
 
 def _export_preview(fmt: Any, player: str = "") -> str:
-    """``fmt`` applied to a made-up fight (Settings > Export > Preview)."""
+    """``fmt`` applied to a made-up fight (Settings > Clipboard > Preview)."""
     from types import SimpleNamespace
 
     from mnmparse.export import format_snapshot
@@ -2199,8 +2199,10 @@ class SettingsPage(QWidget):
     #: "locked", "click_through", "opacity", "font_scale", "tab", "attack_bar".  These apply
     #: to the overlay at once (no Save needed); :meth:`sync_overlay` mirrors the overlay back.
     overlay_setting_changed = Signal(str, object)
-    #: The ▶ next to Export > Sound: play this built-in sound (the app owns the audio).
+    #: The ▶ next to Clipboard > Sound: play this built-in sound (the app owns the audio).
     sound_preview_requested = Signal(str)
+    #: Preview the Revenge List alert with its own percentage volume.
+    revenge_alert_preview_requested = Signal(str, int)
     #: Download the latest wiki maps into the local cache without blocking Settings.
     map_download_requested = Signal()
     #: Check GitHub for an app update and download it in the background.
@@ -2247,14 +2249,15 @@ class SettingsPage(QWidget):
         self.morality.mode_requested.connect(self._on_morality_mode)
         self.morality.siren_requested.connect(lambda: self.sound_preview_requested.emit("Siren"))
         self._content.addWidget(self.morality)
-        self._build_status()
         self._build_general()
+        self._build_overlay()
+        self._build_revenge()
+        self._build_encounter()
+        self._build_export()
         self._build_capture()
         self._build_ocr()
         self._build_crop()
-        self._build_overlay()
-        self._build_encounter()
-        self._build_export()
+        self._build_logs()
         from mnmparse.app.profile_tools import ProfileTools
         self.profile_tools = ProfileTools(cfg, self._config_path, settings, engine, self)
         self.profile_tools.set_config_getter(self.form_config)
@@ -2263,6 +2266,7 @@ class SettingsPage(QWidget):
                     if self.crop_picker._frame is not None else None)
         self.profile_tools.config_changed.connect(self._on_profile_config)
         self._content.addWidget(self.profile_tools)
+        self._build_status()
         contact = QLabel("Contact @Maergoth on Discord for help.")
         contact.setObjectName("Muted")
         contact.setWordWrap(True)
@@ -2311,11 +2315,15 @@ class SettingsPage(QWidget):
         for combo in (self.capture_backend, self.overlay_tab):
             combo.currentIndexChanged.connect(self._on_form_changed)
         for spin in (self.feed_max_lines, self.fps, self.encounter_timeout, self.log_break, self.log_max,
-                     self.revenge_days, self.revenge_entries):
+                     self.revenge_days, self.revenge_entries, self.revenge_alert_duration,
+                     self.revenge_alert_cooldown):
             spin.valueChanged.connect(self._on_form_changed)
         for toggle in (self.start_on_launch, self.minimize_to_tray, self.include_personal, self.show_other_groups,
-                       self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled):
+                       self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled,
+                       self.reduced_motion, self.revenge_alert_enabled, self.revenge_alert_flash):
             toggle.toggled.connect(self._on_form_changed)
+        self.revenge_alert_sound.currentIndexChanged.connect(self._on_form_changed)
+        self.revenge_alert_volume.value_changed.connect(self._on_form_changed)
         # OCR engine/scale/preprocess and the crop picker are connected where they are built
         # (they also push the live config into the picker).
 
@@ -2523,8 +2531,7 @@ class SettingsPage(QWidget):
     def _build_status(self) -> None:
         form = self._section(
             "Status",
-            "Live capture diagnostics (updated every second). A warning bar appears at the top of "
-            "the window, and a small one on the overlay, when the chat is covered or hard to read.",
+            "Capture health and OCR performance.",
         )
         self._status_values: dict[str, QLabel] = {}
         for key, caption, hint in (
@@ -2650,6 +2657,88 @@ class SettingsPage(QWidget):
         self.player_name = self._line_edit("Your character name (so You/YOU is attributed)")
         self.start_on_launch = ToggleSwitch()
         self.minimize_to_tray = ToggleSwitch()
+        self._row(form, "Player name", self.player_name)
+        self._row(form, "Start capture on launch", self.start_on_launch)
+        self._row(form, "Minimize to tray on close", self.minimize_to_tray)
+        self.reduced_motion = ToggleSwitch()
+        self._row(form, "Reduce animations", self.reduced_motion, "Also respects Windows animation settings.")
+
+    def _build_revenge(self) -> None:
+        from mnmparse.triggers import BUILTIN_SOUNDS
+
+        form = self._section("Revenge List")
+        self.revenge_enabled = ToggleSwitch()
+        self._row(form, "Revenge List", self.revenge_enabled,
+                  "Track PvP opponents. Prompts to add attackers last 30 seconds.")
+        self.revenge_options = QWidget()
+        options = QFormLayout(self.revenge_options)
+        options.setContentsMargins(0, 0, 0, 0)
+        options.setHorizontalSpacing(24)
+        options.setVerticalSpacing(10)
+        options.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        form.addRow(self.revenge_options)
+        self.revenge_alert_enabled = ToggleSwitch()
+        self._row(options, "Combat log alerts", self.revenge_alert_enabled,
+                  "Notify when a listed name appears.")
+        self.revenge_alert_options = QWidget()
+        alert_options = QFormLayout(self.revenge_alert_options)
+        alert_options.setContentsMargins(0, 0, 0, 0)
+        alert_options.setHorizontalSpacing(24)
+        alert_options.setVerticalSpacing(10)
+        alert_options.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        options.addRow(self.revenge_alert_options)
+        self.revenge_alert_flash = ToggleSwitch()
+        self._row(alert_options, "Flash", self.revenge_alert_flash)
+        self.revenge_alert_sound = self._combo(["None", *BUILTIN_SOUNDS], 160)
+        self.revenge_alert_preview = QPushButton("▶")
+        self.revenge_alert_preview.setObjectName("Chip")
+        self.revenge_alert_preview.setFixedWidth(36)
+        self.revenge_alert_preview.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.revenge_alert_preview.setToolTip("Preview alert")
+        self.revenge_alert_preview.setAccessibleName("Preview Revenge List alert")
+        self.revenge_alert_preview.clicked.connect(self._preview_revenge_alert)
+        sound_row = QHBoxLayout()
+        sound_row.setSpacing(8)
+        sound_row.addWidget(self.revenge_alert_sound)
+        sound_row.addWidget(self.revenge_alert_preview)
+        sound_row.addStretch(1)
+        self._row(alert_options, "Alert sound", sound_row)
+        self.revenge_alert_volume = SliderRow("", 0, 100, 25, formatter=_percent_text)
+        self.revenge_alert_volume.setFixedWidth(360)
+        self._row(alert_options, "Alert volume", self.revenge_alert_volume)
+        self.revenge_alert_duration = self._dspin(1.0, 60.0, 1.0, 1, " s")
+        self._row(alert_options, "Display for", self.revenge_alert_duration)
+        self.revenge_alert_cooldown = self._dspin(0.0, 3600.0, 5.0, 1, " s")
+        self._row(alert_options, "Repeat after", self.revenge_alert_cooldown,
+                  "Time without this name in the log before alerting again.")
+        self.revenge_days = QSpinBox()
+        self.revenge_days.setRange(0, 3650)
+        self.revenge_days.setSpecialValueText("All")
+        self.revenge_days.setSuffix(" days")
+        self.revenge_days.setFixedWidth(140)
+        self._row(options, "Last", self.revenge_days)
+        self.revenge_entries = QSpinBox()
+        self.revenge_entries.setRange(0, 1000)
+        self.revenge_entries.setSpecialValueText("All")
+        self.revenge_entries.setFixedWidth(140)
+        self._row(options, "Maximum entries", self.revenge_entries,
+                  "Newest first. Hidden entries stay saved.")
+        self.revenge_enabled.toggled.connect(self._sync_revenge_controls)
+        self.revenge_alert_enabled.toggled.connect(
+            lambda _enabled: self._sync_revenge_controls(self.revenge_enabled.isChecked()))
+
+    def _sync_revenge_controls(self, enabled: bool) -> None:
+        self.revenge_options.setVisible(enabled)
+        self.revenge_options.setEnabled(enabled)
+        self.revenge_alert_options.setEnabled(enabled and self.revenge_alert_enabled.isChecked())
+
+    def _preview_revenge_alert(self) -> None:
+        sound = self.revenge_alert_sound.currentText()
+        if sound and sound != "None":
+            self.revenge_alert_preview_requested.emit(sound, self.revenge_alert_volume.value())
+
+    def _build_logs(self) -> None:
+        form = self._section("Logs & feed")
         self.feed_max_lines = QSpinBox()
         self.feed_max_lines.setRange(50, 10000)
         self.feed_max_lines.setSingleStep(50)
@@ -2663,34 +2752,6 @@ class SettingsPage(QWidget):
         log_row.addWidget(self.log_dir)
         log_row.addWidget(browse)
         log_row.addStretch(1)
-        self._row(form, "Player name", self.player_name)
-        self._row(form, "Start capture on launch", self.start_on_launch, "Begin reading the game as soon as the app opens")
-        self._row(form, "Minimize to tray on close", self.minimize_to_tray)
-        self.revenge_enabled = ToggleSwitch()
-        self._row(form, "Revenge List", self.revenge_enabled,
-                  "PvP prompts last 30 seconds.")
-        self.revenge_days = QSpinBox()
-        self.revenge_days.setRange(0, 3650)
-        self.revenge_days.setSpecialValueText("All")
-        self.revenge_days.setSuffix(" days")
-        self.revenge_days.setFixedWidth(140)
-        self._row(form, "Revenge history (days)", self.revenge_days,
-                  "Show recent additions or attacks. All includes every date.")
-        self.revenge_entries = QSpinBox()
-        self.revenge_entries.setRange(0, 1000)
-        self.revenge_entries.setSpecialValueText("All")
-        self.revenge_entries.setFixedWidth(140)
-        self._row(form, "Revenge entries shown", self.revenge_entries,
-                  "Newest first. Hidden entries stay saved. All removes the limit.")
-        self.revenge_enabled.toggled.connect(self._sync_revenge_controls)
-        self.reduced_motion = ToggleSwitch()
-        self._row(form, "Reduce animations", self.reduced_motion, "Also respects Windows animation settings.")
-        self.include_personal = ToggleSwitch()
-        self._row(form, "Count personal lines in Session", self.include_personal, "Skill-ups, faction, XP and consider lines, which only you see")
-        self.show_other_groups = ToggleSwitch()
-        self._row(form, "Show other groups' fights", self.show_other_groups,
-                  "When off, only fights involving you, your pets, or known group members are listed. "
-                  "Nearby players may still appear in those fights. Combat chat always shows nearby activity.")
         self._row(form, "Log directory", log_row)
         self.log_break = self._dspin(1.0, 1440.0, 5.0, 0, " min")
         self.log_max = self._dspin(1.0, 500.0, 1.0, 0, " MB")
@@ -2698,16 +2759,11 @@ class SettingsPage(QWidget):
         self._row(form, "New log file at size", self.log_max, "A log file never grows past this")
         self._row(form, "Feed lines kept", self.feed_max_lines)
 
-    def _sync_revenge_controls(self, enabled: bool) -> None:
-        self.revenge_days.setEnabled(enabled)
-        self.revenge_entries.setEnabled(enabled)
-
     def _build_capture(self) -> None:
         form = self._section(
             "Capture",
-            "The game window is captured read-only through Windows Graphics Capture (never "
-            "includes other windows). \"mss\" grabs the desktop rectangle instead and sees "
-            "whatever is on top of the game, including the overlay if it covers the chat.",
+            "Window capture reads the game even when other windows cover it. "
+            "Desktop capture needs the chat uncovered.",
         )
         self.window_title = self._line_edit("Monsters and Memories")
         self.capture_backend = self._combo(CAPTURE_BACKENDS)
@@ -2719,8 +2775,7 @@ class SettingsPage(QWidget):
     def _build_ocr(self) -> None:
         form = self._section(
             "OCR",
-            "Windows OCR with max-channel preprocessing at 1x is the measured sweet spot. "
-            "Save changes to apply them to capture; after changing Engine or Upscale, stop and start capture.",
+            "Save changes to apply. Engine or Upscale changes may need a capture restart.",
         )
         self.ocr_engine = self._combo(OCR_ENGINES)
         self.ocr_scale = self._dspin(0.5, 4.0, 0.25, 2, "x")
@@ -2754,10 +2809,7 @@ class SettingsPage(QWidget):
     def _build_overlay(self) -> None:
         form = self._section(
             "Overlay",
-            "Our own translucent always-on-top window. These controls change the overlay right away "
-            "and follow changes made on the overlay itself. Locked means it cannot be moved or resized "
-            "(tabs, sorting and hover breakdowns keep working). Ignore the mouse makes it fully "
-            "click-through.",
+            "Changes apply immediately to the overlay and its pop-out windows.",
         )
         self.overlay_enabled = ToggleSwitch()
         self.overlay_locked = ToggleSwitch()
@@ -2841,7 +2893,13 @@ class SettingsPage(QWidget):
             self._cfg = dataclasses.replace(self._cfg, **changes)
 
     def _build_encounter(self) -> None:
-        form = self._section("Encounter")
+        form = self._section("Combat & session")
+        self.show_other_groups = ToggleSwitch()
+        self._row(form, "Show other groups' fights", self.show_other_groups,
+                  "Include fights without you, your pets or known group members.")
+        self.include_personal = ToggleSwitch()
+        self._row(form, "Count personal lines in Session", self.include_personal,
+                  "Skill-ups, faction, XP and consider lines.")
         self.dummy_fix = ToggleSwitch()
         self.dummy_fix.toggled.connect(self._on_form_changed)
         self.encounter_timeout = self._dspin(1.0, 300.0, 1.0, 0, " s")
@@ -2861,9 +2919,8 @@ class SettingsPage(QWidget):
         from mnmparse.triggers import BUILTIN_SOUNDS
 
         form = self._section(
-            "Export",
-            "One line per fight for the clipboard, to paste into a chat. Right-click a fight in Live, "
-            "or click the copy mark in the overlay's header, to copy one by hand.",
+            "Clipboard",
+            "Copy finished fights automatically, or copy one from Live or the overlay.",
         )
         self.export_auto = ToggleSwitch()
         self._row(form, "Copy each finished fight", self.export_auto, "Fights your group took part in")
@@ -3010,6 +3067,13 @@ class SettingsPage(QWidget):
             self.start_on_launch.setChecked(bool(_cfg_get(cfg, "start_capture_on_launch", False)))
             self.minimize_to_tray.setChecked(bool(_cfg_get(cfg, "minimize_to_tray", True)))
             self.revenge_enabled.setChecked(cfg.revenge_enabled)
+            self.revenge_alert_enabled.setChecked(bool(_cfg_get(cfg, "revenge_alert_enabled", True)))
+            self.revenge_alert_flash.setChecked(bool(_cfg_get(cfg, "revenge_alert_flash", True)))
+            self._select(self.revenge_alert_sound,
+                         str(_cfg_get(cfg, "revenge_alert_sound", "Dink") or "None"))
+            self.revenge_alert_volume.set_value(int(_cfg_get(cfg, "revenge_alert_volume", 25)))
+            self.revenge_alert_duration.setValue(float(_cfg_get(cfg, "revenge_alert_duration", 4.0)))
+            self.revenge_alert_cooldown.setValue(float(_cfg_get(cfg, "revenge_alert_cooldown", 30.0)))
             self.revenge_days.setValue(cfg.revenge_days)
             self.revenge_entries.setValue(cfg.revenge_entries)
             self._sync_revenge_controls(cfg.revenge_enabled)
@@ -3058,6 +3122,13 @@ class SettingsPage(QWidget):
             "start_capture_on_launch": self.start_on_launch.isChecked(),
             "minimize_to_tray": self.minimize_to_tray.isChecked(),
             "revenge_enabled": self.revenge_enabled.isChecked(),
+            "revenge_alert_enabled": self.revenge_alert_enabled.isChecked(),
+            "revenge_alert_flash": self.revenge_alert_flash.isChecked(),
+            "revenge_alert_sound": ("" if self.revenge_alert_sound.currentText() == "None"
+                                    else self.revenge_alert_sound.currentText()),
+            "revenge_alert_volume": int(self.revenge_alert_volume.value()),
+            "revenge_alert_duration": float(self.revenge_alert_duration.value()),
+            "revenge_alert_cooldown": float(self.revenge_alert_cooldown.value()),
             "revenge_days": self.revenge_days.value(),
             "revenge_entries": self.revenge_entries.value(),
             "reduced_motion": self.reduced_motion.isChecked(),

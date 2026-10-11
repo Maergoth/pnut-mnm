@@ -11,12 +11,14 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
 from mnmparse.export import DEFAULT_PRESET, PRESETS, SORTS
+from mnmparse.triggers import BUILTIN_SOUNDS
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +97,12 @@ class Config:
     revenge_enabled: bool = False
     revenge_days: int = 30  #: display recent activity only; 0 shows all saved dates
     revenge_entries: int = 100  #: newest entries to display; 0 shows all saved players
+    revenge_alert_enabled: bool = True
+    revenge_alert_flash: bool = True
+    revenge_alert_sound: str = "Dink"  #: empty disables the alert tone
+    revenge_alert_volume: int = 25  #: percent of the trigger master volume
+    revenge_alert_cooldown: float = 30.0  #: seconds without a sighting before alerting again
+    revenge_alert_duration: float = 4.0  #: fading notification duration, in seconds
     capture_profiles: dict[str, Any] = dataclasses.field(default_factory=dict)
     active_profile: str = "Default"
     history_recent_fights: int = 100
@@ -171,6 +179,16 @@ class Config:
             issues.append("revenge_days must be an integer between 0 (all) and 3650")
         if type(self.revenge_entries) is not int or not 0 <= self.revenge_entries <= 1000:
             issues.append("revenge_entries must be an integer between 0 (all) and 1000")
+        for name in ("revenge_alert_enabled", "revenge_alert_flash"):
+            if type(getattr(self, name)) is not bool:
+                issues.append(f"{name} must be true or false")
+        if self.revenge_alert_sound not in ("", *BUILTIN_SOUNDS):
+            issues.append("revenge_alert_sound must be a built-in sound or empty (silent)")
+        if type(self.revenge_alert_volume) is not int or not 0 <= self.revenge_alert_volume <= 100:
+            issues.append("revenge_alert_volume must be an integer between 0 and 100")
+        for name, minimum, maximum in (("revenge_alert_cooldown", 0, 3600), ("revenge_alert_duration", 1, 60)):
+            if not _bounded_number(getattr(self, name), minimum, maximum):
+                issues.append(f"{name} must be a finite number between {minimum} and {maximum}")
         if self.config_schema != 1:
             issues.append("config_schema must be 1")
         if self.capture_profiles:
@@ -202,6 +220,15 @@ def project_path(path: str | Path) -> Path:
     return p if p.is_absolute() else PROJECT_ROOT / p
 
 
+def _bounded_number(value: Any, minimum: float, maximum: float) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value) and minimum <= value <= maximum
+    except OverflowError:
+        return False
+
+
 def _coerce(name: str, value: Any, default: Any) -> Any:
     """Coerce a JSON value to the type of the dataclass field ``name``.
 
@@ -211,14 +238,33 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
     if name == "capture_profiles":
         from mnmparse.profiles import validate_profiles
         return validate_profiles(value)
-    if name in {"revenge_days", "revenge_entries"}:
+    if name in {"revenge_days", "revenge_entries", "revenge_alert_volume"}:
         if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise ValueError("expected a whole number")
         number = int(value)
-        maximum = 3650 if name == "revenge_days" else 1000
+        maximum = {"revenge_days": 3650, "revenge_entries": 1000, "revenge_alert_volume": 100}[name]
         if not 0 <= number <= maximum:
-            raise ValueError(f"expected 0 (all) through {maximum}")
+            label = "0" if name == "revenge_alert_volume" else "0 (all)"
+            raise ValueError(f"expected {label} through {maximum}")
         return number
+    if name in {"revenge_alert_cooldown", "revenge_alert_duration"}:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError("expected a number")
+        try:
+            number = float(value)
+        except OverflowError as exc:
+            raise ValueError("expected a finite number") from exc
+        minimum, maximum = (0, 3600) if name == "revenge_alert_cooldown" else (1, 60)
+        if not _bounded_number(number, minimum, maximum):
+            raise ValueError(f"expected {minimum} through {maximum}")
+        return number
+    if name == "revenge_alert_sound":
+        if value not in ("", *BUILTIN_SOUNDS):
+            raise ValueError("expected a built-in sound or empty (silent)")
+        return value
+    if name in {"revenge_alert_enabled", "revenge_alert_flash"} and not isinstance(value, (bool, str)):
+        if type(value) is not int or value not in (0, 1):
+            raise ValueError("expected true or false")
     if name == "crop":
         if not isinstance(value, (list, tuple)) or len(value) != 4:
             raise ValueError("crop must be a list of four integers [left, top, right, bottom]")

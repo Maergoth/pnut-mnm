@@ -1429,6 +1429,7 @@ class App(QApplication):
         self._connect_optional(engine, "session", window.on_session)
         from mnmparse.app.revenge import RevengePrompts, RevengeList
         self.revenge.pop_out_requested.connect(self.show_revenge_popout)
+        self.revenge.alert_requested.connect(self._on_revenge_alert)
         revenge_page = window.page("triggers")
         if revenge_page is not None:
             self._revenge_box = QWidget(revenge_page)
@@ -1480,6 +1481,7 @@ class App(QApplication):
             self._connect_optional(settings_page, "config_changed", self.on_config_changed)
             self._connect_optional(settings_page, "capture_restart_requested", self.restart_capture)
             self._connect_optional(settings_page, "sound_preview_requested", self.play_sound)
+            self._connect_optional(settings_page, "revenge_alert_preview_requested", self._preview_revenge_alert)
             self._connect_optional(settings_page, "overlay_reset_requested", self.reset_overlay_position)
             self._connect_optional(settings_page, "overlay_setting_changed", self._on_overlay_setting)
             if self.app_updates is not None:
@@ -1845,16 +1847,17 @@ class App(QApplication):
         return _overlay_locked(self.overlay, default)
 
     def _sync_map_appearance(self, *_args: Any) -> None:
-        """Keep the map frame and header consistent with the combat overlay."""
-        if self.map_overlay is None:
-            return
+        """Keep the map and Revenge pop-out consistent with the combat overlay."""
         opacity = getattr(self.overlay, "opacity", None)
         font_scale = getattr(self.overlay, "font_scale", None)
         if opacity is None:
             opacity = self.settings.value("overlay/opacity", float(getattr(self.cfg, "overlay_opacity", 0.85)), type=float)
         if font_scale is None:
             font_scale = self.settings.value("overlay/font_scale", float(getattr(self.cfg, "overlay_font_scale", 1.0)), type=float)
-        self.map_overlay.set_appearance(float(opacity), float(font_scale))
+        for panel in (self.map_overlay, self.__dict__.get("revenge_popout")):
+            setter = getattr(panel, "set_appearance", None)
+            if callable(setter):
+                setter(float(opacity), float(font_scale))
 
     def reset_overlay_position(self) -> None:
         """Settings page "Reset position": put the overlay back at its default geometry."""
@@ -1933,8 +1936,10 @@ class App(QApplication):
 
     def _on_overlay_locked(self, locked: bool) -> None:
         self.settings.setValue("overlay/locked", bool(locked))
-        if self.map_overlay is not None:
-            self.map_overlay.set_locked(bool(locked))
+        for panel in (self.map_overlay, self.__dict__.get("revenge_popout")):
+            setter = getattr(panel, "set_locked", None)
+            if callable(setter):
+                setter(bool(locked))
         if self.window is not None:
             self.window.set_lock_state(locked)
         if self.tray is not None:
@@ -2152,7 +2157,31 @@ class App(QApplication):
     def show_revenge_popout(self) -> None:
         """Open the shared passive PvP list when its feature is enabled."""
         if self.revenge.enabled:
+            self._sync_map_appearance()
+            self.revenge_popout.set_locked(self._current_overlay_lock())
             self.revenge_popout.show()
+
+    def _on_revenge_alert(self, name: str) -> None:
+        """Use ordinary trigger notifications without changing saved triggers."""
+        if (self.triggers is None or not self.cfg.revenge_enabled
+                or not self.cfg.revenge_alert_enabled or not self.revenge.enabled):
+            return
+        from mnmparse.triggers import Match, Trigger
+
+        sound = self.cfg.revenge_alert_sound
+        trigger = Trigger(id="revenge-sighting", name="Revenge sighting", category="Revenge",
+                          action="sound" if sound else "none", sound=sound,
+                          volume=self.cfg.revenge_alert_volume, timer=False,
+                          timer_label="Revenge: {player} spotted")
+        match = Match(trigger, name, name, {"player": name},
+                      notification_flash=self.cfg.revenge_alert_flash and not self.cfg.reduced_motion,
+                      notification_seconds=self.cfg.revenge_alert_duration)
+        self.triggers.fire(match)
+
+    def _preview_revenge_alert(self, sound: str, volume: int) -> None:
+        """Preview the chosen quiet tone through the existing master/mute settings."""
+        if self.triggers is not None and sound:
+            self.triggers.audio.run("sound", sound=sound, volume=volume)
 
     def shutdown(self) -> None:
         """``aboutToQuit``: stop the engine, hide the windows, flush settings (idempotent)."""

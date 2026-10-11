@@ -142,12 +142,14 @@ class Trigger:
 
 @dataclass
 class Match:
-    """A successful match: the matched text and any named regex groups."""
+    """Matched text, groups, and optional presentation for ephemeral notifications."""
 
     trigger: Trigger
     line: str
     text: str
     groups: dict[str, str] = field(default_factory=dict)
+    notification_flash: bool = False
+    notification_seconds: float = 4.0
 
     def values(self, **extra: str) -> dict[str, str]:
         vals = {"line": self.line, "match": self.text, "name": self.trigger.name}
