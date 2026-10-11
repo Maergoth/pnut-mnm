@@ -148,8 +148,8 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertEqual(self.engine.session_snapshot().player_status, {})
 
     def test_small_ocr_position_jitter_does_not_reset_low_hp_confirmation(self):
-        first = self.reading()
-        shifted = dataclasses.replace(first, panel_rect=(3, 2, 11, 10))
+        first = dataclasses.replace(self.reading(), panel_rect=(10, 3, 319, 248))
+        shifted = dataclasses.replace(first, panel_rect=(13, 5, 322, 250))
         self.engine._ocr = Mock(read=Mock(return_value=[]))
         signals = []
         self.engine.low_health.connect(signals.append)
@@ -158,6 +158,45 @@ class EnginePlayerStatusTests(unittest.TestCase):
             for _ in range(2):
                 self.engine._process_frame(np.zeros((8, 8, 3), np.uint8), self.cfg, cropped=True)
         self.assertEqual(signals, [8.0])
+
+    def test_one_pixel_label_height_change_preserves_actual_panel_confirmation(self):
+        signals = []
+        self.engine.low_health.connect(signals.append)
+        first = PlayerStatusReading(73, 767, (10, 3, 319, 248), (), 7.0, (37, 212, 276, 231), .08368)
+        second = dataclasses.replace(first, panel_rect=(17, 7, 307, 248))
+        for now, reading in ((100, first), (100.25, second), (100.5, first)):
+            self.engine._observe_player_status(reading, self.cfg, now, (248, 324, 3))
+        self.assertEqual(signals, [round(100 * 73 / 767, 6)])
+        self.assertIsNotNone(self.engine._telemetry()._xp_baseline)
+        # A missing panel or a different, distant rectangle needs a new baseline.
+        self.engine._observe_player_status(None, self.cfg, 100.75, (248, 324, 3))
+        self.engine._observe_player_status(first, self.cfg, 101, (248, 324, 3))
+        self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+        distant = dataclasses.replace(first, panel_rect=(100, 3, 324, 248))
+        self.engine._observe_player_status(distant, self.cfg, 101.25, (248, 324, 3))
+        self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
+        self.assertIsNone(self.engine._telemetry()._xp_baseline)
+
+    def test_slow_ocr_and_poll_cadences_confirm_health_and_complete_xp_window(self):
+        for fps, ocr_ms in ((4, 1500), (1 / 3, 0)):
+            with self.subTest(fps=fps, ocr_ms=ocr_ms):
+                cfg = dataclasses.replace(self.cfg, fps=fps)
+                engine = Engine(cfg)
+                signals = []
+                engine.low_health.connect(signals.append)
+                for now in range(100, 404, 3):
+                    reading = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 400 else 20.0)
+                    engine._observe_player_status(reading, cfg, now, (8, 8, 3), ocr_ms=ocr_ms)
+                    if now == 100:
+                        self.assertEqual(signals, [])
+                self.assertEqual(signals, [8.0])
+                snap = engine._telemetry().snapshot()
+                self.assertEqual(snap["xp_observed_seconds"], 300)
+                self.assertAlmostEqual(snap["xp_points_per_hour"], 24)
+                # A very slow pass cannot grant an unbounded continuity budget.
+                engine._observe_player_status(reading, cfg, 414, (8, 8, 3), ocr_ms=60_000)
+                self.assertFalse(engine._telemetry().snapshot()["hp_low"])
+                self.assertIsNone(engine._telemetry()._xp_baseline)
 
     def test_pending_separate_region_does_not_read_stats_or_hide_chat(self):
         cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=None)

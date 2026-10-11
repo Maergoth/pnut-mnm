@@ -43,6 +43,7 @@ from PySide6.QtCore import QObject, Signal
 
 from mnmparse.app.models import EncounterSnapshot, build_snapshot
 from mnmparse.config import Config, project_path
+from mnmparse.player_telemetry import MAX_GAP, MAX_SAMPLE_GAP
 from mnmparse.replay import BACKLOG_S
 from mnmparse.session import SessionSnapshot, SessionStats
 from mnmparse.vocab import GLOBAL as VOCAB
@@ -1647,14 +1648,21 @@ class Engine(QObject):
             self._telemetry().pause()
             self._save_player_status()
 
-    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any) -> None:
+    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any, *, ocr_ms: float = 0.0) -> None:
         telemetry = self._telemetry()
         key = (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop), tuple(shape),
                tuple(reading.panel_rect) if reading is not None else None)
         prior = self._player_panel_key
-        if (prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None
-                and max(abs(a - b) for a, b in zip(key[3], prior[3])) <= 8):
-            key = prior  # Small OCR-coordinate jitter cannot break an otherwise stable observation.
+        if prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None:
+            current, previous_panel = key[3], prior[3]
+            intersection = (max(0, min(current[2], previous_panel[2]) - max(current[0], previous_panel[0]))
+                            * max(0, min(current[3], previous_panel[3]) - max(current[1], previous_panel[1])))
+            union = ((current[2] - current[0]) * (current[3] - current[1])
+                     + (previous_panel[2] - previous_panel[0]) * (previous_panel[3] - previous_panel[1])
+                     - intersection)
+            if union > 0 and intersection / union >= .8:
+                # Derived padding magnifies a one-pixel OCR label-height change.
+                key = prior
         if key != self._player_panel_key:
             telemetry.pause()
             self._player_panel_key = key
@@ -1667,7 +1675,8 @@ class Engine(QObject):
                            "xp_pixels": reading.xp_bar_rect[2] - reading.xp_bar_rect[0]
                            if reading.xp_bar_rect else None,
                            "xp_resolution_points": reading.xp_resolution_points}
-        telemetry.update(measurement, now)
+        max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * max(1.0 / max(cfg.fps, .1), ocr_ms / 1000.0)))
+        telemetry.update(measurement, now, max_gap=max_gap)
         summary = telemetry.snapshot()
         if (cfg.low_health_enabled and (summary.get("hp_below10_episodes") or 0) > previous
                 and now - self._low_health_alert_at >= 10.0):
@@ -1737,7 +1746,8 @@ class Engine(QObject):
         now = time.time()
         with self._lock:
             if fresh and cfg.player_status_enabled:
-                self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else ())
+                self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else (),
+                                            ocr_ms=ocr_ms)
             self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
             tracking_started = time.perf_counter()
             chat_lines = lines

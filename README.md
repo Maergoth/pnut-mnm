@@ -417,6 +417,9 @@ occasional dodge or parry does). Their Hit% would always read 100%, so it shows 
 with the reason in the tooltip. If your game's chat filter settings can show other players'
 misses and you turn that on, the app notices the first such line and shows real hit rates.
 
+The skill breakdown's **Damage%** shows each skill's share of the selected actor's total
+damage; **Hit%** shows its hit accuracy.
+
 **Auto-attack bar.** A thin swing timer sits under the overlay (Settings > Overlay > Auto-attack
 bar). It learns your swing delay from the gaps between your own swings ("You crush ...",
 including misses), so it needs a few swings first. The bar fills at that delay and waits at
@@ -558,7 +561,8 @@ in setup or Settings. Its names, prompts and Add/Remove controls work in either 
 Disabling the option hides its panel, overlay tab and pop-out window.
 
 An incoming attack on your character can show a **+** prompt once per attacker per session,
-for **30 seconds**. Use + to save a player you recognize; named NPCs can resemble players.
+for **30 seconds**, in both the floating timers overlay and the app's Triggers page.
+Use + to save a player you recognize; named NPCs can resemble players.
 Automatic detection accepts single ASCII-letter names and excludes articles and your own
 name. **Add** accepts any nonempty name or label, including spaces, symbols and Unicode;
 **Remove** deletes a saved entry. Names and activity dates persist between sessions.

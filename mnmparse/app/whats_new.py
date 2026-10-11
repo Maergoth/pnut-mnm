@@ -30,9 +30,11 @@ class ReleaseNotes:
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.10": ReleaseNotes(
         changes=(
-            "First-time setup now selects Combat chat and optional Mini stats from one captured frame.",
-            "New setups default to a separate stats region. Select its rectangle to start HP and XP readings.",
+            "Setup now selects Combat chat and optional Mini stats from one frame; new setups use a separate stats region.",
             "Choose your low-health threshold and preview its sound beside the dropdown in Mini stat settings.",
+            "Low-health confirmation now tolerates small OCR box changes and slower capture cycles.",
+            "Incoming PvP attackers show a 30-second + prompt in the floating timers overlay when Revenge List is enabled.",
+            "Skill breakdowns now show Damage%, separate from Hit% accuracy.",
             "The Revenge pop-out has a small always-visible close button instead of a hover header.",
         ),
         settings_label="Mini stat settings",

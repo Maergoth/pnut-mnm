@@ -680,7 +680,7 @@ class _DetailsPanel(QFrame):
     keeps its room.
     """
 
-    _SKILL_COLUMNS = ("Skill", "Hits", "Total", "Max", "Avg", "Hit%")
+    _SKILL_COLUMNS = ("Skill", "Hits", "Total", "Damage%", "Max", "Avg", "Hit%")
     #: ``(key, caption)`` of the summary chips, in display order.
     _CHIPS: tuple[tuple[str, str], ...] = (
         ("damage", "Damage"),
@@ -744,6 +744,8 @@ class _DetailsPanel(QFrame):
 
         self._skills = QTableWidget(0, len(self._SKILL_COLUMNS), content)
         self._skills.setHorizontalHeaderLabels(self._SKILL_COLUMNS)
+        self._skills.horizontalHeaderItem(3).setToolTip("Share of the selected actor's total damage.")
+        self._skills.horizontalHeaderItem(6).setToolTip("Hit accuracy: hits divided by hits plus misses.")
         self._skills.verticalHeader().setVisible(False)
         self._skills.setShowGrid(False)
         self._skills.setAlternatingRowColors(False)
@@ -751,7 +753,7 @@ class _DetailsPanel(QFrame):
         self._skills.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._skills.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._skills.setFrameShape(QFrame.Shape.NoFrame)
-        self._skills.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._skills.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._skills.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # the panel scrolls
         header = self._skills.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -760,13 +762,15 @@ class _DetailsPanel(QFrame):
         _tabular(self._skills)
         outer.addWidget(self._skills)
         outer.addStretch(1)
+        self._skills.horizontalScrollBar().rangeChanged.connect(
+            lambda _minimum, _maximum: self._fit_skills_height())
         self._fit_skills_height()
 
     def set_actor(self, row: ActorRow | None) -> None:
         """Show ``row`` (``None`` resets the panel).
 
         Called on every snapshot (up to 10 Hz); unchanged rows are skipped and the
-        skills table is only rebuilt when the skill breakdown itself changed, so it
+        skills table is only rebuilt when its breakdown or damage total changed, so it
         keeps its scroll position during a long fight.
         """
         last = self._last_row
@@ -825,16 +829,20 @@ class _DetailsPanel(QFrame):
         for key, text in values.items():
             self._cells[key].setText(text)
             self._chip_widgets[key].setToolTip(tips.get(key, ""))
-        if last is None or last.name != row.name or last.skills != row.skills:
-            self._fill_skills(row.skills, misses_shown=bool(getattr(row, "misses_shown", True)))
+        if last is None or last.name != row.name or last.skills != row.skills or last.damage != row.damage:
+            self._fill_skills(row.skills, total_damage=row.damage,
+                              misses_shown=bool(getattr(row, "misses_shown", True)))
 
     def _fit_skills_height(self) -> None:
         """Size the skills table to its rows (one empty row at least); the panel scrolls."""
         header = self._skills.horizontalHeader().sizeHint().height()
         rows = max(1, self._skills.rowCount()) * self._skills.verticalHeader().defaultSectionSize()
-        self._skills.setFixedHeight(header + rows + 2 * self._skills.frameWidth() + 2)
+        scrollbar = self._skills.horizontalScrollBar()
+        horizontal = scrollbar.sizeHint().height() if scrollbar.maximum() > 0 else 0
+        self._skills.setFixedHeight(header + rows + horizontal + 2 * self._skills.frameWidth() + 2)
 
-    def _fill_skills(self, skills: Iterable[SkillRow], *, misses_shown: bool = True) -> None:
+    def _fill_skills(self, skills: Iterable[SkillRow], *, total_damage: float,
+                     misses_shown: bool = True) -> None:
         rows = list(skills)
         self._skills.setRowCount(len(rows))
         for r, skill in enumerate(rows):
@@ -845,6 +853,7 @@ class _DetailsPanel(QFrame):
                 skill.skill,
                 _num(skill.hits),
                 _num(skill.total),
+                _share(skill.total / total_damage if total_damage > 0 else 0.0),
                 _num(skill.max_hit),
                 f"{skill.avg:,.1f}",
                 hit_text,
