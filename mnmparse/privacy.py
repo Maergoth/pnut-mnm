@@ -122,6 +122,9 @@ def project_session(snap: Any, cfg: Any = None) -> Any:
     rewards = [dataclasses.replace(e, looter=player, source=None) for e in own.rewards]
     crafts = [(ts, player, item, n) for ts, _actor, item, n in own.craft_entries]
     kills = [(ts, player, "Enemy") for ts, _actor, _target in own.kill_entries]
+    hidden_targets = {name.casefold() for name in snap.party if name and name.casefold() != player.casefold()}
+    mez_details = [(ts, "Group member" if mob.casefold() in hidden_targets else mob, actor)
+                   for ts, mob, actor in own.mez_break_details]
     recent = [SessionEntry(e.ts, "loot", player, f"You looted {e.item}") for e in loot[-200:]]
     members = {n.casefold() for n in snap.party if n}
     if player:
@@ -132,7 +135,8 @@ def project_session(snap: Any, cfg: Any = None) -> Any:
     return dataclasses.replace(
         own, loot=loot, rewards=rewards, craft_entries=crafts, kill_entries=kills,
         recent=recent, party=[player] if player else [], outsider_deaths=[], outsider_kills=0,
-        outsider_crafts=[], mez_breaks=[], cc_total=0, cc_by_type=[], cc_on_npcs=0, cc_on_players=0,
+        outsider_crafts=[], mez_breaks=[(ts, mob) for ts, mob, _actor in mez_details],
+        mez_break_details=mez_details, cc_total=0, cc_by_type=[], cc_on_npcs=0, cc_on_players=0,
         kills_by_target=[("Enemy", own.kills)] if own.kills else [],
         coin_split=own.coin_split if player else 0, coin_received=own.coin_received if player else 0,
         coin_total=own.coin_total if player else 0,
@@ -187,9 +191,10 @@ def safe_trigger_definition(trigger: Any, cfg: Any = None) -> dict[str, Any]:
 
 def safe_config_data(data: dict[str, Any]) -> dict[str, Any]:
     """Technical report settings never include arbitrary user text or peer data."""
-    keys = {"config_schema", "capture_backend", "crop", "fps", "ocr_engine", "ocr_scale",
+    keys = {"config_schema", "capture_backend", "crop", "player_status_crop", "fps", "ocr_engine", "ocr_scale",
             "preprocess", "encounter_timeout_s", "stats_interval_s", "feed_max_lines",
             "overlay_opacity", "overlay_font_scale", "casual_mode", "reduced_motion",
             "history_recent_fights", "history_retention_days", "revenge_enabled",
-            "revenge_days", "revenge_entries"}
+            "revenge_days", "revenge_entries", "player_status_enabled", "player_status_xp",
+            "low_health_enabled", "low_health_flash", "low_health_sound", "low_health_volume"}
     return {key: data[key] for key in keys if key in data}

@@ -51,7 +51,7 @@ class SettingsSectionsTests(unittest.TestCase):
         self.assertIs(panels[2], self.page.morality)
         expected = (
             "App updates", "Map updates", "General", "Overlay", "Revenge List",
-            "Combat & session", "Clipboard", "Capture", "OCR", "Crop", "Logs & feed", "Status",
+            "Combat & session", "Mini stat window", "Clipboard", "Capture", "OCR", "Crop", "Logs & feed", "Status",
         )
         headings = []
         for panel in panels:
@@ -73,6 +73,10 @@ class SettingsSectionsTests(unittest.TestCase):
                              self.page.revenge_alert_volume, self.page.revenge_days, self.page.revenge_entries),
             "Combat & session": (self.page.show_other_groups, self.page.include_personal,
                                  self.page.encounter_timeout, self.page.dummy_fix),
+            "Mini stat window": (self.page.player_status_enabled, self.page.player_status_separate,
+                                 self.page.player_status_picker, self.page.player_status_xp,
+                                 self.page.low_health_enabled, self.page.low_health_flash,
+                                 self.page.low_health_sound, self.page.low_health_volume),
             "Clipboard": (self.page.export_auto, self.page.export_sound, self.page.export_line),
             "Logs & feed": (self.page.log_dir, self.page.log_break, self.page.log_max, self.page.feed_max_lines),
         }

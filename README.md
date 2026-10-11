@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.8 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.9 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.8-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.9-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -275,8 +275,9 @@ past without being captured cannot be recovered.
   (a split line that wrapped onto a second row is joined to its loot), kills by mob type,
   deaths (yours and your party's; see "Encounters" below), crafted items (your party's only;
   other players' crafts are listed in the tooltip), quest rewards (kept out of the loot
-  count), zones entered and mez breaks with timestamps ("X
-  awakens." means a mesmerize broke), with time in combat (your group's fights only) and
+  count), zones entered and expandable mez-break counts per person. A single nearby hit
+  on an observed mesmerized target identifies a likely breaker; uncertain breaks remain
+  separate. Carebear Mode shows your own counts. Session also shows time in combat and
   hourly rates. The party is the same roster the meter uses. Hovering a category
   or an item shows the detail. "Mine only" (and the overlay's self view) keeps just your own
   loot, coin, kills, deaths and crafts; there the coin row is "Coin received", what you
@@ -296,6 +297,20 @@ past without being captured cannot be recovered.
 **Resume selected session** requires capture stopped. Live pages through older encounters.
 Log imports run in the background and can be canceled; a canceled import is not added.
 Carebear Mode also filters individual performance in historical and imported views and exports.
+
+**Mini stats.** Settings > Mini stat window can read your visible Health and XP bar.
+Choose **Separate stats region** to select that panel independently of the Combat chat crop;
+keep it clear of chat, since covered lines cannot be recovered. Without a separate region,
+the panel can be detected inside the chat crop. Its stat text is kept out of chat parsing.
+Below 10% HP, two fresh readings can sound an alert and briefly flash red screen edges.
+Choose the sound, volume and flash in the same section.
+
+Session estimates **XP/hour** by comparing stable bar readings about five minutes apart.
+Yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
+The footer shows the rate after the first complete interval. These are XP-bar percentage
+points, not exact XP numbers. Missing or unclear readings reset the current comparison;
+earlier measured totals remain. A detected own level-up confirms a bar wrap. Log imports
+cannot supply bar measurements.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring

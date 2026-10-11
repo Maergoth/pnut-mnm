@@ -1298,6 +1298,7 @@ class App(QApplication):
         self.map_downloads: Any | None = None
         self.app_updates: Any | None = None
         self.triggers: Any | None = None
+        self._low_health_flash: Any | None = None
         self.tray: TrayIcon | None = None
         self._last_status: dict[str, Any] = {}
         self._selftest = False
@@ -1488,6 +1489,7 @@ class App(QApplication):
             if overlay is not None and callable(getattr(overlay, "set_trigger_runner", None)):
                 overlay.set_trigger_runner(self.triggers)
         self._connect_optional(engine, "session", window.on_session)
+        self._connect_optional(engine, "low_health", self._on_low_health)
         from mnmparse.app.revenge import RevengePrompts, RevengeList
         self.revenge.pop_out_requested.connect(self.show_revenge_popout)
         self.revenge.alert_requested.connect(self._on_revenge_alert)
@@ -1698,6 +1700,10 @@ class App(QApplication):
         _call_first(self.engine, ("reset_encounter",))
 
     def _on_engine_state(self, state: str) -> None:
+        if state not in RUNNING_STATES:
+            flash = self.__dict__.get("_low_health_flash")
+            if flash is not None:
+                flash.stop()
         if self.tray is not None:
             self.tray.set_capture_running(state in RUNNING_STATES)
             self.tray.set_status_text(STATE_TEXT.get(state, state))
@@ -1727,6 +1733,37 @@ class App(QApplication):
         except Exception:  # noqa: BLE001 - triggers must never stop the app
             log.exception("triggers unavailable")
             return None
+
+    def _on_low_health(self, percent: float) -> None:
+        if (not self.cfg.player_status_enabled or not self.cfg.low_health_enabled
+                or self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)):
+            return
+        if self.triggers is not None:
+            from mnmparse.triggers import Match, Trigger
+            sound = self.cfg.low_health_sound
+            trigger = Trigger(id="low-health", name="Low HP", category="Personal",
+                              action="sound" if sound else "none", sound=sound,
+                              volume=self.cfg.low_health_volume, timer=False,
+                              timer_label=f"Low HP: {percent:.0f}%", timer_color=theme.DANGER)
+            self.triggers.fire(Match(trigger, "", "", {}, notification_seconds=3.0))
+        if self.cfg.low_health_flash:
+            from mnmparse.app.low_health import LowHealthFlash
+            from mnmparse.capture import find_game_window_info
+            screen = None
+            try:
+                game = find_game_window_info(self.cfg.window_title)
+                if game is not None:
+                    from PySide6.QtCore import QPoint
+                    left, top, right, bottom = game.rect
+                    screen = QGuiApplication.screenAt(QPoint((left + right) // 2, (top + bottom) // 2))
+            except Exception:
+                log.debug("Low HP alert screen lookup failed", exc_info=True)
+            if screen is None:
+                screen = self.overlay.screen() if self.overlay is not None else QGuiApplication.primaryScreen()
+            if screen is not None:
+                if self.__dict__.get("_low_health_flash") is None:
+                    self._low_health_flash = LowHealthFlash()
+                self._low_health_flash.flash(screen.geometry(), reduced_motion=self.cfg.reduced_motion)
 
     def _on_message_for_triggers(self, msg: Any, ev: Any) -> None:
         text = getattr(msg, "text", "") or ""
@@ -2045,6 +2082,9 @@ class App(QApplication):
     def on_config_changed(self, cfg: Config) -> None:
         """The Settings page saved ``cfg``: adopt it in the shell and the overlay."""
         self.cfg = cfg
+        flash = self.__dict__.get("_low_health_flash")
+        if flash is not None and not (cfg.player_status_enabled and cfg.low_health_enabled and cfg.low_health_flash):
+            flash.stop()
         revenge = self.__dict__.get("revenge")
         if revenge is not None:
             revenge.set_config(cfg)
@@ -2261,6 +2301,10 @@ class App(QApplication):
             log.info("Self-test status at exit: %s", self._last_status)
         self.stop_capture()
         revenge = self.__dict__.get("revenge")
+        flash = self.__dict__.get("_low_health_flash")
+        if flash is not None:
+            flash.stop()
+            flash.close()
         if revenge is not None and not revenge.flush_pending_changes():
             log.warning("Revenge List changes could not be saved")
         revenge_popout = self.__dict__.get("revenge_popout")

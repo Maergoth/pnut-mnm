@@ -293,6 +293,7 @@ class Engine(QObject):
     encounter_closed = Signal(object)
     encounter_updated = Signal(object)
     session = Signal(object)  #: SessionSnapshot (loot, coin, kills, deaths, CC) for the whole run
+    low_health = Signal(float)  #: confirmed own HP below 10%; one alert per low-health episode
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -343,6 +344,12 @@ class Engine(QObject):
             cfg.player_name, include_personal=bool(getattr(cfg, "include_personal", False)), vocab=VOCAB
         )
         self._session_dirty = False
+        self._player_telemetry: Any = None
+        self._player_telemetry_owner: Any = None
+        self._player_panel_key: Any = None
+        self._player_crop_warned = False
+        self._player_reader_warned = False
+        self._low_health_alert_at = float("-inf")
         self._recent_kinds: deque[str] = deque(maxlen=GARBLE_WINDOW)
         self._diagnostic_messages: deque[dict[str, Any]] = deque(maxlen=DIAG_MESSAGE_LIMIT)
         self._diagnostic_frames: deque[dict[str, Any]] = deque(maxlen=DIAG_FRAME_LIMIT)
@@ -486,6 +493,8 @@ class Engine(QObject):
         """Pause (skip frames, keep the encounter timeout ticking) or resume."""
         self._paused = bool(paused)
         with self._lock:
+            if self._paused:
+                self._pause_player_status()
             self._quality_tick("capture_paused", self._paused, time.time())
         if self._state in ("running", "paused"):
             self._set_state("paused" if self._paused else "running")
@@ -522,7 +531,14 @@ class Engine(QObject):
         OCR engine/scale and log directory take effect on the next :meth:`start`.
         """
         with self._lock:
+            previous = self._cfg
             self._cfg = dataclasses.replace(cfg)
+            if any(getattr(previous, name, None) != getattr(cfg, name, None) for name in
+                   ("crop", "player_status_crop", "player_status_enabled", "player_status_xp", "player_name")):
+                self._pause_player_status()
+                self._player_panel_key = None
+                self._player_crop_warned = False
+                self._player_reader_warned = False
             self._crop_warned = False
             self._row_frames = 0
             self._rows_warned = False
@@ -1384,6 +1400,10 @@ class Engine(QObject):
         tail = None if kept else _previous_log_tail(project_path(cfg.log_dir), time.time())
         saved_zone = self._load_session_state(cfg)
         with self._lock:
+            self._pause_player_status()
+            self._player_panel_key = None
+            self._player_crop_warned = False
+            self._player_reader_warned = False
             self._ocr = ocr
             self._active_ocr_settings = (cfg.ocr_engine, float(cfg.ocr_scale))
             self._tracker = tracker
@@ -1436,6 +1456,7 @@ class Engine(QObject):
 
     def _close_source(self) -> None:
         with self._lock:
+            self._pause_player_status()
             source, self._source = self._source, None
         if source is not None:
             try:
@@ -1467,32 +1488,63 @@ class Engine(QObject):
                 # A source that can cut the crop out of each frame copies a few MB, not the
                 # whole 4K window (capture.WgcWindowSource.latest_region).
                 region = getattr(source, "latest_region", None)
+                regions = getattr(source, "latest_regions", None)
+                status_crop = self._status_crop_for_source(source, cfg)
+                status_frame = None
+                already_cropped = callable(region)
                 try:
-                    frame = region(tuple(cfg.crop)) if callable(region) else source.latest()
+                    if status_crop is not None and callable(regions):
+                        frame, status_frame = regions((tuple(cfg.crop), status_crop))
+                        already_cropped = True
+                    else:
+                        frame = region(tuple(cfg.crop)) if callable(region) else source.latest()
+                        if frame is not None and status_crop is not None:
+                            # Compatibility sources provide one full frame on demand.
+                            whole = frame if not callable(region) else source.latest()
+                            if whole is not None:
+                                from mnmparse.capture import crop_frame
+                                if self._status_crop_for_source(source, cfg, whole) is not None:
+                                    status_frame = crop_frame(whole, status_crop)
+                                frame = crop_frame(whole, tuple(cfg.crop))
+                                already_cropped = True
                 except ValueError as exc:  # the crop does not fit the frame
-                    frame = None
-                    last_frame_at = t0
-                    self._warn_crop(cfg, exc)
+                    if status_crop is not None:
+                        self._warn_player_crop()
+                        try:
+                            frame = region(tuple(cfg.crop)) if callable(region) else source.latest()
+                        except ValueError as chat_error:
+                            frame = None
+                            last_frame_at = t0
+                            self._warn_crop(cfg, chat_error)
+                        already_cropped = callable(region)
+                    else:
+                        frame = None
+                        last_frame_at = t0
+                        self._warn_crop(cfg, exc)
                 with self._lock:
-                    self._check_source_dimensions(source, cfg, frame if not callable(region) else None)
+                    self._check_source_dimensions(source, cfg, frame if not already_cropped else None)
                 if frame is not None:
                     last_frame_at = t0
+                    fresh = True
                     with self._lock:
                         stamp = getattr(source, "latest_frame_time", None)
                         self._source_frame_age_ms = max(0.0, (time.monotonic() - stamp) * 1000.0) if stamp else None
                         count = getattr(source, "frame_count", None)
                         if isinstance(count, int):
                             if self._source_frame_count is not None:
+                                fresh = count != self._source_frame_count
                                 self._source_frames_skipped += max(0, count - self._source_frame_count - 1)
                                 self._source_frames_repeated += int(count == self._source_frame_count)
                             self._source_frame_count = count
                         self._quality_tick("capture_unavailable", False, time.time())
-                    self._process_frame(frame, cfg, cropped=callable(region))
+                    self._process_frame(frame, cfg, cropped=already_cropped,
+                                        status_frame=status_frame, fresh=fresh)
                 elif self._window_lost(source, t0 - last_frame_at, t0 - last_lookup, cfg):
                     return
                 elif t0 - last_frame_at > FRAME_LOSS_S:
                     last_lookup = t0
                     with self._lock:
+                        self._pause_player_status()
                         self._quality_tick("capture_unavailable", True, time.time() - (t0 - last_frame_at))
 
             now = time.monotonic()
@@ -1546,7 +1598,91 @@ class Engine(QObject):
             log.warning("Bad crop %s: %s", tuple(cfg.crop), exc)
             self.error.emit(f"Crop {tuple(cfg.crop)} does not fit the frame: {exc}")
 
-    def _process_frame(self, frame: np.ndarray, cfg: Config, *, cropped: bool = False) -> None:
+    def _warn_player_crop(self) -> None:
+        if not self._player_crop_warned:
+            self._player_crop_warned = True
+            self.notice.emit("Mini stats region does not fit the game window; select it again in Settings.")
+
+    def _status_crop_for_source(self, source: Any, cfg: Config, frame: Any = None) -> Any:
+        crop = getattr(cfg, "player_status_crop", None) if cfg.player_status_enabled else None
+        if crop is None:
+            return None
+        if (not isinstance(crop, (list, tuple)) or len(crop) != 4
+                or any(type(value) is not int for value in crop)
+                or not (0 <= crop[0] < crop[2] and 0 <= crop[1] < crop[3])):
+            self._warn_player_crop()
+            return None
+        dimensions = getattr(source, "full_frame_dimensions", None)
+        if dimensions is None and frame is not None:
+            dimensions = (int(frame.shape[1]), int(frame.shape[0]))
+        if dimensions and not (0 <= crop[0] < crop[2] <= dimensions[0]
+                               and 0 <= crop[1] < crop[3] <= dimensions[1]):
+            self._warn_player_crop()
+            return None
+        return tuple(crop)
+
+    def _telemetry(self) -> Any:
+        """Live baselines belong to one session; restored totals need fresh observations."""
+        if self._player_telemetry_owner is not self._session_stats:
+            from mnmparse.player_telemetry import PlayerTelemetry
+            self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}))
+            self._player_telemetry_owner = self._session_stats
+            self._player_panel_key = None
+        return self._player_telemetry
+
+    def _save_player_status(self) -> None:
+        summary = {key: value for key, value in self._telemetry().snapshot().items() if key.startswith("xp_")}
+        # An absent bar is unavailable, rather than an invented zero-XP session.
+        if summary.get("xp_gain_points") is not None or getattr(self._session_stats, "player_status", {}):
+            if self._session_stats.note_player_status(summary):
+                self._session_dirty = True
+
+    def _pause_player_status(self) -> None:
+        if self._player_telemetry is not None:
+            self._telemetry().pause()
+            self._save_player_status()
+
+    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any) -> None:
+        telemetry = self._telemetry()
+        key = (tuple(cfg.crop), getattr(cfg, "player_status_crop", None), tuple(shape),
+               tuple(reading.panel_rect) if reading is not None else None)
+        prior = self._player_panel_key
+        if (prior is not None and key[:3] == prior[:3] and key[3] is not None and prior[3] is not None
+                and max(abs(a - b) for a, b in zip(key[3], prior[3])) <= 8):
+            key = prior  # Small OCR-coordinate jitter cannot break an otherwise stable observation.
+        if key != self._player_panel_key:
+            telemetry.pause()
+            self._player_panel_key = key
+        previous = telemetry.snapshot().get("hp_below10_episodes") or 0
+        measurement = None
+        if reading is not None:
+            measurement = {"hp_current": reading.hp_current, "hp_max": reading.hp_max,
+                           "xp_fraction": reading.xp_percent / 100.0
+                           if cfg.player_status_xp and reading.xp_percent is not None else None,
+                           "xp_pixels": reading.xp_bar_rect[2] - reading.xp_bar_rect[0]
+                           if reading.xp_bar_rect else None,
+                           "xp_resolution_points": reading.xp_resolution_points}
+        telemetry.update(measurement, now)
+        summary = telemetry.snapshot()
+        if (cfg.low_health_enabled and (summary.get("hp_below10_episodes") or 0) > previous
+                and now - self._low_health_alert_at >= 10.0):
+            self._low_health_alert_at = now
+            self.low_health.emit(float(summary["hp_percent"]))
+        self._save_player_status()
+
+    def _note_player_event(self, ev: Any, cfg: Config) -> None:
+        if not cfg.player_status_enabled or not cfg.player_status_xp or ev.estimated or ev.estimated_ts:
+            return
+        if ev.kind != "level_up":
+            return
+        telemetry = self._telemetry()
+        from mnmparse.grammar import is_you
+        if is_you(ev.actor) or cfg.player_name and (ev.actor or "").casefold() == cfg.player_name.casefold():
+            telemetry.note_level_up(ev.ts)
+        self._save_player_status()
+
+    def _process_frame(self, frame: np.ndarray, cfg: Config, *, cropped: bool = False,
+                       status_frame: np.ndarray | None = None, fresh: bool = True) -> None:
         """One frame: crop -> preprocess -> OCR -> tracker -> messages (cli._RunSession).
 
         ``cropped``: ``frame`` already is the crop (``latest_region``)."""
@@ -1560,7 +1696,8 @@ class Engine(QObject):
         cfg = self._capture_config(cfg)
         preprocess_started = time.perf_counter()
         try:
-            img = preprocess(frame if cropped else crop_frame(frame, tuple(cfg.crop)), cfg.preprocess, cfg.ocr_scale)
+            raw = frame if cropped else crop_frame(frame, tuple(cfg.crop))
+            img = preprocess(raw, cfg.preprocess, cfg.ocr_scale)
         except ValueError as exc:
             self._warn_crop(cfg, exc)
             return
@@ -1568,12 +1705,39 @@ class Engine(QObject):
         with self._lock:
             self._record_timing("preprocess", preprocess_started)
         lines = ocr.read(img)
+        reading = None
+        separate = getattr(cfg, "player_status_crop", None) is not None
+        status_raw = raw
+        if cfg.player_status_enabled:
+            from mnmparse.player_status import read_player_status
+            try:
+                if separate:
+                    if status_frame is None and not cropped:
+                        if self._status_crop_for_source(None, cfg, frame) is not None:
+                            status_frame = crop_frame(frame, cfg.player_status_crop)
+                    status_raw = status_frame
+                    if status_raw is not None:
+                        status_lines = ocr.read(preprocess(status_raw, cfg.preprocess, cfg.ocr_scale))
+                        reading = read_player_status(status_lines, status_raw, xp_bar_confirmed=True)
+                else:
+                    reading = read_player_status(lines, raw, xp_bar_confirmed=True)
+            except Exception:  # noqa: BLE001 - optional mini stats cannot stop combat chat
+                if not self._player_reader_warned:
+                    self._player_reader_warned = True
+                    log.warning("Mini stat reading failed; continuing combat chat capture", exc_info=True)
+                    self.notice.emit("Could not read mini stats; chat capture is still running.")
         ocr_ms = (time.perf_counter() - t1) * 1000.0
         now = time.time()
         with self._lock:
+            if fresh and cfg.player_status_enabled:
+                self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else ())
             self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
             tracking_started = time.perf_counter()
-            new_messages = tracker.update(lines, now)
+            chat_lines = lines
+            if not separate and reading is not None:
+                panel_rows = set(reading.panel_line_indices)
+                chat_lines = [line for index, line in enumerate(lines) if index not in panel_rows]
+            new_messages = tracker.update(chat_lines, now)
             self._scan_initial_navigation(tracker, cfg, now)
             self._record_timing("tracking", tracking_started)
             if self._last_frame_at:
@@ -1785,6 +1949,7 @@ class Engine(QObject):
             self._record_timing("writing", writing_started)
         before = len(stats.history)
         stats.add(ev)
+        self._note_player_event(ev, cfg)
         try:
             if self._archive is not None:
                 with self._archive.transaction():
@@ -2039,6 +2204,7 @@ class Engine(QObject):
         cfg = self._capture_config(self.config)
         try:
             with self._lock:
+                self._pause_player_status()
                 tracker, writer = self._tracker, self._writer
                 if tracker is not None and writer is not None:
                     try:

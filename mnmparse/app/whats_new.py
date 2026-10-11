@@ -28,6 +28,19 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.9": ReleaseNotes(
+        changes=(
+            "Mini stats can use a separate capture region. Select it in Settings, clear of chat.",
+            "Low HP can sound an alert and flash red screen edges. Customize both in Mini stat window settings.",
+            "Session estimates XP per hour from bar readings about five minutes apart.",
+            "Mez breaks expand by person when a nearby hit identifies the breaker. Uncertain breaks stay separate.",
+            "Revenge rows are tighter. Use + beside Players or Guilds to add; click a heading to copy its CSV.",
+        ),
+        settings_label="Mini stat settings",
+        settings_target="player_status_enabled",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.8": ReleaseNotes(
         changes=(
             "Each Revenge pop-out list now has a + button and a clipboard copy icon.",

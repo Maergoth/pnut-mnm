@@ -21,12 +21,13 @@ from itertools import islice
 
 from .grammar import Event
 from .party import PartyRoster
-from .session import LootEntry, SessionEntry, SessionSnapshot, SessionStats, _Coin
+from .session import LootEntry, SessionEntry, SessionSnapshot, SessionStats, _Coin, _copy_player_status
 from .stats import Encounter, Stats
 
 DETAIL_FIELDS = {"_loot": LootEntry, "_rewards": LootEntry, "_coins": _Coin,
-                 "_slain": tuple, "_craft_entries": tuple, "_mez_breaks": tuple}
-COUNTER_FIELDS = {"_items_by_name", "_items_by_looter", "_coin_by_looter", "_cc_by_type", "_faction", "_names"}
+                 "_slain": tuple, "_craft_entries": tuple, "_mez_breaks": tuple, "_mez_break_entries": tuple}
+COUNTER_FIELDS = {"_items_by_name", "_items_by_looter", "_coin_by_looter", "_cc_by_type", "_faction", "_names",
+                  "_mez_break_counts"}
 
 
 def _json(value: Any) -> str:
@@ -229,6 +230,8 @@ class SessionArchive:
                 setattr(stats, name, Counter(value))
             elif name == "_item_looters":
                 stats._item_looters = {key: Counter(table) for key, table in value.items()}
+            elif name == "player_status":
+                stats.player_status = _copy_player_status(value)
             elif name in DETAIL_FIELDS:
                 setattr(stats, name, [_decode(item, DETAIL_FIELDS[name]) for item in value])
             elif name in vars(stats):
@@ -275,12 +278,17 @@ class SessionArchive:
         data["recent"] = [SessionEntry(**item) for item in data["recent"]]
         for field in ("items_by_name", "items_by_looter", "mez_breaks", "kill_entries", "craft_entries",
                       "coin_by_looter", "crafts_by_crafter", "crafts_by_item", "kills_by_killer", "kills_by_target",
-                      "deaths_by_player", "cc_by_type", "skill_ups", "faction", "outsider_deaths", "outsider_crafts"):
-            data[field] = [tuple(item) for item in data[field]]
+                      "deaths_by_player", "cc_by_type", "skill_ups", "faction", "outsider_deaths", "outsider_crafts",
+                      "mez_break_details", "mez_breaks_by_breaker"):
+            if field in data:
+                data[field] = [tuple(item) for item in data[field]]
         data["item_looters"] = {item: [tuple(pair) for pair in looters] for item, looters in data["item_looters"].items()}
         size = max(0, int(detail_limit))
-        for field in ("loot", "rewards", "recent", "mez_breaks", "kill_entries", "craft_entries"):
-            data[field] = data[field][-size:] if size else []
+        if "player_status" in data:
+            data["player_status"] = _copy_player_status(data["player_status"])
+        for field in ("loot", "rewards", "recent", "mez_breaks", "kill_entries", "craft_entries", "mez_break_details"):
+            if field in data:
+                data[field] = data[field][-size:] if size else []
         snap = SessionSnapshot(**data)
         snap._personal_totals = personal
         return snap

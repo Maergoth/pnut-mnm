@@ -2268,6 +2268,7 @@ class SettingsPage(QWidget):
         self._build_overlay()
         self._build_revenge()
         self._build_encounter()
+        self._build_player_status()
         self._build_export()
         self._build_capture()
         self._build_ocr()
@@ -2335,8 +2336,12 @@ class SettingsPage(QWidget):
             spin.valueChanged.connect(self._on_form_changed)
         for toggle in (self.start_on_launch, self.minimize_to_tray, self.include_personal, self.show_other_groups,
                        self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled,
-                       self.reduced_motion, self.revenge_alert_enabled, self.revenge_alert_flash):
+                       self.reduced_motion, self.revenge_alert_enabled, self.revenge_alert_flash,
+                       self.player_status_enabled, self.player_status_separate, self.player_status_xp,
+                       self.low_health_enabled, self.low_health_flash):
             toggle.toggled.connect(self._on_form_changed)
+        self.low_health_sound.currentIndexChanged.connect(self._on_form_changed)
+        self.low_health_volume.value_changed.connect(self._on_form_changed)
         self.revenge_alert_sound.currentIndexChanged.connect(self._on_form_changed)
         self.revenge_alert_volume.value_changed.connect(self._on_form_changed)
         # OCR engine/scale/preprocess and the crop picker are connected where they are built
@@ -2927,6 +2932,62 @@ class SettingsPage(QWidget):
             "or spell (marked in the hover breakdown). Off: such lines are left out.",
         )
 
+    def _build_player_status(self) -> None:
+        from mnmparse.triggers import BUILTIN_SOUNDS
+
+        form = self._section("Mini stat window", "XP readings are estimates. Select a separate region if your stats are outside chat.")
+        self.player_status_enabled = ToggleSwitch()
+        self._row(form, "Read mini stats", self.player_status_enabled)
+        self.player_status_separate = ToggleSwitch()
+        self._row(form, "Separate stats region", self.player_status_separate)
+        self.player_status_region = QWidget()
+        region_layout = QVBoxLayout(self.player_status_region)
+        region_layout.setContentsMargins(0, 0, 0, 0)
+        region_layout.setSpacing(8)
+        hint = _label("Select the mini stat window, including its XP bar.", "Muted")
+        hint.setWordWrap(True)
+        region_layout.addWidget(hint)
+        stats_cfg = dataclasses.replace(self._cfg, crop=self._cfg.player_status_crop or self._cfg.crop)
+        self.player_status_picker = CropPicker(self._engine, stats_cfg, calibration_preview=True)
+        self.player_status_picker.canvas.setAccessibleName("Mini stats crop")
+        for caption, spin in self.player_status_picker._spins.items():
+            spin.setAccessibleName(f"Mini stats {caption.title()}")
+        self.player_status_picker.setMinimumHeight(320)
+        self.player_status_picker.crop_changed.connect(self._on_player_status_crop)
+        region_layout.addWidget(self.player_status_picker)
+        form.addRow(self.player_status_region)
+        self.player_status_region.hide()
+        self.player_status_xp = ToggleSwitch()
+        self._row(form, "Track XP", self.player_status_xp)
+        self.low_health_enabled = ToggleSwitch()
+        self._row(form, "Alert below 10% HP", self.low_health_enabled)
+        self.low_health_flash = ToggleSwitch()
+        self._row(form, "Flash screen edges red", self.low_health_flash)
+        self.low_health_sound = self._combo(["None", *BUILTIN_SOUNDS], 160)
+        self._row(form, "Alert sound", self.low_health_sound)
+        self.low_health_volume = SliderRow("", 0, 100, 80, formatter=_percent_text)
+        self.low_health_volume.setFixedWidth(360)
+        self._row(form, "Alert volume", self.low_health_volume)
+        self.player_status_enabled.toggled.connect(self._sync_player_status_controls)
+        self.player_status_separate.toggled.connect(
+            lambda _enabled: self._sync_player_status_controls(self.player_status_enabled.isChecked()))
+        self.low_health_enabled.toggled.connect(
+            lambda _enabled: self._sync_player_status_controls(self.player_status_enabled.isChecked()))
+
+    def _sync_player_status_controls(self, enabled: bool) -> None:
+        self.player_status_separate.setEnabled(enabled)
+        self.player_status_region.setVisible(enabled and self.player_status_separate.isChecked())
+        self.player_status_xp.setEnabled(enabled)
+        self.low_health_enabled.setEnabled(enabled)
+        alerts = enabled and self.low_health_enabled.isChecked()
+        for control in (self.low_health_flash, self.low_health_sound, self.low_health_volume):
+            control.setEnabled(alerts)
+
+    def _on_player_status_crop(self, crop: tuple) -> None:
+        if not self._loading:
+            self.player_status_picker.set_config(dataclasses.replace(self.form_config(), crop=crop))
+            self._on_form_changed()
+
     _SORT_TITLES = {"damage": "Damage", "healing": "Healing", "taken": "Damage taken", "utility": "Utility"}
 
     def _build_export(self) -> None:
@@ -3094,6 +3155,17 @@ class SettingsPage(QWidget):
             self._sync_revenge_controls(cfg.revenge_enabled)
             self.reduced_motion.setChecked(cfg.reduced_motion)
             self.include_personal.setChecked(bool(_cfg_get(cfg, "include_personal", False)))
+            self.player_status_enabled.setChecked(cfg.player_status_enabled)
+            self.player_status_separate.setChecked(cfg.player_status_crop is not None)
+            self.player_status_picker.set_crop(cfg.player_status_crop or cfg.crop)
+            self.player_status_picker.set_config(
+                dataclasses.replace(cfg, crop=cfg.player_status_crop or cfg.crop))
+            self.player_status_xp.setChecked(cfg.player_status_xp)
+            self.low_health_enabled.setChecked(cfg.low_health_enabled)
+            self.low_health_flash.setChecked(cfg.low_health_flash)
+            self._select(self.low_health_sound, cfg.low_health_sound or "None")
+            self.low_health_volume.set_value(cfg.low_health_volume)
+            self._sync_player_status_controls(cfg.player_status_enabled)
             self.show_other_groups.setChecked(bool(_cfg_get(cfg, "show_other_groups", False)))
             self.dummy_fix.setChecked(bool(_cfg_get(cfg, "dummy_fix", False)))
             self.attack_bar.setChecked(bool(_cfg_get(cfg, "attack_bar", True)))
@@ -3148,6 +3220,15 @@ class SettingsPage(QWidget):
             "revenge_entries": self.revenge_entries.value(),
             "reduced_motion": self.reduced_motion.isChecked(),
             "include_personal": self.include_personal.isChecked(),
+            "player_status_enabled": self.player_status_enabled.isChecked(),
+            "player_status_crop": (tuple(self.player_status_picker.crop())
+                                   if self.player_status_separate.isChecked() else None),
+            "player_status_xp": self.player_status_xp.isChecked(),
+            "low_health_enabled": self.low_health_enabled.isChecked(),
+            "low_health_flash": self.low_health_flash.isChecked(),
+            "low_health_sound": ("" if self.low_health_sound.currentText() == "None"
+                                 else self.low_health_sound.currentText()),
+            "low_health_volume": int(self.low_health_volume.value()),
             "show_other_groups": self.show_other_groups.isChecked(),
             "dummy_fix": self.dummy_fix.isChecked(),
             "attack_bar": self.attack_bar.isChecked(),
@@ -3214,6 +3295,7 @@ class SettingsPage(QWidget):
             return
         self._cfg = cfg
         self.crop_picker.set_config(cfg)
+        self.player_status_picker.set_config(dataclasses.replace(cfg, crop=self.player_status_picker.crop()))
         try:
             self._engine.update_config(cfg)
         except Exception:  # noqa: BLE001 - keep the GUI alive whatever the engine does
@@ -3248,7 +3330,9 @@ class SettingsPage(QWidget):
     def _sync_picker_config(self) -> None:
         if self._loading:
             return
-        self.crop_picker.set_config(self.form_config())
+        cfg = self.form_config()
+        self.crop_picker.set_config(cfg)
+        self.player_status_picker.set_config(dataclasses.replace(cfg, crop=self.player_status_picker.crop()))
         self._on_form_changed()
 
     def _on_form_changed(self) -> None:
@@ -3296,6 +3380,7 @@ class SettingsPage(QWidget):
         self.morality.set_config(cfg)
         self.profile_tools.load(cfg)
         self.crop_picker.set_config(cfg)
+        self.player_status_picker.set_config(dataclasses.replace(cfg, crop=self.player_status_picker.crop()))
         self._engine.update_config(cfg)
         self.config_changed.emit(cfg)
 

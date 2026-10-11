@@ -21,7 +21,7 @@ import logging
 import sys
 import threading
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -292,14 +292,14 @@ class WgcWindowSource:
     Windows is asked for no more frames than ``max_fps`` (``minimum_update_interval``):
     on a 4K, 240 Hz screen every delivered frame is a 33 MB read-back from the GPU and a
     Python callback, even when the callback drops it, and those callbacks stalled the
-    app's animations.  Once :meth:`latest_region` has been asked for a crop, each frame
-    copies only that rectangle (about 2 MB instead of 25 MB); :meth:`latest` then fetches
-    one whole frame on demand (the crop picker).
+    app's animations. Once :meth:`latest_region` or :meth:`latest_regions` is asked for
+    crops, each frame copies only those rectangles; :meth:`latest` then fetches one
+    whole frame on demand (the crop picker).
 
     The library is given the hwnd that :func:`find_game_window_info` validated, never a
     title (its own title lookup is a substring match).  Every :data:`WINDOW_CHECK_S`,
-    :meth:`latest` and :meth:`latest_region` re-check that this window is still the best
-    valid match; when it is not (gone, or a better game window appeared) the session ends
+    :meth:`latest`, :meth:`latest_region` and :meth:`latest_regions` re-check that this
+    window is still the best valid match; when it is not (gone, or a better game window appeared) the session ends
     like a closed window, so the caller restarts capture on the right one instead of
     staying on a stale window.
 
@@ -328,6 +328,10 @@ class WgcWindowSource:
         self._region_frame: np.ndarray | None = None
         self._region_error: str | None = None  #: the crop does not fit the frame
         self._region_cut: tuple[int, int, int, int] | None = None  #: the crop _region_frame/_error are for
+        self._regions: tuple[Rect, ...] = ()
+        self._regions_frames: tuple[np.ndarray | None, ...] = ()
+        self._regions_errors: tuple[str | None, ...] = ()
+        self._regions_cut: tuple[Rect, ...] | None = None
         self._frame_at = 0.0  #: when _frame (the last whole frame) was copied (monotonic)
         self._full_wanted = threading.Event()  #: the next frame is copied whole (region mode)
         self._full_ready = threading.Event()
@@ -492,18 +496,18 @@ class WgcWindowSource:
             return
         now = time.monotonic()
         wanted = self._full_wanted.is_set()  # a caller waits for one whole frame: no throttle
-        full = wanted or self._region is None
+        regions = self._regions
+        full = wanted or not regions
         if not wanted and self._min_interval and self._frame_count and (now - self._last_kept) < self._min_interval:
             return  # throttle: skip this frame without copying it
         try:
             view = frame.frame_buffer[:, :, :3]  # BGRA -> BGR view (no copy yet)
-            region = self._region
             if full:
                 bgr = view.copy()  # private BGR copy of the whole frame
-                part, err = self._cut(bgr, region)
+                cuts = tuple(self._cut(bgr, region) for region in regions)
             else:
                 bgr = None
-                part, err = self._cut(view, region)  # copies the crop only
+                cuts = tuple(self._cut(view, region) for region in regions)  # copies only the small crops
         except Exception as exc:  # noqa: BLE001 - never let the native callback see an exception
             log.warning("Could not read captured frame: %s", exc)
             return
@@ -511,8 +515,13 @@ class WgcWindowSource:
             self._full_frame_dimensions = (int(view.shape[1]), int(view.shape[0]))
             if bgr is not None:
                 self._frame, self._frame_at = bgr, now
-            if region == self._region:  # the crop may have changed while this frame was cut
-                self._region_frame, self._region_error, self._region_cut = part, err, region
+            if regions == self._regions:  # the crops may have changed while this frame was cut
+                self._regions_frames = tuple(part for part, _err in cuts)
+                self._regions_errors = tuple(err for _part, err in cuts)
+                self._regions_cut = regions
+                if len(regions) == 1:
+                    self._region_frame, self._region_error = cuts[0]
+                    self._region_cut = regions[0]
             self._frame_count += 1
             self._last_kept = now
         if bgr is not None:
@@ -592,7 +601,7 @@ class WgcWindowSource:
         self._check_window()
         if self._closed:
             return None
-        if self._region is not None and self.is_running:
+        if self._regions and self.is_running:
             # region mode keeps only the crop: have the next frame copied whole for this caller
             self._full_ready.clear()
             self._full_wanted.set()
@@ -609,25 +618,41 @@ class WgcWindowSource:
         Raises:
             ValueError: the crop does not fit the frame (as :func:`crop_frame`).
         """
+        return self.latest_regions((crop,))[0]
+
+    def latest_regions(self, crops: Iterable[Rect]) -> tuple[np.ndarray | None, ...]:
+        """Return independent crops from one frame, without copying the space between them.
+
+        Changing the requested rectangles waits for a new native frame when the last
+        whole frame is stale. An invalid or empty crop raises ``ValueError``.
+        """
+        requested = tuple(crops)
         self._check_window()
         if self._closed:
-            return None
-        crop = tuple(int(v) for v in crop)  # type: ignore[assignment]
-        if crop != self._region:
+            return tuple(None for _crop in requested)
+        regions = _normalise_regions(requested)
+        if not regions:
+            return ()
+        if regions != self._regions:
             with self._lock:
-                self._region = crop
-                frame, self._region_frame, self._region_error, self._region_cut = self._frame, None, None, None
+                self._regions = regions
+                self._regions_frames, self._regions_errors, self._regions_cut = (), (), None
+                self._region = regions[0] if len(regions) == 1 else None
+                self._region_frame, self._region_error, self._region_cut = None, None, None
+                frame = self._frame
                 fresh = time.monotonic() - self._frame_at <= max(2.0 * self._min_interval, 0.5)
-            # Cut the new crop from the last whole frame only when it is current: in region mode
-            # that frame can be minutes old, and OCRing it would replay old chat as new lines.
-            return crop_frame(frame, crop) if frame is not None and fresh else None
+            if frame is None or not fresh:
+                return tuple(None for _crop in regions)
+            parts = tuple(crop_frame(frame, crop) for crop in regions)
+            return tuple(part.copy() if np.shares_memory(part, frame) else part for part in parts)
         with self._lock:
-            if self._region_cut != crop:
-                return None  # the next frame brings this crop
-            part, err = self._region_frame, self._region_error
-        if err is not None:
-            raise ValueError(err)
-        return None if part is None else part.copy()
+            if self._regions_cut != regions:
+                return tuple(None for _crop in regions)  # the next frame brings these crops
+            parts, errors = self._regions_frames, self._regions_errors
+        for error in errors:
+            if error is not None:
+                raise ValueError(error)
+        return tuple(None if part is None else part.copy() for part in parts)
 
     def wait_for_frame(self, timeout_s: float = 5.0) -> np.ndarray | None:
         """Block until a frame is available (or ``timeout_s`` elapses).
@@ -710,8 +735,36 @@ class MssRegionSource:
         self._warned_missing = False
         return self._rect
 
+    @property
+    def full_frame_dimensions(self) -> tuple[int, int] | None:
+        """Current window bounds for validating optional additional capture rectangles."""
+        if self._rect is None:
+            return None
+        left, top, right, bottom = self._rect
+        width, height = right - left, bottom - top
+        return (width, height) if width > 0 and height > 0 and left > -32000 and top > -32000 else None
+
     def latest(self) -> np.ndarray | None:
         """Grab the window rectangle now and return it as HxWx3 BGR, or ``None``."""
+        view = self._grab_view()
+        return None if view is None else view.copy()
+
+    def latest_region(self, crop: Rect) -> np.ndarray | None:
+        """Return one private BGR crop from the current desktop frame."""
+        return self.latest_regions((crop,))[0]
+
+    def latest_regions(self, crops: Iterable[Rect]) -> tuple[np.ndarray | None, ...]:
+        """Grab once, then copy each requested crop from the same BGRA frame."""
+        regions = _normalise_regions(crops)
+        if not regions:
+            return ()
+        view = self._grab_view()
+        if view is None:
+            return tuple(None for _crop in regions)
+        return tuple(crop_frame(view, crop) for crop in regions)
+
+    def _grab_view(self) -> np.ndarray | None:
+        """Keep the native BGRA backing buffer; callers copy only their BGR pixels."""
         import mss
         from mss.exception import ScreenShotError
 
@@ -730,7 +783,7 @@ class MssRegionSource:
             log.warning("mss grab failed for %s: %s", rect, exc)
             return None
         bgra = np.frombuffer(shot.bgra, dtype=np.uint8).reshape(shot.height, shot.width, 4)
-        return bgra[:, :, :3].copy()
+        return bgra[:, :, :3]
 
     def wait_for_frame(self, timeout_s: float = 5.0) -> np.ndarray | None:
         """Return a frame, retrying until ``timeout_s`` elapses."""
@@ -772,6 +825,13 @@ def make_source(cfg: Config) -> FrameSource:
     if backend == "mss":
         return MssRegionSource(cfg.window_title)
     raise ValueError(f"Unknown capture_backend {cfg.capture_backend!r}; expected 'wgc' or 'mss'")
+
+
+def _normalise_regions(crops: Iterable[Rect]) -> tuple[Rect, ...]:
+    regions = tuple(tuple(int(value) for value in crop) for crop in crops)
+    if any(len(crop) != 4 for crop in regions):
+        raise ValueError("Each capture crop needs left, top, right and bottom coordinates")
+    return regions
 
 
 def crop_frame(frame: np.ndarray, crop: tuple[int, int, int, int]) -> np.ndarray:

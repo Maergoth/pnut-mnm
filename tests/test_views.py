@@ -122,6 +122,50 @@ class QtViewTests(unittest.TestCase):
         self.assertTrue(items.isExpanded())
         self.assertEqual(items.data(0, Qt.ItemDataRole.UserRole), "items")
 
+    def test_mez_tree_groups_expandable_people_and_preserves_full_private_counts(self) -> None:
+        from PySide6.QtCore import Qt
+        from mnmparse.app.session_view import SessionView
+        from mnmparse.config import Config
+
+        stats = SessionStats(PLAYER, started=0)
+        for index, actor in enumerate(("You",) * 3 + ("Povebizu",)):
+            ts = index * 10
+            for offset, text in ((0, "a rat is mesmerized."),
+                                 (1, f"{actor} crushes a rat for 8 points of damage."),
+                                 (1.2, "a rat awakens.")):
+                stats.add(parse_line(text, ts + offset, PLAYER))
+        stats.add(parse_line("a skeleton awakens.", 50, PLAYER))
+        snap = stats.snapshot(now=60, detail_limit=2)
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                view = SessionView(compact=compact)
+                view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
+                view.set_snapshot(snap)
+
+                def mez():
+                    return next(view._tree.topLevelItem(i) for i in range(view._tree.topLevelItemCount())
+                                if view._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == "mez")
+
+                top = mez()
+                self.assertEqual(top.text(1), "5")
+                people = {top.child(i).text(0): top.child(i) for i in range(top.childCount())}
+                self.assertEqual({name: row.text(1) for name, row in people.items()},
+                                 {PLAYER: "3", "Povebizu": "1", "Unknown / natural fade": "1"})
+                self.assertEqual(people[PLAYER].child(0).text(0), "3 older breaks")
+                peer = people["Povebizu"]
+                self.assertEqual(peer.child(0).text(0), "a rat")
+                self.assertTrue(peer.child(0).text(2))
+                peer.setExpanded(True)
+                view.set_snapshot(snap)
+                self.assertTrue(next(mez().child(i) for i in range(mez().childCount())
+                                     if mez().child(i).text(0) == "Povebizu").isExpanded())
+                view.set_config(Config(player_name=PLAYER))
+                self.assertEqual(mez().text(1), "4")
+                self.assertEqual([mez().child(i).text(0) for i in range(mez().childCount())],
+                                 [PLAYER, "Unknown / natural fade"])
+                view.close()
+                view.deleteLater()
+
     def test_overlay_lock_and_click_through_flags(self) -> None:
         from PySide6.QtCore import QSettings, Qt
 

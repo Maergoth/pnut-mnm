@@ -118,6 +118,13 @@ class Config:
     minimize_to_tray: bool = True
     feed_max_lines: int = 500
     include_personal: bool = False  #: count lines only the viewer gets (skill-ups, faction, XP) in the Session tab
+    player_status_enabled: bool = True  #: read the mini stat panel
+    player_status_crop: tuple[int, int, int, int] | None = None  #: None reads stats inside the chat crop
+    player_status_xp: bool = True  #: estimate experience from its yellow/blue bar
+    low_health_enabled: bool = True  #: alert once when confirmed health falls below 10%
+    low_health_flash: bool = True  #: briefly color the screen edges red
+    low_health_sound: str = "Alert"
+    low_health_volume: int = 80  #: percent of the trigger master volume
     show_other_groups: bool = False  #: show nearby outsider rows and fights without group participation
     dummy_fix: bool = False  #: unreadable hit / heal numbers count as the zone's average (estimates)
     attack_bar: bool = True  #: show the auto-attack timer bar under the overlay
@@ -153,6 +160,8 @@ class Config:
                 issues.append(
                     f"crop must be (left, top, right, bottom) with positive size, got {self.crop!r}"
                 )
+        if self.player_status_crop is not None and not _valid_crop(self.player_status_crop):
+            issues.append("player_status_crop must be null or four integers with positive size and nonnegative origin")
         if self.fps <= 0:
             issues.append(f"fps must be > 0, got {self.fps!r}")
         if not 0.25 <= self.ocr_scale <= 4.0:
@@ -179,13 +188,18 @@ class Config:
             issues.append("revenge_days must be an integer between 0 (all) and 3650")
         if type(self.revenge_entries) is not int or not 0 <= self.revenge_entries <= 1000:
             issues.append("revenge_entries must be an integer between 0 (all) and 1000")
-        for name in ("revenge_alert_enabled", "revenge_alert_flash"):
+        for name in ("revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_xp",
+                     "low_health_enabled", "low_health_flash"):
             if type(getattr(self, name)) is not bool:
                 issues.append(f"{name} must be true or false")
         if self.revenge_alert_sound not in ("", *BUILTIN_SOUNDS):
             issues.append("revenge_alert_sound must be a built-in sound or empty (silent)")
         if type(self.revenge_alert_volume) is not int or not 0 <= self.revenge_alert_volume <= 100:
             issues.append("revenge_alert_volume must be an integer between 0 and 100")
+        if self.low_health_sound not in ("", *BUILTIN_SOUNDS):
+            issues.append("low_health_sound must be a built-in sound or empty (silent)")
+        if type(self.low_health_volume) is not int or not 0 <= self.low_health_volume <= 100:
+            issues.append("low_health_volume must be an integer between 0 and 100")
         for name, minimum, maximum in (("revenge_alert_cooldown", 0, 3600), ("revenge_alert_duration", 1, 60)):
             if not _bounded_number(getattr(self, name), minimum, maximum):
                 issues.append(f"{name} must be a finite number between {minimum} and {maximum}")
@@ -229,6 +243,13 @@ def _bounded_number(value: Any, minimum: float, maximum: float) -> bool:
         return False
 
 
+def _valid_crop(value: Any) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 4 or any(type(n) is not int for n in value):
+        return False
+    left, top, right, bottom = value
+    return 0 <= left < right and 0 <= top < bottom
+
+
 def _coerce(name: str, value: Any, default: Any) -> Any:
     """Coerce a JSON value to the type of the dataclass field ``name``.
 
@@ -238,13 +259,14 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
     if name == "capture_profiles":
         from mnmparse.profiles import validate_profiles
         return validate_profiles(value)
-    if name in {"revenge_days", "revenge_entries", "revenge_alert_volume"}:
+    if name in {"revenge_days", "revenge_entries", "revenge_alert_volume", "low_health_volume"}:
         if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise ValueError("expected a whole number")
         number = int(value)
-        maximum = {"revenge_days": 3650, "revenge_entries": 1000, "revenge_alert_volume": 100}[name]
+        maximum = {"revenge_days": 3650, "revenge_entries": 1000, "revenge_alert_volume": 100,
+                   "low_health_volume": 100}[name]
         if not 0 <= number <= maximum:
-            label = "0" if name == "revenge_alert_volume" else "0 (all)"
+            label = "0" if name in {"revenge_alert_volume", "low_health_volume"} else "0 (all)"
             raise ValueError(f"expected {label} through {maximum}")
         return number
     if name in {"revenge_alert_cooldown", "revenge_alert_duration"}:
@@ -258,17 +280,28 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         if not _bounded_number(number, minimum, maximum):
             raise ValueError(f"expected {minimum} through {maximum}")
         return number
-    if name == "revenge_alert_sound":
+    if name in {"revenge_alert_sound", "low_health_sound"}:
         if value not in ("", *BUILTIN_SOUNDS):
             raise ValueError("expected a built-in sound or empty (silent)")
         return value
-    if name in {"revenge_alert_enabled", "revenge_alert_flash"} and not isinstance(value, (bool, str)):
+    if name in {"revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_xp",
+                "low_health_enabled", "low_health_flash"} and not isinstance(value, (bool, str)):
         if type(value) is not int or value not in (0, 1):
             raise ValueError("expected true or false")
     if name == "crop":
         if not isinstance(value, (list, tuple)) or len(value) != 4:
             raise ValueError("crop must be a list of four integers [left, top, right, bottom]")
         return tuple(int(v) for v in value)
+    if name == "player_status_crop":
+        if value is None:
+            return None
+        if (not isinstance(value, (list, tuple)) or len(value) != 4
+                or any(type(n) not in (int, str) for n in value)):
+            raise ValueError("expected null or four integer coordinates")
+        crop = tuple(int(n) for n in value)
+        if not _valid_crop(crop):
+            raise ValueError("expected a positive rectangle with a nonnegative origin")
+        return crop
     if isinstance(default, bool):  # bool is a subclass of int: check it first
         if isinstance(value, str):
             lowered = value.strip().lower()
@@ -366,6 +399,7 @@ def save_config(cfg: Config, path: str | None = None) -> None:
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     data = dataclasses.asdict(cfg)
     data["crop"] = [int(v) for v in cfg.crop]
+    data["player_status_crop"] = list(cfg.player_status_crop) if cfg.player_status_crop is not None else None
     from mnmparse.storage import atomic_json
     atomic_json(cfg_path, data)
     log.info("Saved config to %s", cfg_path)

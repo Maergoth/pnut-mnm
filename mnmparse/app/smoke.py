@@ -24,7 +24,7 @@ APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
     "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "legal_dialog",
     "map_overlay", "map_downloads", "app_updates", "main",
-    "profile_tools", "setup_wizard",
+    "profile_tools", "setup_wizard", "low_health",
 )
 NATIVE_MODULES = ("numpy", "cv2", "regex", "regex._regex")
 WINDOWS_MODULES = (
@@ -33,6 +33,74 @@ WINDOWS_MODULES = (
     "winrt.windows.storage.streams", "winrt.windows.globalization",
     "winrt.windows.foundation", "winrt.windows.foundation.collections",
 )
+
+
+def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
+    """Use generated pixels and readings only; never opens a capture source."""
+    import numpy as np
+    from PySide6.QtCore import QRect, Qt
+
+    from mnmparse.app.low_health import LowHealthFlash
+    from mnmparse.config import Config
+    from mnmparse.ocr import OcrLine
+    from mnmparse.player_status import read_player_status
+    from mnmparse.player_telemetry import PlayerTelemetry
+    from mnmparse.privacy import project_session
+    from mnmparse.session import SessionStats
+
+    report["imports"].extend(("mnmparse.player_status", "mnmparse.player_telemetry"))
+    lines = [OcrLine(180, 30, 10, "Health 8/100"), OcrLine(180, 65, 10, "Mana 50/100"),
+             OcrLine(170, 100, 10, "Endurance 100/100"), OcrLine(130, 170, 10, "Weight 20/50")]
+    image = np.full((260, 400, 3), 90, dtype=np.uint8)
+    image[196:216, 90:330] = 8
+    image[196:216, 90:266] = (0, 188, 255)
+    image[213:216, 90:248] = (255, 80, 0)
+    reading = read_player_status(lines, image, xp_bar_confirmed=True)
+    if (reading is None or reading.hp_percent != 8 or reading.xp_percent is None
+            or abs(reading.xp_percent - 73.2) > .2
+            or reading.xp_resolution_points is None or reading.xp_resolution_points > .1):
+        raise RuntimeError("Packaged mini-stat reading did not recognize personal HP and dual-scale XP")
+    telemetry = PlayerTelemetry()
+    measurement = {"hp_current": reading.hp_current, "hp_max": reading.hp_max,
+                   "xp_fraction": reading.xp_percent / 100,
+                   "xp_resolution_points": reading.xp_resolution_points}
+    telemetry.update(measurement, 100)
+    if telemetry.snapshot()["hp_low"]:
+        raise RuntimeError("Personal low HP did not require a second fresh reading")
+    telemetry.update(measurement, 100.25)
+    if not telemetry.snapshot()["hp_low"] or telemetry.snapshot()["hp_below10_episodes"] != 1:
+        raise RuntimeError("Personal low HP could not confirm two fresh readings")
+    if telemetry.snapshot()["xp_points_per_hour"] is not None:
+        raise RuntimeError("Packaged XP rate was available before its first five-minute sample")
+    for second in range(1, 301):
+        fraction = measurement["xp_fraction"] + (.02 if second >= 299 else 0)
+        telemetry.update(dict(measurement, xp_fraction=fraction), 100.25 + second)
+        if second < 300 and telemetry.snapshot()["xp_points_per_hour"] is not None:
+            raise RuntimeError("Packaged XP rate used an incomplete five-minute observation")
+    summary = telemetry.snapshot()
+    if summary["xp_points_per_hour"] is None or abs(summary["xp_points_per_hour"] - 24) > .1:
+        raise RuntimeError("Packaged XP rate did not use a completed five-minute observation")
+    personal = SessionStats("SmokeOwner", started=100)
+    personal.note_player_status(summary)
+    protected = project_session(personal.snapshot(now=401), Config(player_name="SmokeOwner"))
+    if protected.player_status.get("xp_points_per_hour") != summary["xp_points_per_hour"]:
+        raise RuntimeError("Carebear Mode hid the owner's XP rate")
+    if any(key.startswith("hp_") for key in protected.player_status):
+        raise RuntimeError("Personal HP alerts became session statistics")
+    flash = LowHealthFlash()
+    windows.append(flash)
+    flash.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    flash.flash(QRect(0, 0, 400, 250), reduced_motion=True)
+    preview = flash.grab().toImage()
+    if (preview.pixelColor(200, 125).alpha() != 0 or preview.pixelColor(1, 125).alpha() == 0
+            or not flash.windowFlags() & Qt.WindowType.WindowTransparentForInput
+            or not flash.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)):
+        raise RuntimeError("The low-HP flash did not preserve a transparent, passive game view")
+    flash.stop()
+    if not flash.isHidden() or flash._timer.isActive():
+        raise RuntimeError("The low-HP flash remained active after stopping")
+    report["player_status"] = {"reader": True, "dual_scale_xp": True, "fresh_hp": True,
+                               "five_minute_rate": True, "carebear_own_xp": True, "passive_flash": True}
 
 
 def _exercise(report: dict[str, Any]) -> None:
@@ -397,6 +465,10 @@ def _exercise(report: dict[str, Any]) -> None:
                     or not np.array_equal(cv2.imdecode(encoded, cv2.IMREAD_COLOR), processed)):
                 raise RuntimeError("Bundled OpenCV image processing or PNG encoding failed")
             report["image_processing"] = True
+            report["stage"] = "exercise personal mini stats and passive HP flash"
+            _exercise_player_status(report, windows)
+            if engine.is_running or engine._source is not None:
+                raise RuntimeError("Mini-stat startup check unexpectedly started capture")
             report["window_titles"] = [item.windowTitle() for item in [*windows, overlay.timer_panel, overlay.attack_bar]]
             if not all(re.fullmatch(r"[0-9a-f]{24}", title) for title in report["window_titles"]):
                 raise RuntimeError("An application window is missing its randomized session title")
