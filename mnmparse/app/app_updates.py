@@ -651,6 +651,21 @@ def _receipt(install: Path) -> dict | None:
         return None
 
 
+def previous_update_version() -> str:
+    """Read the upgrade baseline for installs predating release announcements."""
+    try:
+        record = _receipt(installed_directory())
+        if (record is None or record["status"] not in {"pending", "healthy"}
+                or record.get("version") != APP_VERSION):
+            return ""
+        previous = record.get("previous_version")
+        if isinstance(previous, str) and version_tuple(previous) < version_tuple(APP_VERSION):
+            return previous
+    except (OSError, ValueError, UpdateError):
+        pass
+    return ""
+
+
 def acknowledge_startup() -> bool:
     """Called after the replacement's window and controllers initialize."""
     try:

@@ -6,9 +6,10 @@ from dataclasses import dataclass
 import logging
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer, Signal
-from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from mnmparse.app import APP_VERSION, theme
+from mnmparse.app.app_updates import version_tuple
 from mnmparse.app.window_identity import window_title
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "The Revenge pop-out remembers whether it was open, its position and its size after restart.",
             "Removing a player or guild from the pop-out now asks for confirmation.",
             "Each list has clipboard copy and import icons. Preview an import, then choose Add.",
+            "What's New catches you up on every release since your last update.",
         ),
         settings_label="Revenge settings",
         settings_target="revenge_enabled",
@@ -56,21 +58,107 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         feature_page="triggers",
         feature_label="Timer sharing",
     ),
+    "1.0.4": ReleaseNotes(
+        changes=(
+            "The Revenge pop-out shares overlay styling, opacity, text size and move/resize lock.",
+            "Saved players appearing in combat chat can trigger a fading alert, soft flash and quiet tone.",
+            "Customize Revenge alerts in Settings. Revenge controls stay on their overlay tab.",
+            "Settings now group related overlay, Revenge, combat, clipboard and capture options.",
+        ),
+        settings_label="Revenge settings",
+        settings_target="revenge_enabled",
+    ),
+    "1.0.3": ReleaseNotes(
+        changes=(
+            "Downloaded updates survive quitting and install when you reopen PNUT.",
+            "Updates are verified before installation, preserve saved data and recover if startup fails.",
+            "Scrolling through Settings, setup and trigger controls no longer changes values accidentally.",
+        ),
+        settings_label="App updates",
+        settings_target="app_update_button",
+    ),
+    "1.0.2": ReleaseNotes(
+        changes=(
+            "Carebear Mode hides individual groupmate performance. Triggers, captured chat and your own information stay available.",
+            "Trigger editing and sharing, capture calibration, backups and Revenge work in either mode.",
+            "Assign your own pet from your meter row in Carebear Mode.",
+            "Maps recognize known-zone /who summaries and synchronize the current zone across sessions and fights.",
+        ),
+        settings_label="Carebear settings",
+        settings_target="morality",
+        feature_page="triggers",
+        feature_label="Triggers",
+    ),
+    "1.0.1": ReleaseNotes(
+        changes=(
+            "Casual Mode is now Carebear Mode, with a clearer teammate promise when switching modes.",
+            "Group damage and healing averages compare matching roles, including assigned pets.",
+            "Averages need three active contributors. Your damage percentage stays exact; the group shows the remainder.",
+            "Personal rebuff timers keep their useful static titles.",
+        ),
+        settings_label="Carebear settings",
+        settings_target="morality",
+    ),
+    "1.0.0": ReleaseNotes(
+        changes=(
+            "Guided setup introduces Carebear Mode, chat calibration and common options.",
+            "The optional PvP Revenge List adds attacker prompts, manual entries, a pop-out and display limits.",
+            "Saved history, capture profiles, preference backups and capture diagnostics help you return to a session.",
+            "Capture, imports, storage, map decoding and updates gain reliability improvements. Inactive session executables are cleaned up.",
+        ),
+        settings_label="Settings",
+        settings_target="player_name",
+    ),
 }
+
+
+def unseen_releases(version: str, last_seen: str) -> tuple[tuple[str, ReleaseNotes], ...]:
+    """Return every crossed release, in order; a fresh install starts at current."""
+    notes = RELEASE_NOTES.get(version)
+    if notes is None:
+        log.warning("What's New notes are missing for version %s", version)
+        return ()
+    try:
+        current = version_tuple(version)
+    except ValueError:
+        log.warning("What's New has an unsupported version %s", version)
+        return ()
+    if not last_seen:
+        return ((version, notes),)
+    try:
+        seen = version_tuple(last_seen)
+    except ValueError:
+        return ((version, notes),)
+    if seen >= current:
+        return ()
+    crossed = []
+    for release, release_notes in RELEASE_NOTES.items():
+        try:
+            number = version_tuple(release)
+        except ValueError:
+            continue
+        if seen < number <= current:
+            crossed.append((number, release, release_notes))
+    return tuple((release, release_notes) for _number, release, release_notes in sorted(crossed))
 
 
 class WhatsNewDialog(QDialog):
     settings_requested = Signal()
+    settings_target_requested = Signal(str)
     feature_requested = Signal(str)
 
-    def __init__(self, version: str, notes: ReleaseNotes, parent: QWidget | None = None):
+    def __init__(self, version: str, notes: ReleaseNotes, parent: QWidget | None = None, *,
+                 releases: tuple[tuple[str, ReleaseNotes], ...] | None = None):
         super().__init__(parent)
+        releases = releases or ((version, notes),)
+        self.release_versions = tuple(release for release, _notes in releases)
         self.setObjectName("PnutWhatsNew")
+        self.setFont(theme.app_font())
         self.setWindowTitle(window_title("whats-new"))
         self.setAccessibleName("What's New!")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumWidth(440)
-        self.resize(580, 350)
+        self.resize(580, 350 if len(releases) == 1 else 470)
         self.setStyleSheet(f"""
             QDialog#PnutWhatsNew {{ background: {theme.BG0}; color: {theme.TEXT}; }}
             QDialog#PnutWhatsNew QLabel {{ background: transparent; color: {theme.TEXT}; }}
@@ -79,6 +167,17 @@ class WhatsNewDialog(QDialog):
             QDialog#PnutWhatsNew QFrame#ReleaseChanges {{
                 background: {theme.BG1}; border: 1px solid {theme.LINE}; border-radius: 10px;
             }}
+            QDialog#PnutWhatsNew QScrollArea, QDialog#PnutWhatsNew QWidget#ReleaseContent {{
+                background: {theme.BG0}; border: 0;
+            }}
+            QDialog#PnutWhatsNew QScrollBar:vertical {{ background: {theme.BG0}; width: 10px; }}
+            QDialog#PnutWhatsNew QScrollBar::handle:vertical {{
+                background: rgba(255,255,255,0.18); border-radius: 4px; min-height: 24px;
+            }}
+            QDialog#PnutWhatsNew QScrollBar::add-line:vertical,
+            QDialog#PnutWhatsNew QScrollBar::sub-line:vertical {{ height: 0; border: 0; }}
+            QDialog#PnutWhatsNew QScrollBar::add-page:vertical,
+            QDialog#PnutWhatsNew QScrollBar::sub-page:vertical {{ background: transparent; }}
             QDialog#PnutWhatsNew QPushButton {{
                 color: {theme.TEXT}; background: {theme.BG2};
                 border: 1px solid {theme.LINE}; border-radius: 8px; padding: 9px 16px;
@@ -98,30 +197,57 @@ class WhatsNewDialog(QDialog):
         version_label = QLabel(f"PNUT {version}", self)
         version_label.setObjectName("ReleaseVersion")
         layout.addWidget(version_label)
-        card = QFrame(self)
-        card.setObjectName("ReleaseChanges")
-        changes = QVBoxLayout(card)
-        changes.setContentsMargins(16, 14, 16, 14)
-        changes.setSpacing(12)
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget(self.scroll)
+        content.setObjectName("ReleaseContent")
+        sections = QVBoxLayout(content)
+        sections.setContentsMargins(0, 0, 0, 0)
+        sections.setSpacing(12)
         self.change_labels = []
-        for change in notes.changes:
-            label = QLabel(change, card)
-            label.setWordWrap(True)
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            changes.addWidget(label)
-            self.change_labels.append(label)
-        layout.addWidget(card, 1)
-        buttons = QHBoxLayout()
-        self.settings_button = QPushButton(notes.settings_label, self)
-        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.settings_button.clicked.connect(self._open_settings)
-        buttons.addWidget(self.settings_button)
+        self.settings_buttons: dict[str, QPushButton] = {}
+        self.feature_buttons: dict[str, QPushButton] = {}
         self.feature_button = None
-        if notes.feature_page and notes.feature_label:
-            self.feature_button = QPushButton(notes.feature_label, self)
-            self.feature_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.feature_button.clicked.connect(lambda: self._open_feature(notes.feature_page))
-            buttons.addWidget(self.feature_button)
+        for release, release_notes in releases:
+            card = QFrame(content)
+            card.setObjectName("ReleaseChanges")
+            changes = QVBoxLayout(card)
+            changes.setContentsMargins(16, 14, 16, 14)
+            changes.setSpacing(12)
+            title = QLabel(f"Version {release}", card)
+            title.setFont(theme.app_font(16, 600))
+            changes.addWidget(title)
+            for change in release_notes.changes:
+                label = QLabel(change, card)
+                label.setWordWrap(True)
+                label.setTextFormat(Qt.TextFormat.PlainText)
+                changes.addWidget(label)
+                self.change_labels.append(label)
+            actions = QHBoxLayout()
+            settings_button = QPushButton(release_notes.settings_label, card)
+            settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            settings_button.clicked.connect(
+                lambda _checked=False, target=release_notes.settings_target: self._open_settings(target))
+            self.settings_buttons[release] = settings_button
+            actions.addWidget(settings_button)
+            if release_notes.feature_page and release_notes.feature_label:
+                feature_button = QPushButton(release_notes.feature_label, card)
+                feature_button.setCursor(Qt.CursorShape.PointingHandCursor)
+                feature_button.clicked.connect(
+                    lambda _checked=False, page=release_notes.feature_page: self._open_feature(page))
+                self.feature_buttons[release] = feature_button
+                actions.addWidget(feature_button)
+            actions.addStretch(1)
+            changes.addLayout(actions)
+            sections.addWidget(card)
+        sections.addStretch(1)
+        self.settings_button = self.settings_buttons[version]
+        self.feature_button = self.feature_buttons.get(version)
+        self.scroll.setWidget(content)
+        layout.addWidget(self.scroll, 1)
+        buttons = QHBoxLayout()
         buttons.addStretch(1)
         self.got_it_button = QPushButton("Got it", self)
         self.got_it_button.setObjectName("GotIt")
@@ -131,9 +257,10 @@ class WhatsNewDialog(QDialog):
         buttons.addWidget(self.got_it_button)
         layout.addLayout(buttons)
 
-    def _open_settings(self) -> None:
+    def _open_settings(self, target: str) -> None:
         self.accept()
         self.settings_requested.emit()
+        self.settings_target_requested.emit(target)
 
     def _open_feature(self, page: str) -> None:
         self.accept()
@@ -146,6 +273,8 @@ class WhatsNewController(QObject):
     def __init__(self, settings: QSettings, window: QWidget, *,
                  eligible: Callable[[], bool], open_settings: Callable[[], None],
                  open_feature: Callable[[str], None] | None = None,
+                 open_settings_target: Callable[[str], None] | None = None,
+                 upgrade_from: str = "",
                  version: str = APP_VERSION):
         super().__init__(window)
         self.settings = settings
@@ -155,6 +284,8 @@ class WhatsNewController(QObject):
         self._eligible = eligible
         self._open_settings = open_settings
         self._open_feature = open_feature
+        self._open_settings_target = open_settings_target
+        self._upgrade_from = upgrade_from
         self._stopped = False
         self._presented = False
         self._timer = QTimer(self)
@@ -175,21 +306,28 @@ class WhatsNewController(QObject):
 
     def show_if_needed(self) -> bool:
         if (self._stopped or self.dialog is not None
-                or self.settings.value(SEEN_VERSION_KEY, "", type=str) == self.version
                 or not self._eligible() or not self.window.isVisible() or self.window.isMinimized()
                 or not self.window.isActiveWindow() or QApplication.activeModalWidget() is not None):
             return False
-        notes = RELEASE_NOTES.get(self.version)
-        if notes is None:
-            log.warning("What's New notes are missing for version %s", self.version)
+        last_seen = self.settings.value(SEEN_VERSION_KEY, "", type=str)
+        try:
+            version_tuple(last_seen)
+        except ValueError:
+            last_seen = self._upgrade_from
+        releases = unseen_releases(self.version, last_seen)
+        if not releases:
             return False
-        dialog = WhatsNewDialog(self.version, notes, self.window)
+        dialog = WhatsNewDialog(self.version, releases[-1][1], self.window, releases=releases)
         self.dialog = dialog
-        dialog.settings_requested.connect(self._open_settings)
+        if self._open_settings_target is not None:
+            dialog.settings_target_requested.connect(self._open_settings_target)
+        else:
+            dialog.settings_requested.connect(self._open_settings)
         if self._open_feature is not None:
             dialog.feature_requested.connect(self._open_feature)
-        elif dialog.feature_button is not None:
-            dialog.feature_button.hide()
+        else:
+            for button in dialog.feature_buttons.values():
+                button.hide()
         dialog.finished.connect(self._dismissed)
         dialog.open()
         self._presented = dialog.isVisible()

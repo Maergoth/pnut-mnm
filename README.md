@@ -562,8 +562,8 @@ not identify guild membership.
 The pop-out's **Copy CSV to Clipboard** and **Import CSV from Clipboard** icons work
 per list. Import opens that list's Add dialog with a preview; choose **Add** to confirm.
 
-After an update, **What's New!** highlights that release's new features once, with a
-shortcut to their settings.
+After an update, **What's New!** includes every release since the last version you
+acknowledged, each labeled with its version number and shortcuts to relevant settings.
 
 **Combat log alerts** show a fading notification when a saved name appears, with a soft
 flash and quiet tone. Customize the flash, sound, volume, display time and repeat delay

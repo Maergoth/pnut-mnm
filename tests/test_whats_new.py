@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget, QWizard
 
 from mnmparse.app import APP_VERSION, theme
 from mnmparse.app.main import App, MainWindow, _MissingEngine
-from mnmparse.app.whats_new import RELEASE_NOTES, SEEN_VERSION_KEY, WhatsNewController, WhatsNewDialog
+from mnmparse.app.whats_new import RELEASE_NOTES, SEEN_VERSION_KEY, WhatsNewController, WhatsNewDialog, unseen_releases
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import Config
 from tests.test_layout import clipped_widgets
@@ -81,6 +81,85 @@ class WhatsNewTests(unittest.TestCase):
         self.assertFalse(self.controller().show_if_needed())
         self.settings.setValue(SEEN_VERSION_KEY, "1.0.4")
         self.assertTrue(self.controller().show_if_needed(), "An earlier acknowledged release must not suppress this one")
+
+    def test_skipping_versions_shows_every_crossed_release_once_in_order(self):
+        self.settings.setValue(SEEN_VERSION_KEY, "1.0.2")
+        controller = self.controller(version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        dialog = controller.dialog
+        expected = ("1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7")
+        self.assertEqual(dialog.release_versions, expected)
+        self.assertEqual([label.text() for label in dialog.change_labels],
+                         [change for version in expected for change in RELEASE_NOTES[version].changes])
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), "1.0.2")
+        self.app.processEvents()
+        self.assertGreater(dialog.scroll.verticalScrollBar().maximum(), 0)
+        dialog.scroll.verticalScrollBar().setValue(dialog.scroll.verticalScrollBar().maximum())
+        self.app.processEvents()
+        self.assertTrue(dialog.settings_button.isVisible())
+        self.assertEqual(clipped_widgets(dialog), [])
+        dialog.got_it_button.click()
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), "1.0.7")
+        self.assertFalse(self.controller(version="1.0.7").show_if_needed())
+
+    def test_release_order_and_rollback_suppression_compare_versions_numerically(self):
+        note = RELEASE_NOTES[APP_VERSION]
+        with patch.dict(RELEASE_NOTES, {"1.0.10": note, "1.0.9": note, "1.0.11": note}, clear=True):
+            self.assertEqual(tuple(version for version, _notes in unseen_releases("1.0.10", "1.0.8")),
+                             ("1.0.9", "1.0.10"))
+            self.assertEqual(unseen_releases("1.0.10", "v1.0.10"), ())
+            self.assertEqual(unseen_releases("1.0.10", "1.0.11"), ())
+        self.settings.setValue(SEEN_VERSION_KEY, "1.0.8")
+        self.assertFalse(self.controller(version="1.0.7").show_if_needed())
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), "1.0.8")
+
+    def test_fresh_install_shows_current_and_upgrade_baseline_catches_up(self):
+        controller = self.controller()
+        self.assertTrue(controller.show_if_needed())
+        self.assertEqual(controller.dialog.release_versions, (APP_VERSION,))
+        controller.stop()
+        controller = self.controller(upgrade_from="1.0.2", version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        self.assertEqual(controller.dialog.release_versions,
+                         ("1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7"))
+        controller.stop()
+        controller = self.controller(upgrade_from="0.0.0", version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        self.assertEqual(controller.dialog.release_versions,
+                         ("1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7"))
+
+    def test_saved_acknowledgment_wins_and_invalid_baseline_uses_upgrade_receipt(self):
+        self.settings.setValue(SEEN_VERSION_KEY, "1.0.6")
+        controller = self.controller(upgrade_from="1.0.2", version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        self.assertEqual(controller.dialog.release_versions, ("1.0.7",))
+        controller.stop()
+        self.settings.setValue(SEEN_VERSION_KEY, "not a version")
+        controller = self.controller(upgrade_from="1.0.5", version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        self.assertEqual(controller.dialog.release_versions, ("1.0.6", "1.0.7"))
+        controller.stop()
+        controller = self.controller(upgrade_from="invalid receipt")
+        self.assertTrue(controller.show_if_needed())
+        self.assertEqual(controller.dialog.release_versions, (APP_VERSION,))
+
+    def test_older_release_links_use_that_sections_destination_and_acknowledge_current(self):
+        self.settings.setValue(SEEN_VERSION_KEY, "1.0.2")
+        target = Mock()
+        feature = Mock()
+        controller = self.controller(open_settings_target=target, open_feature=feature, version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        controller.dialog.settings_buttons["1.0.6"].click()
+        target.assert_called_once_with("show_other_groups")
+        self.navigation.assert_not_called()
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), "1.0.7")
+
+        self.settings.setValue(SEEN_VERSION_KEY, "1.0.2")
+        controller = self.controller(open_feature=feature, version="1.0.7")
+        self.assertTrue(controller.show_if_needed())
+        controller.dialog.feature_buttons["1.0.5"].click()
+        feature.assert_called_once_with("triggers")
+        self.assertEqual(self.settings.value(SEEN_VERSION_KEY), "1.0.7")
 
     def test_window_close_is_an_actual_dismissal(self):
         controller = self.controller()
@@ -203,6 +282,18 @@ class WhatsNewTests(unittest.TestCase):
             self.assertLess(image.pixelColor(5, 5).lightness(), 50)
             self.assertEqual(dialog.change_labels[0].palette().color(QPalette.ColorRole.WindowText), QColor(theme.TEXT))
             self.assertEqual(clipped_widgets(dialog), [])
+            catch_up = WhatsNewDialog("1.0.7", RELEASE_NOTES["1.0.7"],
+                                      releases=unseen_releases("1.0.7", "1.0.2"))
+            catch_up.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+            self.extra_windows.append(catch_up)
+            catch_up.resize(580, 430)
+            catch_up.show()
+            self.app.processEvents()
+            self.assertLess(catch_up.scroll.viewport().grab().toImage().pixelColor(2, 2).lightness(), 50)
+            self.assertEqual(clipped_widgets(catch_up), [])
+            catch_up.scroll.verticalScrollBar().setValue(catch_up.scroll.verticalScrollBar().maximum())
+            self.app.processEvents()
+            self.assertEqual(clipped_widgets(catch_up), [])
         finally:
             self.app.setPalette(palette)
             self.app.setStyleSheet(stylesheet)
