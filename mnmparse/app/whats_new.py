@@ -27,6 +27,15 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.7": ReleaseNotes(
+        changes=(
+            "The Revenge pop-out remembers whether it was open, its position and its size after restart.",
+            "Removing a player or guild from the pop-out now asks for confirmation.",
+            "Each list has clipboard copy and import icons. Preview an import, then choose Add.",
+        ),
+        settings_label="Revenge settings",
+        settings_target="revenge_enabled",
+    ),
     "1.0.6": ReleaseNotes(
         changes=(
             "Turn off Show other groups to hide italic names from your combat meters.",

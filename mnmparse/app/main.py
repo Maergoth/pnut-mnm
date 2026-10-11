@@ -1364,6 +1364,8 @@ class App(QApplication):
         self.set_overlay_visible(bool(show_overlay))
         self._sync_overlay_settings()  # Settings > Overlay shows what the overlay really uses
         self.set_map_visible(self.settings.value("map/visible", True, type=bool))
+        if selftest_seconds is None:
+            self.revenge_popout.restore_state()
         if selftest_seconds is None and self.settings.value("map/download_on_startup", False, type=bool):
             QTimer.singleShot(0, self.map_downloads.start)
         if selftest_seconds is None and self.settings.value("app/update_on_startup", False, type=bool):
@@ -2260,7 +2262,7 @@ class App(QApplication):
             log.warning("Revenge List changes could not be saved")
         revenge_popout = self.__dict__.get("revenge_popout")
         if revenge_popout is not None:
-            revenge_popout.close()
+            revenge_popout.shutdown()
         if self.app_updates is not None:
             self.app_updates.shutdown()
         if self.map_downloads is not None:
