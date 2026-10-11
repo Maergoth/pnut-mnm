@@ -84,7 +84,7 @@ class SnapshotCacheTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
-    def test_legacy_mez_archive_keeps_unknown_history_when_new_attribution_arrives(self) -> None:
+    def test_legacy_mez_archive_preserves_targets_without_assigning_new_breakers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SessionArchive(Path(directory) / "sessions.sqlite3")
             session = SessionStats(PLAYER, started=100)
@@ -107,11 +107,11 @@ class ArchiveTests(unittest.TestCase):
                              (111, "You crush a skeleton for 8 points of damage."), (111.2, "a skeleton awakens.")):
                 restored.add(parse_line(text, ts, PLAYER))
             snap = restored.snapshot(now=120)
-            self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 1))
-            self.assertEqual(snap.mez_breaks_by_breaker, [(PLAYER, 1)])
-            self.assertEqual(snap.mez_break_details, [(101.0, "a rat", None), (111.2, "a skeleton", PLAYER)])
+            self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 2))
+            self.assertEqual(snap.mez_breaks_by_breaker, [])
+            self.assertEqual(snap.mez_break_details, [(101.0, "a rat", None), (111.2, "a skeleton", None)])
 
-    def test_mez_attribution_survives_disk_recovery_and_bounded_preview(self) -> None:
+    def test_mez_targets_survive_disk_recovery_and_old_guesses_are_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SessionArchive(Path(directory) / "sessions.sqlite3")
             session = SessionStats(PLAYER, started=100)
@@ -124,14 +124,25 @@ class ArchiveTests(unittest.TestCase):
             restored = store.restore("first")
             self.assertIsInstance(restored._mez_break_entries, DiskDetails)
             restored.add(parse_line("Tovozen slashes a skeleton for 8 points of damage.", 111.2, PLAYER))
+            restored._mez_break_entries[0] = (101.2, "a rat", PLAYER)
+            restored._mez_break_entries[1] = (111.0, "a skeleton", "Tovozen")
             store.save_session("first", restored)
+            with closing(sqlite3.connect(store.path)) as db, db:
+                state, preview = db.execute("SELECT state,preview FROM sessions WHERE id='first'").fetchone()
+                state, preview = json.loads(state), json.loads(preview)
+                state["_mez_break_counts"] = {PLAYER: 1, "Tovozen": 1}
+                preview["mez_breaks_by_breaker"] = [[PLAYER, 1], ["Tovozen", 1]]
+                preview["mez_breaks_unknown"] = 0
+                preview["mez_break_details"] = [[101.2, "a rat", PLAYER], [111.0, "a skeleton", "Tovozen"]]
+                db.execute("UPDATE sessions SET state=?,preview=? WHERE id='first'", (json.dumps(state), json.dumps(preview)))
             preview = store.preview("first", detail_limit=1)
             self.assertEqual(preview.mez_breaks_total, 2)
-            self.assertEqual(dict(preview.mez_breaks_by_breaker), {PLAYER: 1, "Tovozen": 1})
-            self.assertEqual(preview.mez_break_details, [(111.0, "a skeleton", "Tovozen")])
+            self.assertEqual(preview.mez_breaks_by_breaker, [])
+            self.assertEqual(preview.mez_break_details, [(111.0, "a skeleton", None)])
             full = store.restore("first").snapshot(now=120)
-            self.assertEqual(full.mez_breaks_unknown, 0)
-            self.assertEqual(full.mez_break_details, [(101.2, "a rat", PLAYER), (111.0, "a skeleton", "Tovozen")])
+            self.assertEqual(full.mez_breaks_unknown, 2)
+            self.assertEqual(full.mez_breaks_by_breaker, [])
+            self.assertEqual(full.mez_break_details, [(101.2, "a rat", None), (111.0, "a skeleton", None)])
 
     def test_disk_details_and_wrapped_coin_split_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

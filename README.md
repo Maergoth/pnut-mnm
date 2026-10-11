@@ -6,7 +6,7 @@ EverQuest-style log and a stream of parsed events, and shows live DPS, healing, 
 a crowd-control score, and session loot in a translucent overlay and a desktop window. It also provides configurable
 trigger timers and a resizable map overlay that follows your current zone.
 
-**v1.0.10 starts in Carebear Mode:** your own performance and eligible group averages,
+**v1.0.11 starts in Carebear Mode:** your own performance and eligible group averages,
 with individual groupmate breakdowns hidden. Guided setup, saved session history,
 capture profiles, preference backups and an optional PvP Revenge List are included.
 
@@ -97,7 +97,7 @@ Read this before using it.
 
 **Download (recommended).** On the repository's
 [Releases page](https://github.com/Maergoth/pnut-mnm/releases), download
-`PNUT-MnM-1.0.10-windows.zip`, unzip it into a folder you can write to (for example
+`PNUT-MnM-1.0.11-windows.zip`, unzip it into a folder you can write to (for example
 `Documents\PNUT M&M`, not `Program Files`), and run `PNUT M&M.exe`. The app is not
 code-signed, so the first time Windows SmartScreen may say "Windows protected your PC": click
 **More info**, then **Run anyway**. First launch opens setup; capture starts after you save
@@ -275,9 +275,8 @@ past without being captured cannot be recovered.
   (a split line that wrapped onto a second row is joined to its loot), kills by mob type,
   deaths (yours and your party's; see "Encounters" below), crafted items (your party's only;
   other players' crafts are listed in the tooltip), quest rewards (kept out of the loot
-  count), zones entered and expandable mez-break counts per person. A single nearby hit
-  on an observed mesmerized target identifies a likely breaker; uncertain breaks remain
-  separate. Carebear Mode shows your own counts. Session also shows time in combat and
+  count), zones entered and mez-break targets with times. The combat log does not name
+  who broke mez, so this list does not assign breaks to players. Session also shows time in combat and
   hourly rates. The party is the same roster the meter uses. Hovering a category
   or an item shows the detail. "Mine only" (and the overlay's self view) keeps just your own
   loot, coin, kills, deaths and crafts; there the coin row is "Coin received", what you
@@ -306,16 +305,23 @@ since covered lines cannot be recovered. You can also configure it in Settings.
 With **Separate stats region** off, the panel can be detected inside the chat crop; its stat text
 is kept out of chat parsing. Labels and values are paired by screen position, so their
 order in the OCR result list does not matter.
+An unreadable HP value does not stop a separately recognized XP bar from being tracked.
+The stats region is read at 1.5× size, or your configured OCR scale if higher, for clearer
+HP readings. XP-bar measurements still use the original color pixels.
 Two fresh HP readings below your chosen threshold can sound an alert and briefly flash
 red screen edges. The threshold defaults to **10%**. Choose the threshold, sound, volume
 and flash in the same section; **Preview sound** plays the selected tone and volume.
 
 Session estimates **XP/hour** by comparing stable bar readings about five minutes apart.
 Yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
-The footer shows the rate after the first complete interval. These are XP-bar percentage
-points, not exact XP numbers. Missing or unclear readings reset the current comparison;
-earlier measured totals remain. A detected own level-up confirms a bar wrap. Log imports
-cannot supply bar measurements.
+The footer uses a time-weighted rolling average of the last **15 minutes**, starting with
+the first gaining interval so earlier idle time does not dilute it. Breaks after gains lower
+the estimate; after 15 minutes without gains, the next gaining interval starts a fresh rate.
+These are XP-bar percentage points, not exact XP numbers. The first rate appears after a
+complete five-minute comparison. Brief OCR misses are tolerated within the capture cadence;
+longer gaps, a changed region or pausing reset the recent window. Earlier measured totals
+remain. A detected own level-up confirms a bar wrap. Log imports
+cannot supply bar measurements. Older archived averages are labeled **XP session**.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring
@@ -325,7 +331,7 @@ entries. Logs and images are excluded. Restore always returns to Carebear Mode
 and keeps the current local log folder.
 
 The **overlay** has tabs Overview, Damage, Healing, Taken, Session and Feed, plus Revenge
-when Revenge List is enabled. **Locked** means
+when Revenge List is enabled. New setups start unlocked. **Locked** means
 it cannot be moved or resized; tabs, column sorting and hover breakdowns keep working. Unlocked
 (top-bar switch or tray menu), a hover toolbar appears: drag the header to move, use the grip
 to resize, set opacity and font size. **Click the header** to switch between the group table
@@ -598,7 +604,8 @@ under **Settings > Revenge List**. By default, notifications last four seconds a
 must be absent from the log for 30 seconds before alerting again. Display limits do not
 exclude names from alerts. Trigger master volume and mute also apply.
 
-**Map overlay.** The separate always-on-top map opens by default on a fresh install. After
+**Map overlay.** The separate always-on-top map opens unlocked at the top-left of the
+primary screen's available area on a fresh install. After
 that, PNUT remembers whether you left it open or closed. Click **Map** in the top bar to
 show or hide it. The selected zone and map, window size and position, fullscreen state,
 zoom and pan are restored when you return.

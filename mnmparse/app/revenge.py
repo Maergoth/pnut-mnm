@@ -33,6 +33,11 @@ MAX_STORAGE_BYTES = 8 * 1024 * 1024
 MAX_TIMESTAMP = 253402300799
 _ATTACKS = frozenset({"melee_hit", "ability_hit", "ability_partial", "melee_miss", "ability_miss"})
 _NAME = re.compile(r"[A-Za-z]{1,64}\Z", re.ASCII)
+_SUBJECT_ACTION = re.compile(
+    r"\s+(?:attacks?|hits?|heals?|casts?|begins?|tries|try|misses|miss|"
+    r"slashes?|crush(?:es)?|pierces?|bashes?|kicks?|bites?|smashes?|"
+    r"shoots?|fires?|strikes?|resists?|takes?|loots?|says?|"
+    r"is|are|has|have|awakens?|appears?|dies|falls?)\b")
 
 
 def plausible_attacker(name: object, player_name: str = "") -> bool:
@@ -45,17 +50,14 @@ def _valid_saved_name(name: object) -> bool:
     return isinstance(name, str) and bool(name.strip()) and len(name) <= MAX_NAME_LENGTH
 
 
-def _contains_name(text: str, name: str) -> bool:
-    """Match literal, folded names without treating substrings as people."""
-    start = text.find(name)
-    while start >= 0:
-        end = start + len(name)
-        before = text[start - 1] if start else ""
-        after = text[end] if end < len(text) else ""
-        if not (before.isalnum() or before == "_" or after.isalnum() or after == "_"):
-            return True
-        start = text.find(name, start + 1)
-    return False
+def _subject_name(text: str, name: str) -> bool:
+    """Recognize a literal leading subject in an otherwise unreadable line."""
+    if not text.startswith(name):
+        return False
+    following = text[len(name):]
+    if following.startswith(("'s ", "’s ", "'s\t", "’s\t")):
+        return bool(following[3:].strip())
+    return _SUBJECT_ACTION.match(following) is not None
 
 
 @dataclass(frozen=True)
@@ -254,7 +256,9 @@ class RevengeController(QObject):
     def observe_saved(self, event_or_text: Any, now: float | None = None, *, text: str = "") -> tuple[str, ...]:
         """Alert once on appearance, then only after this name has gone quiet.
 
-        Matching uses every saved name, independently of display limits and
+        Parsed participant names match exactly; unreadable lines may match a
+        leading subject. Item names, skills and later mentions are not sightings.
+        Every saved name is eligible, independently of display limits and
         automatic recruitment. Repeated combat lines refresh the quiet interval
         without restarting the visible notification or sounding again.
         """
@@ -262,11 +266,12 @@ class RevengeController(QObject):
             return ()
         event = event_or_text
         source = event if isinstance(event, str) else text or getattr(event, "text", "")
-        source = source.casefold() if isinstance(source, str) else ""
-        participants = {name.casefold() for field in ("actor", "raw_actor", "target")
+        source = source.casefold().lstrip() if isinstance(source, str) else ""
+        participants = {name.casefold() for field in ("actor", "raw_actor", "target", "raw_target")
                         if isinstance(name := getattr(event, field, None), str)}
+        unreadable = (isinstance(event, str) or getattr(event, "kind", "unknown") == "unknown") and not participants
         keys = [key for key, entry in self._saved.items() if entry.kind == "Player"
-                and (key in participants or _contains_name(source, entry.name.casefold()))]
+                and (key in participants or unreadable and _subject_name(source, entry.name.casefold()))]
         if not keys:
             return ()
         activity_now = self._clock()
@@ -796,7 +801,7 @@ class RevengeList(QFrame):
         self._dates: dict[str | tuple[str, str], QLabel] = {}
         self._labels: dict[str | tuple[str, str], ElidedLabel] = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(12, 4 if minimal else 10, 12, 10)
         columns = QHBoxLayout()
         columns.setContentsMargins(0, 0, 0, 0)
         columns.setSpacing(12)
@@ -860,6 +865,8 @@ class RevengeList(QFrame):
                 controls.addWidget(button)
             controls.addStretch(1)
             column.addLayout(controls)
+            if column is guild_layout:
+                self._guild_header_controls = controls
         player_layout.addWidget(self.status)
         guild_layout.addWidget(self.guild_status)
         if not minimal:
@@ -1065,7 +1072,7 @@ class RevengePopoutWindow(QWidget):
         self._restored = False
         self._closing = False
         self._wanted_visible = settings.value("revenge/visible", False, type=bool) if settings is not None else False
-        self._locked = True
+        self._locked = False
         self._drag: QPoint | None = None
         self._opacity = 0.85
         self._font_scale = 1.0
@@ -1101,7 +1108,7 @@ class RevengePopoutWindow(QWidget):
         self.setMinimumSize(240, 200)
         self.resize(460, 380)
         cfg = controller._cfg
-        locked = bool(getattr(cfg, "overlay_locked", True))
+        locked = bool(getattr(cfg, "overlay_locked", False))
         opacity = float(getattr(cfg, "overlay_opacity", 0.85))
         font_scale = float(getattr(cfg, "overlay_font_scale", 1.0))
         if settings is not None:
@@ -1193,8 +1200,10 @@ class RevengePopoutWindow(QWidget):
         self.setMinimumWidth(min(minimum, area.width()) if area is not None else minimum)
 
     def _position_chrome(self) -> None:
-        # A narrow, stable strip leaves the close control clear of both columns.
-        self.layout().setContentsMargins(2, self.close_button.height() + 4, 2, 8)
+        # Share the heading row with Close, reserving space only in its header.
+        # The name rows retain the full width and do not need a blank top strip.
+        self.layout().setContentsMargins(2, 2, 2, 8)
+        self.list._guild_header_controls.setContentsMargins(0, 0, self.close_button.width() + 6, 0)
         self.layout().activate()
         self.close_button.move(self.width() - self.close_button.width() - 4, 2)
         self.close_button.raise_()
@@ -1204,8 +1213,10 @@ class RevengePopoutWindow(QWidget):
         self._grip.raise_()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        header_bottom = max(button.mapTo(self, QPoint()).y() + button.height()
+                            for button in (self.list.export_button, self.list.guild_export_button)) + 4
         if (not self._locked and event.button() == Qt.MouseButton.LeftButton
-                and event.position().y() < self.layout().contentsMargins().top()):
+                and event.position().y() < header_bottom):
             self._drag = event.globalPosition().toPoint() - self.pos()
             event.accept()
         else:

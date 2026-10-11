@@ -415,12 +415,11 @@ class LiveOverlaySettingsTests(unittest.TestCase):
             settings = QSettings(str(Path(tmp) / "o.ini"), QSettings.Format.IniFormat)
             overlay = OverlayWindow(settings, Config())
             try:
-                self.assertTrue(overlay.locked)
-                self.assertEqual(overlay._header.cursor().shape(), Qt.CursorShape.ArrowCursor)
-                overlay.set_locked(False)
+                self.assertFalse(overlay.locked)
                 self.assertEqual(overlay._header.cursor().shape(), Qt.CursorShape.SizeAllCursor)
                 self.assertEqual(overlay.attack_bar.cursor().shape(), Qt.CursorShape.SizeAllCursor)
                 overlay.set_locked(True)
+                self.assertEqual(overlay._header.cursor().shape(), Qt.CursorShape.ArrowCursor)
                 self.assertEqual(overlay.attack_bar.cursor().shape(), Qt.CursorShape.ArrowCursor)
             finally:
                 overlay.close()

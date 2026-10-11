@@ -36,7 +36,7 @@ def feed(session: SessionStats) -> None:
 
 
 class SessionTests(unittest.TestCase):
-    def test_mez_breaks_link_damage_in_either_chat_order(self) -> None:
+    def test_mez_breaks_record_targets_without_guessing_from_nearby_damage(self) -> None:
         session = SessionStats(PLAYER, started=0)
         for ts, text in (
                 (1, "a rat is mesmerized."),
@@ -47,97 +47,15 @@ class SessionTests(unittest.TestCase):
                 (11.2, "Povebizu slashes a skeleton for 8 points of damage.")):
             session.add(parse_line(text, ts, PLAYER))
         snap = session.snapshot(now=12)
-        self.assertEqual(dict(snap.mez_breaks_by_breaker), {PLAYER: 1, "Povebizu": 1})
-        self.assertEqual(snap.mez_break_details, [(2.2, "a rat", PLAYER), (11.0, "a skeleton", "Povebizu")])
-        self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 0))
+        self.assertEqual(snap.mez_breaks_by_breaker, [])
+        self.assertEqual(snap.mez_break_details, [(2.2, "a rat", None), (11.0, "a skeleton", None)])
+        self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 2))
         from mnmparse.config import Config
         from mnmparse.privacy import project_session
         self.assertEqual(project_session(snap, Config(player_name=PLAYER)).mez_break_details,
-                         [(2.2, "a rat", PLAYER)], "Carebear retains your own NPC details")
+                         snap.mez_break_details, "Carebear retains shared target/time events")
 
-    def test_mez_breaks_without_unambiguous_evidence_remain_unattributed(self) -> None:
-        cases = {
-            "missing mez": [(2, "You crush a rat for 20 points of damage."), (2.2, "a rat awakens.")],
-            "several actors": [(1, "a rat is mesmerized."), (2, "You crush a rat for 20 points of damage."),
-                               (2.1, "Povebizu slashes a rat for 8 points of damage."), (2.2, "a rat awakens.")],
-            "old damage": [(1, "a rat is mesmerized."), (2, "You crush a rat for 20 points of damage."),
-                           (8, "a rat awakens.")],
-            "expiry before": [(1, "a rat is mesmerized."), (2, "You crush a rat for 20 points of damage."),
-                              (2.1, "a rat is no longer mesmerized."), (2.2, "a rat awakens.")],
-            "expiry after": [(1, "a rat is mesmerized."), (2, "You crush a rat for 20 points of damage."),
-                             (2.1, "a rat awakens."), (2.2, "a rat is no longer mesmerized.")],
-            "zero damage": [(1, "a rat is mesmerized."), (2, "You crush a rat for 0 points of damage."),
-                            (2.2, "a rat awakens.")],
-            "different target": [(1, "a rat is mesmerized."), (2, "You crush a skeleton for 20 points of damage."),
-                                 (2.2, "a rat awakens.")],
-        }
-        for reason, lines in cases.items():
-            with self.subTest(reason=reason):
-                session = SessionStats(PLAYER, started=0)
-                for ts, text in lines:
-                    session.add(parse_line(text, ts, PLAYER))
-                snap = session.snapshot(now=10)
-                self.assertEqual(snap.mez_breaks_by_breaker, [])
-                self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (1, 1))
-                self.assertIsNone(snap.mez_break_details[0][2])
-
-    def test_late_second_attacker_removes_uncertain_mez_attribution(self) -> None:
-        session = SessionStats(PLAYER, started=0)
-        for ts, text in ((1, "a rat is mesmerized."), (2, "a rat awakens."),
-                         (2.1, "You crush a rat for 20 points of damage.")):
-            session.add(parse_line(text, ts, PLAYER))
-        before = session.snapshot(now=3)
-        self.assertEqual(before.mez_breaks_by_breaker, [(PLAYER, 1)])
-        session.add(parse_line("Povebizu slashes a rat for 8 points of damage.", 2.2, PLAYER))
-        after = session.snapshot(now=3)
-        self.assertGreater(after.revision, before.revision)
-        self.assertEqual(after.mez_breaks_by_breaker, [])
-        self.assertEqual(after.mez_breaks_unknown, 1)
-        self.assertEqual(before.mez_breaks_by_breaker, [(PLAYER, 1)], "Published snapshots remain unchanged")
-
-    def test_uncertain_second_damage_actor_keeps_mez_break_unattributed_in_either_order(self) -> None:
-        for flag in ("estimated", "estimated_ts"):
-            for after_awakening in (False, True):
-                with self.subTest(flag=flag, after_awakening=after_awakening):
-                    session = SessionStats(PLAYER, started=0)
-                    session.add(parse_line("a rat is mesmerized.", 1, PLAYER))
-                    session.add(parse_line("You crush a rat for 20 points of damage.", 2, PLAYER))
-                    awaken = parse_line("a rat awakens.", 2.1 if after_awakening else 2.3, PLAYER)
-                    uncertain = replace(parse_line("Povebizu slashes a rat for 8 points of damage.",
-                                                   2.2, PLAYER), **{flag: True})
-                    for event in ((awaken, uncertain) if after_awakening else (uncertain, awaken)):
-                        session.add(event)
-                    snap = session.snapshot(now=3)
-                    self.assertEqual(snap.mez_breaks_by_breaker, [])
-                    self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (1, 1))
-                    self.assertEqual(snap.mez_break_details, [(awaken.ts, "a rat", None)])
-
-    def test_mez_breaks_credit_known_pet_owner_and_carebear_preserves_own_pet_details(self) -> None:
-        from mnmparse.config import Config
-        from mnmparse.party import PartyRoster
-        from mnmparse.privacy import project_session
-
-        for label, line, owner, expected in (
-                ("explicit own pet", "Your pet Fluffy crushes a rat for 8 points of damage.", None, PLAYER),
-                ("assigned own pet", "a summoned wolf crushes a rat for 8 points of damage.", PLAYER, PLAYER),
-                ("assigned peer pet", "a summoned wolf crushes a rat for 8 points of damage.", "Povebizu", "Povebizu"),
-                ("unassigned NPC", "a summoned wolf crushes a rat for 8 points of damage.", None, None)):
-            with self.subTest(pet=label):
-                roster = PartyRoster(PLAYER)
-                if owner:
-                    roster.set_pet_owner("a summoned wolf", owner)
-                session = SessionStats(PLAYER, started=0, roster=roster)
-                for ts, text in ((1, "a rat is mesmerized."), (2, line), (2.2, "a rat awakens.")):
-                    session.add(parse_line(text, ts, PLAYER))
-                snap = session.snapshot(now=3)
-                self.assertEqual(snap.mez_break_details, [(2.2, "a rat", expected)])
-                self.assertEqual(snap.mez_breaks_by_breaker, [(expected, 1)] if expected else [])
-                safe = project_session(snap, Config(player_name=PLAYER))
-                self.assertEqual(safe.mez_break_details,
-                                 [(2.2, "a rat", expected)] if expected in (None, PLAYER) else [])
-                self.assertNotIn("Povebizu", str(safe))
-
-    def test_bounded_mez_details_keep_full_own_counts_and_carebear_hides_peers(self) -> None:
+    def test_bounded_mez_details_keep_full_target_count_in_all_modes(self) -> None:
         from mnmparse.config import Config
         from mnmparse.privacy import project_session
 
@@ -151,14 +69,14 @@ class SessionTests(unittest.TestCase):
         session.add(parse_line("a skeleton awakens.", 90, PLAYER))
         snap = session.snapshot(now=100, detail_limit=2)
         self.assertEqual((snap.mez_breaks_total, len(snap.mez_break_details)), (9, 2))
-        self.assertEqual(dict(snap.mez_breaks_by_breaker), {PLAYER: 5, "Povebizu": 3})
+        self.assertEqual(snap.mez_breaks_by_breaker, [])
         mine = filter_session(snap, PLAYER)
-        self.assertEqual(mine.mez_breaks_by_breaker, [(PLAYER, 5)])
-        self.assertEqual((mine.mez_breaks_total, mine.mez_breaks_unknown), (6, 1))
+        self.assertEqual(mine.mez_breaks_by_breaker, [])
+        self.assertEqual((mine.mez_breaks_total, mine.mez_breaks_unknown), (9, 9))
         safe = project_session(snap, Config(player_name=PLAYER))
-        self.assertEqual(safe.mez_breaks_by_breaker, [(PLAYER, 5)])
-        self.assertEqual(safe.mez_breaks_total, 6)
-        self.assertTrue(all(actor in (None, PLAYER) for _ts, _mob, actor in safe.mez_break_details))
+        self.assertEqual(safe.mez_breaks_by_breaker, [])
+        self.assertEqual(safe.mez_breaks_total, 9)
+        self.assertTrue(all(actor is None for _ts, _mob, actor in safe.mez_break_details))
         self.assertNotIn("Povebizu", str(safe))
 
     def test_counts(self) -> None:

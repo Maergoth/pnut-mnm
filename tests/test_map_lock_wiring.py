@@ -145,6 +145,7 @@ class MapLockWiringTests(unittest.TestCase):
 
     def test_fresh_install_opens_map_and_quit_keeps_open_preference(self):
         host = self.bootstrap()
+        self.assert_locked(False)
         self.assertTrue(host.map_overlay.isVisible())
         self.assertTrue(host.window._map_button.isChecked())
         host.shutdown()
@@ -197,6 +198,8 @@ class MapLockWiringTests(unittest.TestCase):
 
     def test_main_tray_settings_and_combat_header_share_the_lock(self):
         host = self.bootstrap()
+        host.window._lock_switch.setChecked(True)
+        self.assert_locked(True)
         host.window._lock_switch.setChecked(False)
         self.assert_locked(False)
         host.tray._lock_action.trigger()

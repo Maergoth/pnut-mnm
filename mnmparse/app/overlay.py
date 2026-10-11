@@ -891,7 +891,7 @@ class OverlayWindow(QWidget):
         self._pending: Any | None = None
         self._pending_set = False
         self._ended = False
-        self._locked = True
+        self._locked = False
         self._click_through = False
         self._view_mode = "group"
         self._opacity = 0.85
@@ -1546,7 +1546,7 @@ class OverlayWindow(QWidget):
         s = self._settings
         g = f"{SETTINGS_GROUP}/"
         cfg = self._cfg
-        self._locked = bool(s.value(g + "locked", bool(getattr(cfg, "overlay_locked", True)), type=bool))
+        self._locked = bool(s.value(g + "locked", bool(getattr(cfg, "overlay_locked", False)), type=bool))
         self._click_through = bool(s.value(g + "click_through", bool(getattr(cfg, "overlay_click_through", False)), type=bool))
         self._view_mode = "self" if str(s.value(g + "view_mode", "group")) == "self" else "group"
         self._opacity = _clamp(float(s.value(g + "opacity", float(getattr(cfg, "overlay_opacity", 0.85)), type=float)), *OPACITY_RANGE)

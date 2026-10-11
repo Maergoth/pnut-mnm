@@ -468,6 +468,10 @@ class RevengeOverlayTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(popout.width(), 240)
         self.assertTrue(popout.rect().contains(popout.close_button.geometry()))
+        self.assertLessEqual(popout.list.export_button.mapTo(popout, QPoint()).y(), 12,
+                             "List headings should share the close row instead of wasting a top strip")
+        self.assertLessEqual(popout.list.rows_scroll.mapTo(popout, QPoint()).y(), 36,
+                             "The compact header should leave more height for saved names")
         for control in (popout.list.export_button, popout.list.add_button,
                         popout.list.guild_export_button, popout.list.guild_add_button):
             self.assertTrue(control.parentWidget().rect().contains(control.geometry()),

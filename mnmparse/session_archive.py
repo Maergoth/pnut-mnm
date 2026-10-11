@@ -286,6 +286,12 @@ class SessionArchive:
         size = max(0, int(detail_limit))
         if "player_status" in data:
             data["player_status"] = _copy_player_status(data["player_status"])
+        # Older previews may contain inferred breakers; keep only observed targets/times.
+        data["mez_breaks_by_breaker"] = []
+        data["mez_breaks_total"] = data.get("mez_breaks_total", len(data.get("mez_breaks", [])))
+        data["mez_breaks_unknown"] = data["mez_breaks_total"]
+        if "mez_break_details" in data:
+            data["mez_break_details"] = [(ts, mob, None) for ts, mob, _actor in data["mez_break_details"]]
         for field in ("loot", "rewards", "recent", "mez_breaks", "kill_entries", "craft_entries", "mez_break_details"):
             if field in data:
                 data[field] = data[field][-size:] if size else []

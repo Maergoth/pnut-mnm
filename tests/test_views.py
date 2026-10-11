@@ -122,7 +122,7 @@ class QtViewTests(unittest.TestCase):
         self.assertTrue(items.isExpanded())
         self.assertEqual(items.data(0, Qt.ItemDataRole.UserRole), "items")
 
-    def test_mez_tree_groups_expandable_people_and_preserves_full_private_counts(self) -> None:
+    def test_mez_tree_lists_targets_and_times_without_individual_breaker_counts(self) -> None:
         from PySide6.QtCore import Qt
         from mnmparse.app.session_view import SessionView
         from mnmparse.config import Config
@@ -148,21 +148,17 @@ class QtViewTests(unittest.TestCase):
 
                 top = mez()
                 self.assertEqual(top.text(1), "5")
-                people = {top.child(i).text(0): top.child(i) for i in range(top.childCount())}
-                self.assertEqual({name: row.text(1) for name, row in people.items()},
-                                 {PLAYER: "3", "Povebizu": "1", "Unknown / natural fade": "1"})
-                self.assertEqual(people[PLAYER].child(0).text(0), "3 older breaks")
-                peer = people["Povebizu"]
-                self.assertEqual(peer.child(0).text(0), "a rat")
-                self.assertTrue(peer.child(0).text(2))
-                peer.setExpanded(True)
+                self.assertEqual([top.child(i).text(0) for i in range(top.childCount())],
+                                 ["a rat", "a skeleton"])
+                self.assertTrue(all(top.child(i).text(2) for i in range(top.childCount())))
+                self.assertTrue(all(top.child(i).childCount() == 0 for i in range(top.childCount())))
+                top.setExpanded(True)
                 view.set_snapshot(snap)
-                self.assertTrue(next(mez().child(i) for i in range(mez().childCount())
-                                     if mez().child(i).text(0) == "Povebizu").isExpanded())
+                self.assertTrue(mez().isExpanded())
                 view.set_config(Config(player_name=PLAYER))
-                self.assertEqual(mez().text(1), "4")
+                self.assertEqual(mez().text(1), "5")
                 self.assertEqual([mez().child(i).text(0) for i in range(mez().childCount())],
-                                 [PLAYER, "Unknown / natural fade"])
+                                 ["a rat", "a skeleton"])
                 view.close()
                 view.deleteLater()
 
@@ -175,7 +171,7 @@ class QtViewTests(unittest.TestCase):
         settings = QSettings("mnmparse", "MnM Parser-tests")
         settings.clear()
         overlay = OverlayWindow(settings, Config())
-        self.assertTrue(overlay.locked)
+        self.assertFalse(overlay.locked)
         self.assertFalse(overlay.click_through)
         self.assertFalse(bool(overlay.windowFlags() & Qt.WindowType.WindowTransparentForInput))
         overlay.set_click_through(True)

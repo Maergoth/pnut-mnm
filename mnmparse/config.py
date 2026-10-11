@@ -69,7 +69,7 @@ class Config:
         stats_interval_s: Seconds between console stats tables.
         overlay_enabled: Show the in-game overlay window when the app starts.
         overlay_opacity: Background alpha of the overlay panel, 0.0 to 1.0.
-        overlay_locked: Overlay starts click-through (locked) when ``True``.
+        overlay_locked: Prevent moving/resizing when ``True``; starts unlocked by default.
         overlay_font_scale: Multiplier applied to the overlay's base font size.
         overlay_tab: Overlay tab shown at start: ``"damage"``, ``"healing"``,
             ``"taken"`` or ``"feed"``.
@@ -111,7 +111,7 @@ class Config:
     stats_interval_s: float = 5.0
     overlay_enabled: bool = False
     overlay_opacity: float = 0.85
-    overlay_locked: bool = True
+    overlay_locked: bool = False
     overlay_font_scale: float = 1.0
     overlay_tab: str = "damage"
     start_capture_on_launch: bool = True

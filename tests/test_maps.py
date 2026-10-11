@@ -121,9 +121,11 @@ class MapWindowTests(unittest.TestCase):
 
     def test_frameless_header_has_equal_selectors_and_does_not_resize_map(self):
         from PySide6.QtCore import QPoint, Qt
+        self.assertFalse(self.window.locked)
         self.window.resize(720, 480)
         self.window.show()
         self.app.processEvents()
+        self.assertEqual(self.window.pos(), self.app.primaryScreen().availableGeometry().topLeft())
         self.assertTrue(self.window.windowFlags() & Qt.WindowType.FramelessWindowHint)
         viewport = self.window.view.viewport().size()
         self.window._show_header()

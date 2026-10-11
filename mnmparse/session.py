@@ -26,6 +26,7 @@ from typing import Any
 from .grammar import Event, is_npc_name, is_you
 from .interrupts import CC_CATEGORIES
 from .party import PartyRoster
+from .player_telemetry import XP_RATE_WINDOW
 from .stats import canonical_names
 from .vocab import Vocabulary
 
@@ -45,6 +46,15 @@ def _copy_player_status(summary: Any) -> dict[str, Any]:
     """Copy own-XP measurements; HP alerts have no session metrics."""
     if not isinstance(summary, dict):
         return {}
+
+    def valid_number(value: Any) -> bool:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
+
     copied = {}
     for key in PLAYER_STATUS_FIELDS:
         if key not in summary:
@@ -52,18 +62,35 @@ def _copy_player_status(summary: Any) -> dict[str, Any]:
         value = summary[key]
         if value is None:
             copied[key] = None
-        elif isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+        elif valid_number(value) and value >= 0:
             if key != "xp_percent" or value <= 100:
                 copied[key] = value
+    if not copied:
+        return copied
+    if summary.get("xp_rate_kind") != "rolling":
+        # Older archives measured the entire observed session. Preserve that
+        # historical rate, but never label it as a current rolling estimate.
+        copied["xp_rate_kind"] = "session"
+        return copied
+    copied["xp_rate_kind"] = "rolling"
+    copied["xp_rate_window_seconds"] = XP_RATE_WINDOW
+    copied["xp_rate_gain_points"] = 0.0
+    copied["xp_rate_observed_seconds"] = 0.0
+    copied["xp_points_per_hour"] = None
+    window = summary.get("xp_rate_window_seconds")
+    gain = summary.get("xp_rate_gain_points")
+    seconds = summary.get("xp_rate_observed_seconds")
+    if (valid_number(window) and window == XP_RATE_WINDOW and valid_number(gain) and gain >= 0
+            and valid_number(seconds) and 0 <= seconds <= window and (seconds > 0 or gain == 0)):
+        rate = gain * 3600.0 / seconds if seconds else None
+        if rate is None or math.isfinite(rate):
+            copied["xp_rate_gain_points"] = gain
+            copied["xp_rate_observed_seconds"] = seconds
+            copied["xp_points_per_hour"] = round(rate, 6) if rate is not None else None
     return copied
 #: A wrapped "N copper coins from X's corpse as your split." line belongs to a coin loot at most
 #: this many seconds before it (the two halves were always read in the same second).
 COIN_SPLIT_JOIN_S = 5.0
-# Damage and awakening lines can be read in either order within one capture batch.
-# Longer gaps do not establish who broke the effect.
-MEZ_DAMAGE_LINK_S = 2.0
-# Uncertain damaging evidence prevents assigning a nearby break to a named actor.
-_MEZ_UNCERTAIN_ACTOR = "\0"
 
 
 def format_coin(copper: int) -> str:
@@ -198,8 +225,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     The coin is what the viewer received (``coin_received``: their splits, plus their own
     loots without a split), which is also what coin per hour is worked out from; the gross
     coin they looted themselves is one detail row, ``(LOOTED_BY_YOU, copper)``, in
-    ``coin_by_looter``. Zones and unattributed awakenings stay shared; attributed mez
-    breaks retain only the viewer's own counts and details.
+    ``coin_by_looter``. Zones and awakenings stay shared; the log does not name mez breakers.
     """
     player = player or "You"
     loot = [e for e in snap.loot if e.looter == player]
@@ -294,10 +320,6 @@ class SessionStats:
         self._zones: list[str] = []
         self._mez_breaks: list[tuple[float, str]] = []
         self._mez_break_entries: list[tuple[float, str, str | None]] = []
-        self._mez_break_counts: Counter[str] = Counter()
-        self._mez_active: dict[str, float] = {}
-        self._mez_hits: dict[str, dict[str, float]] = {}
-        self._mez_pending: dict[str, dict[str, Any]] = {}
         self._kill_entries: list[tuple[float, str | None, str]] = []
         #: every craft line, the party's and other players' (told apart in the snapshot)
         self._craft_entries: list[tuple[float, str, str, int]] = []
@@ -375,8 +397,6 @@ class SessionStats:
         if self.roster is None:
             self._local_roster.observe(ev)
         kind = ev.kind
-        if self._observe_mez(ev):
-            self._version += 1
         if kind == "loot" and ev.item:
             looter = self._name(ev.actor) or "?"
             self._loot.append(LootEntry(ev.ts, looter, ev.item, ev.target))
@@ -456,103 +476,10 @@ class SessionStats:
         self._version += 1
 
     # ------------------------------------------------------------------
-    def _mez_key(self, name: str) -> str:
-        if self.vocab is not None:
-            name = self.vocab.canonical("npc" if is_npc_name(name) else "player", name) or name
-        return name.casefold()
-
-    def _observe_mez(self, ev: Event) -> bool:
-        """Link only observed mez plus nearby unambiguous damaging chat evidence."""
-        if ev.kind == "zone":
-            self._mez_active.clear()
-            self._mez_hits.clear()
-            self._mez_pending.clear()
-            return False
-        damage = ev.kind in {"melee_hit", "ability_hit"}
-        if not (damage or ev.kind in {"kill", "awaken"} or ev.kind in {"cc", "cc_fade"} and ev.outcome == "mez"):
-            return False
-        if damage and not self._mez_active and not self._mez_pending:
-            return False
-        ts = float(ev.ts)
-        if self._mez_pending:
-            self._mez_pending = {key: entry for key, entry in self._mez_pending.items()
-                                 if ts - entry["ts"] <= MEZ_DAMAGE_LINK_S}
-        if ev.kind == "awaken":
-            return False
-        if damage and (not self._mez_active and not self._mez_pending
-                       or ev.amount is not None and ev.amount <= 0):
-            return False
-        if not ev.target:
-            return False
-        key = self._mez_key(ev.target)
-        if ev.kind == "cc" and ev.outcome == "mez":
-            self._mez_active[key] = ts
-            self._mez_hits.pop(key, None)
-            self._mez_pending.pop(key, None)
-            return False
-        if ev.kind == "kill" or ev.kind == "cc_fade" and ev.outcome == "mez":
-            self._mez_active.pop(key, None)
-            self._mez_hits.pop(key, None)
-            pending = self._mez_pending.pop(key, None)
-            if ev.kind == "cc_fade" and pending is not None:
-                old = self._mez_break_entries[pending["index"]]
-                if old[2]:
-                    self._mez_break_counts[old[2]] -= 1
-                    self._mez_break_entries[pending["index"]] = (old[0], old[1], None)
-                    return True
-            return False
-        pending = self._mez_pending.get(key)
-        if key not in self._mez_active and (pending is None or not pending["eligible"]):
-            return False
-        if not ev.actor or ev.amount is None or ev.estimated or ev.estimated_ts:
-            actor = _MEZ_UNCERTAIN_ACTOR
-        else:
-            actor = self._name(ev.actor) or ev.actor
-            roster = self.roster if self.roster is not None else self._local_roster
-            pets = getattr(roster, "pet_owners", lambda: {})()
-            owner = next((owner for pet, owner in pets.items()
-                          if pet.casefold() == actor.casefold()), None)
-            if ev.is_pet:
-                actor = self._you()
-            elif owner:
-                actor = owner
-            elif is_npc_name(actor):
-                actor = _MEZ_UNCERTAIN_ACTOR
-        if key in self._mez_active and ts >= self._mez_active[key]:
-            hits = {name: hit_ts for name, hit_ts in self._mez_hits.get(key, {}).items()
-                    if 0 <= ts - hit_ts <= MEZ_DAMAGE_LINK_S}
-            hits[actor] = ts
-            self._mez_hits[key] = hits
-        if pending is None or not pending["eligible"] or not 0 <= ts - pending["ts"] <= MEZ_DAMAGE_LINK_S:
-            return False
-        pending["actors"][actor] = ts
-        index = pending["index"]
-        old = self._mez_break_entries[index]
-        breaker = (next(iter(pending["actors"]))
-                   if len(pending["actors"]) == 1 and _MEZ_UNCERTAIN_ACTOR not in pending["actors"] else None)
-        if old[2] == breaker:
-            return False
-        if old[2]:
-            self._mez_break_counts[old[2]] -= 1
-        if breaker:
-            self._mez_break_counts[breaker] += 1
-        self._mez_break_entries[index] = (old[0], old[1], breaker)
-        return True
-
     def _add_mez_break(self, ev: Event) -> None:
         ts, mob = float(ev.ts), self._name(ev.target) or ev.target
-        key = self._mez_key(mob)
-        start = self._mez_active.pop(key, None)
-        eligible = start is not None and start <= ts and not ev.estimated_ts
-        actors = {actor: hit_ts for actor, hit_ts in self._mez_hits.pop(key, {}).items()
-                  if eligible and 0 <= ts - hit_ts <= MEZ_DAMAGE_LINK_S}
-        breaker = next(iter(actors)) if len(actors) == 1 and _MEZ_UNCERTAIN_ACTOR not in actors else None
         self._mez_breaks.append((ts, mob))
-        self._mez_break_entries.append((ts, mob, breaker))
-        if breaker:
-            self._mez_break_counts[breaker] += 1
-        self._mez_pending[key] = dict(ts=ts, index=len(self._mez_break_entries) - 1,
-                                      eligible=eligible, actors=actors)
+        self._mez_break_entries.append((ts, mob, None))
 
     def _you(self) -> str:
         return self.player_name or "You"
@@ -697,9 +624,9 @@ class SessionStats:
 
         items_by_looter = fold(self._items_by_looter)
         coin_by_looter = fold(self._coin_by_looter)
-        mez_counts = fold(Counter({name: n for name, n in self._mez_break_counts.items() if n > 0}))
-        mez_details = [(ts, who(mob), who(actor) if actor else None)
-                       for ts, mob, actor in (self._mez_break_entries if detail_limit is None
+        # Preserve targets/times from older archives, discarding inferred breakers.
+        mez_details = [(ts, who(mob), None)
+                       for ts, mob, _actor in (self._mez_break_entries if detail_limit is None
                                              else self._mez_break_entries[-detail_limit:])]
         # Old archives contain awakening targets but no attribution evidence.
         legacy_count = len(self._mez_breaks) - len(self._mez_break_entries)
@@ -791,8 +718,8 @@ class SessionStats:
                      for e in (self._rewards if detail_limit is None else self._rewards[-detail_limit:])],
             capture_quality=dict(self.capture_quality),
             mez_break_details=mez_details,
-            mez_breaks_by_breaker=mez_counts,
-            mez_breaks_unknown=len(self._mez_breaks) - sum(n for _name, n in mez_counts),
+            mez_breaks_by_breaker=[],
+            mez_breaks_unknown=len(self._mez_breaks),
             mez_breaks_total=len(self._mez_breaks),
             player_status=_copy_player_status(self.player_status),
         )

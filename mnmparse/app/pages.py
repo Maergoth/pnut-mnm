@@ -2218,6 +2218,10 @@ class _StatsCropPicker(CropPicker):
 
     _fitting_frame = False
 
+    def _read_test_ocr(self, frame, crop, cfg):
+        reader = getattr(self._engine, "test_stats_ocr", None)
+        return reader(frame, crop, cfg) if callable(reader) else super()._read_test_ocr(frame, crop, cfg)
+
     def set_frame(self, frame: Any) -> None:
         self._fitting_frame = True
         try:
@@ -3256,7 +3260,7 @@ class SettingsPage(QWidget):
             self.crop_picker.set_crop(tuple(int(v) for v in cfg.crop))
             self.crop_picker.set_config(cfg)
             self.overlay_enabled.setChecked(bool(_cfg_get(cfg, "overlay_enabled", False)))
-            self.overlay_locked.setChecked(bool(_cfg_get(cfg, "overlay_locked", True)))
+            self.overlay_locked.setChecked(bool(_cfg_get(cfg, "overlay_locked", False)))
             self.overlay_click_through.setChecked(bool(_cfg_get(cfg, "overlay_click_through", False)))
             self.overlay_opacity.set_value(int(round(float(_cfg_get(cfg, "overlay_opacity", 0.85)) * 100)))
             self.overlay_font_scale.set_value(

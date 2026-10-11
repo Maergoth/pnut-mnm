@@ -13,7 +13,10 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
-    from .ocr import OcrLine
+    from .ocr import OcrEngine, OcrLine
+
+_STATUS_OCR_TARGET_SCALE = 1.5
+_STATUS_OCR_MAX_PIXELS = 1_000_000
 
 Rect = tuple[int, int, int, int]
 _LABEL = re.compile(r"^(HEALTH|MANA|ENDURANCE|WEIGHT)(?:\s*:?\s*(\d[\d,]*\s*/\s*\d[\d,]*))?\s*$", re.I)
@@ -23,8 +26,8 @@ _RATIO = re.compile(rf"^({_NUMBER})\s*/\s*({_NUMBER})$")
 
 @dataclass(frozen=True, slots=True)
 class PlayerStatusReading:
-    hp_current: int
-    hp_max: int
+    hp_current: int | None
+    hp_max: int | None
     panel_rect: Rect
     panel_line_indices: tuple[int, ...]
     xp_percent: float | None = None
@@ -32,7 +35,9 @@ class PlayerStatusReading:
     xp_resolution_points: float | None = None
 
     @property
-    def hp_percent(self) -> float:
+    def hp_percent(self) -> float | None:
+        if self.hp_current is None or self.hp_max is None or self.hp_max <= 0:
+            return None
         return 100.0 * self.hp_current / self.hp_max
 
 
@@ -183,7 +188,8 @@ def read_player_status(lines: Sequence[OcrLine], bgr: np.ndarray | None = None, 
                        xp_bar_confirmed: bool = False, xp_bar_rect: Rect | None = None) -> PlayerStatusReading | None:
     """Read one verified stat panel; rectangles use crop-relative L,T,R,B.
 
-    Health needs matching Mana/Endurance and Weight anchors in the same panel.
+    The panel needs Health, matching Mana/Endurance and Weight anchors. An
+    unreadable health ratio does not prevent an independently valid XP reading.
     XP is read only after the known bar is confirmed or its rectangle calibrated.
     ``panel_line_indices`` identifies spatial panel lines to omit from chat OCR.
     """
@@ -197,7 +203,7 @@ def read_player_status(lines: Sequence[OcrLine], bgr: np.ndarray | None = None, 
             name, inline = match.groups()
             name = name.upper()
             value = _label_ratio(index, lines, name, inline)
-            if value is not None:
+            if value is not None or name == "HEALTH":
                 labels.append((index, name, value))
     panels = []
     for index, name, value in labels:
@@ -231,10 +237,34 @@ def read_player_status(lines: Sequence[OcrLine], bgr: np.ndarray | None = None, 
         if image is not None and bar is None:
             bar = _find_bar(image, panel, weight_bottom, height)
         measured = _read_xp(image, bar) if image is not None and bar is not None and (xp_bar_confirmed or calibrated) else None
-        panels.append(PlayerStatusReading(value[0][0], value[0][1], panel, panel_indices,
+        if value is None and measured is None:
+            continue
+        hp = value[0] if value is not None else (None, None)
+        panels.append(PlayerStatusReading(hp[0], hp[1], panel, panel_indices,
                                          measured[0] if measured else None, bar,
                                          measured[1] if measured else None))
     return panels[0] if len(panels) == 1 else None
 
 
-__all__ = ["PlayerStatusReading", "read_player_status"]
+def read_status_crop(ocr: OcrEngine, raw: np.ndarray, mode: str, scale: float
+                     ) -> tuple[PlayerStatusReading | None, list[OcrLine]]:
+    """Read a separate mini-stat crop in one OCR pass at least 1.5x enlarged.
+
+    The caller's OCR engine already undoes ``scale``, so coordinates are divided
+    by only the additional enlargement here. XP always uses original color
+    pixels. Accidentally large regions are not additionally enlarged.
+    """
+    from .ocr import OcrLine, preprocess
+
+    effective = max(scale, _STATUS_OCR_TARGET_SCALE)
+    if scale < effective and raw.shape[0] * raw.shape[1] * effective ** 2 > _STATUS_OCR_MAX_PIXELS:
+        effective = scale
+    lines = ocr.read(preprocess(raw, mode, effective))
+    extra = effective / scale
+    if extra > 1.0:
+        lines = [OcrLine(round(line.x / extra), round(line.y / extra),
+                         round(line.h / extra), line.text) for line in lines]
+    return read_player_status(lines, raw, xp_bar_confirmed=True), lines
+
+
+__all__ = ["PlayerStatusReading", "read_player_status", "read_status_crop"]
