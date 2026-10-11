@@ -211,11 +211,16 @@ def _validate_revenge(data: bytes) -> None:
                 raise ValueError("invalid dated PvP reminders")
             names = set()
             for entry in entries:
-                if (not isinstance(entry, dict) or set(entry) != {"name", "added_at", "last_activity"}
+                if (not isinstance(entry, dict) or not {"name", "added_at", "last_activity"}.issubset(entry)
+                        or set(entry) - {"name", "added_at", "last_activity", "kind"}
+                        or entry.get("kind", "Player") not in {"Player", "Guild"}
                         or not valid_name(entry["name"]) or not valid_time(entry["added_at"])
-                        or not valid_time(entry["last_activity"]) or entry["name"].casefold() in names):
+                        or not valid_time(entry["last_activity"])):
                     raise ValueError("invalid PvP reminder name or timestamp")
-                names.add(entry["name"].casefold())
+                key = (entry.get("kind", "Player"), entry["name"].casefold())
+                if key in names:
+                    raise ValueError("duplicate PvP reminder")
+                names.add(key)
         else:
             raise ValueError("unsupported PvP reminder schema")
     except (ValueError, TypeError, KeyError, OverflowError) as exc:

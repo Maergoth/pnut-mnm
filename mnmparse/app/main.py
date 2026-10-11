@@ -944,6 +944,26 @@ class MainWindow(QMainWindow):
         if callable(focus):
             focus()
 
+    def open_revenge_settings(self) -> None:
+        self.show_page("settings")
+        page = self.page("settings")
+        toggle = getattr(page, "revenge_enabled", None)
+        scroll = getattr(page, "_scroll", None)
+        content = getattr(page, "_content", None)
+        if toggle is None or scroll is None:
+            return
+        target = toggle
+        if content is not None:
+            for index in range(content.count()):
+                panel = content.itemAt(index).widget()
+                if panel is not None and panel.isAncestorOf(toggle):
+                    target = panel
+                    break
+        scroll.ensureWidgetVisible(target)
+        # A page created on navigation gets its first layout on the next event.
+        QTimer.singleShot(0, page, lambda: scroll.ensureWidgetVisible(target))
+        toggle.setFocus(Qt.FocusReason.OtherFocusReason)
+
     # -- pages ---------------------------------------------------------------------------
 
     def page(self, key: str) -> QWidget | None:
@@ -1277,6 +1297,8 @@ class App(QApplication):
         self._restart_capture_pending = False
         self.config_path = DEFAULT_CONFIG_PATH
         self.instance_coordinator = None
+        self._whats_new = None
+        self._whats_new_waiting_setup = False
         self.aboutToQuit.connect(self.shutdown)
 
     # -- startup -----------------------------------------------------------------------
@@ -1351,6 +1373,30 @@ class App(QApplication):
         acknowledge_startup()
         if receipt:
             self.window.show_message(receipt)
+        if selftest_seconds is None:
+            self._start_whats_new(wait_for_setup=not cfg.setup_complete)
+
+    def _start_whats_new(self, *, wait_for_setup: bool) -> None:
+        from mnmparse.app.whats_new import WhatsNewController
+
+        self._whats_new_waiting_setup = wait_for_setup
+        self._whats_new = WhatsNewController(
+            self.settings, self.window, eligible=self._whats_new_eligible,
+            open_settings=self.window.open_revenge_settings, version=APP_VERSION)
+        self._whats_new.request()
+
+    def _whats_new_eligible(self) -> bool:
+        wizard = self.__dict__.get("_setup_wizard")
+        return not (
+            self._selftest or self._shut_down or self.__dict__.get("_quit_pending", False)
+            or self.__dict__.get("_whats_new_waiting_setup", False)
+            or (wizard is not None and wizard.isVisible()))
+
+    def _on_setup_closed(self, _result: int) -> None:
+        self._whats_new_waiting_setup = False
+        announcement = self.__dict__.get("_whats_new")
+        if announcement is not None:
+            announcement.request()
 
     def _make_engine(self, cfg: Config) -> Any:
         cls = _engine_mod.get("Engine")
@@ -1964,6 +2010,9 @@ class App(QApplication):
         if self.window is None:
             return
         self.window.reveal()  # our main window only; never the overlay or the game
+        announcement = self.__dict__.get("_whats_new")
+        if announcement is not None:
+            announcement.request()
 
     def hide_window(self) -> None:
         """Hide the main window to the tray."""
@@ -2065,8 +2114,9 @@ class App(QApplication):
                              display_map=self.settings.value("map/visible", True, type=bool))
         wizard.finished_config.connect(lambda cfg: self._finish_setup(cfg, display_map=wizard.display_map))
         wizard.siren_requested.connect(lambda: self.play_sound("Siren"))
-        wizard.open()
+        wizard.finished.connect(self._on_setup_closed)
         self._setup_wizard = wizard
+        wizard.open()
 
     def show_demo(self) -> None:
         if bool(getattr(self.engine, "is_running", False)):
@@ -2188,6 +2238,9 @@ class App(QApplication):
         if self._shut_down:
             return
         self._shut_down = True
+        announcement = self.__dict__.get("_whats_new")
+        if announcement is not None:
+            announcement.stop()
         log.info("Shutting down")
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)

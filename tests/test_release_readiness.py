@@ -223,7 +223,8 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(self.triggers.read_bytes(), b"original triggers")
 
     def test_dated_revenge_backup_preserves_all_entries_and_legacy_unknown_times(self):
-        entries = [{"name": "Opponent", "added_at": None, "last_activity": None}]
+        entries = [{"name": "Opponent", "added_at": None, "last_activity": None},
+                   {"name": "Opponent", "kind": "Guild", "added_at": 100.0, "last_activity": 200.0}]
         entries += [{"name": "Enemy" + chr(65 + i // 26) + chr(65 + i % 26),
                      "added_at": 0, "last_activity": 253402300799 if i == 0 else 1.5} for i in range(102)]
         payload = {"schema": 2, "entries": entries}
@@ -268,13 +269,16 @@ class BackupTests(unittest.TestCase):
         valid = {"name": "Opponent", "added_at": 10.0, "last_activity": 20.0}
         invalid = [dict(valid, name=None), dict(valid, name=""), dict(valid, name=" \t "), dict(valid, name=[]),
                    dict(valid, name="x" * 32768),
-                   dict(valid, raw="private line"),
+                   dict(valid, raw="private line"), dict(valid, kind="Unknown"),
+                   dict(valid, kind=None), dict(valid, kind=[]),
                    {"name": "Opponent", "last_activity": 20.0}, "Opponent"]
         for field in ("added_at", "last_activity"):
             for value in (True, "20", -1, float("nan"), float("inf"), 253402300800, 10 ** 400):
                 invalid.append(dict(valid, **{field: value}))
         bad_payloads = [{"schema": 2, "entries": [entry]} for entry in invalid]
         bad_payloads += [{"schema": 2, "entries": [valid, dict(valid, name="opponent")]},
+                         {"schema": 2, "entries": [dict(valid, kind="Guild"),
+                                                   dict(valid, kind="Guild", name="opponent")]},
                          {"schema": 2, "entries": [valid] * 1001},
                          {"schema": True, "entries": [valid]},
                          {"schema": 2, "entries": [valid], "unknown": True}]
