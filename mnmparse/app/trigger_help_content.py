@@ -333,6 +333,12 @@ Check for overlapping enabled definitions when you hear duplicate alerts.</p>
 <p>Check that capture is running, the chat is included, and the trigger is enabled. Find the
 actual line in Feed and paste it into Test. Check the mode, spelling and rank. A regex ignores
 case but not punctuation or spacing. Quiet for or a running Retain timer can suppress a match.</p>
+<h3>A regular expression exceeds its time limit</h3>
+<p>Complex regular expressions can cause slowdowns. PNUT limits matching time to keep chat scanning
+responsive. During live capture, an expression that times out is disabled and a warning appears.
+Simplify its Text pattern before enabling it again. If the combined time limit for a chat line
+is reached, some triggers are skipped for that line; simplify slow patterns or reduce the
+number of active triggers.</p>
 <h3>The popup shows {damage} instead of a number</h3>
 <p>Use Regular expression with a named capture such as <code>(?P&lt;damage&gt;\d+)</code> in Text.
 Use exactly <code>{damage}</code> in Label. A Contains or Starts with pattern does not create

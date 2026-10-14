@@ -38,6 +38,8 @@ class TriggerDeadlineTests(unittest.TestCase):
         self.assertEqual(store.matches("a" * 6000 + "!"), [])
         self.assertFalse(trigger.enabled)
         self.assertIn(trigger.id, store.match_warnings)
+        self.assertIn("Complex regular expressions can cause slowdowns", store.match_warnings[trigger.id])
+        self.assertIn("simplify the pattern before enabling it again", store.match_warnings[trigger.id])
         trigger.enabled = True
         with patch("mnmparse.triggers._compiled", side_effect=AssertionError("Quarantined regex was retried")):
             self.assertIsNone(match_trigger(trigger, "a" * 6000 + "!"))
@@ -48,7 +50,7 @@ class TriggerDeadlineTests(unittest.TestCase):
         clock = SimpleNamespace(value=0.0)
 
         def expensive_match(*_args, **_kwargs):
-            clock.value += .011
+            clock.value += .033
             return None
 
         # Separate the store's wall-clock policy from the native engine's CPU
@@ -59,6 +61,8 @@ class TriggerDeadlineTests(unittest.TestCase):
             self.assertEqual(store.matches("a" * 6000 + "!"), [])
         self.assertEqual(match.call_count, 5)
         self.assertIn("", store.match_warnings)
+        self.assertIn("Complex regular expressions can cause slowdowns", store.match_warnings[""])
+        self.assertIn("some triggers were skipped", store.match_warnings[""])
         self.assertLess(match.call_count, len(store.triggers), "The line budget must stop before trying every pattern")
 
     def test_import_rejects_oversized_pattern_before_compilation(self):
@@ -313,9 +317,15 @@ class TriggerPresentationTests(unittest.TestCase):
         page.set_runner(self.runner)
         self.runner.fired.emit(Match(self.trigger, "Peer99 hits for 17", "Peer99"))
         self.assertEqual(page.recent.count(), 1)
+        warning_trigger = Trigger(mode="regex", pattern=r"(?:(?:a+)+)+$")
+        self.assertIsNone(match_trigger(warning_trigger, "a" * 6000 + "!"))
+        message = " ".join(warning_trigger.problems())
         with patch.object(page, "_schedule_save") as schedule:
-            self.runner.matching_warning.emit("Matching time limit exceeded")
+            self.runner.matching_warning.emit(message)
             schedule.assert_called_once()
+        self.assertEqual(page.sharing_status.text(), message)
+        self.assertEqual(page.sharing_status.toolTip(), message)
+        self.assertFalse(page.sharing_status.isHidden())
 
     def test_constructing_and_configuring_runner_never_plays_siren_or_audio(self):
         from mnmparse.app.triggers_runtime import AudioOut, TriggerRunner

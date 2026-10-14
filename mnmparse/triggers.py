@@ -57,8 +57,8 @@ BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Lo
 STORE_VERSION = 1
 # Each search has an enforceable engine deadline. The store also limits an entire
 # line so many individually expensive expressions cannot monopolize the GUI.
-REGEX_TIMEOUT_S = 0.010
-LINE_MATCH_BUDGET_S = 0.050
+REGEX_TIMEOUT_S = 0.030
+LINE_MATCH_BUDGET_S = 0.150
 MAX_PATTERN_CHARS = 2048
 MAX_LINE_CHARS = 8192
 _quarantined_patterns: dict[str, str] = {}
@@ -224,7 +224,10 @@ def match_trigger(trigger: Trigger, line: str, *, deadline: float | None = None)
             # the deadline repeatedly. Quarantine until its pattern is changed.
             if len(_quarantined_patterns) >= 256:
                 _quarantined_patterns.pop(next(iter(_quarantined_patterns)))
-            _quarantined_patterns[trigger.pattern] = "Regular expression exceeded its time limit; change the pattern before enabling it again."
+            _quarantined_patterns[trigger.pattern] = (
+                "Regular expression exceeded its time limit. Complex regular expressions can cause slowdowns; "
+                "simplify the pattern before enabling it again."
+            )
             return None
         if m is None:
             return None
@@ -426,7 +429,10 @@ class TriggerStore:
         deadline = time.monotonic() + LINE_MATCH_BUDGET_S
         for trig in self.triggers:
             if time.monotonic() >= deadline:
-                self.match_warnings[""] = "Trigger matching reached the time limit for this line; some triggers were skipped."
+                self.match_warnings[""] = (
+                    "Trigger matching reached the time limit for this line; some triggers were skipped. "
+                    "Complex regular expressions can cause slowdowns; simplify them or reduce the number of active triggers."
+                )
                 break
             m = match_trigger(trig, line, deadline=deadline)
             if trig.enabled and trig.mode == "regex" and trig.pattern in _quarantined_patterns:
