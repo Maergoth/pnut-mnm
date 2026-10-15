@@ -28,6 +28,17 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.13": ReleaseNotes(
+        changes=(
+            "Releases now publish automatically with their Windows package and checksum, so Update always finds a complete release.",
+            "Trigger regular expressions get more matching time before being disabled: 30 ms each, 150 ms per chat line.",
+            "Slowdown warnings and Trigger help now explain that complex regular expressions should be simplified.",
+        ),
+        settings_label="App update settings",
+        settings_target="app_update_button",
+        feature_page="triggers",
+        feature_label="Triggers",
+    ),
     "1.0.11": ReleaseNotes(
         changes=(
             "XP/hour uses a rolling hour, updating every 30 seconds. Idle before your first gain is excluded.",
