@@ -248,12 +248,20 @@ class WhatsNewTests(unittest.TestCase):
         page = window.page("settings")
         self.assertIs(window._stack.currentWidget(), page)
         self.assertTrue(window._nav_buttons["settings"].isChecked())
-        self.assertGreater(page._scroll.verticalScrollBar().value(), 0)
         target = getattr(page, RELEASE_NOTES[APP_VERSION].settings_target)
         y = target.mapTo(page._scroll.viewport(), QPoint(0, 0)).y()
         self.assertGreaterEqual(y, 0)
         self.assertLess(y, page._scroll.viewport().height())
         self.assertEqual(self.settings.value(SEEN_VERSION_KEY), APP_VERSION)
+        # A release can point at the topmost section, so the scrolling guarantee
+        # is checked against an option that sits below the first viewport.
+        page._scroll.verticalScrollBar().setValue(0)
+        window._open_settings_option("player_status_enabled")
+        self.app.processEvents()
+        self.assertGreater(page._scroll.verticalScrollBar().value(), 0)
+        y = page.player_status_enabled.mapTo(page._scroll.viewport(), QPoint(0, 0)).y()
+        self.assertGreaterEqual(y, 0)
+        self.assertLess(y, page._scroll.viewport().height())
 
         self.settings.setValue(SEEN_VERSION_KEY, "1.0.4")
         controller = self.controller(open_feature=window.show_page, version="1.0.5")

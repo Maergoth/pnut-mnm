@@ -53,3 +53,57 @@ jobs:
             build/build-info.json
             dist/releases/*
           if-no-files-found: warn
+  release:
+    # Publishes v<__version__> with the gated ZIP and checksum when that release
+    # does not exist yet, so merging a version bump to main ships the release the
+    # in-app updater looks for. Pushes without a version bump publish nothing, and
+    # a dispatch repairs a release that is missing assets or stuck as a draft.
+    needs: windows
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download verified portable artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-portable-gates
+      - name: Publish the release with its Windows package and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/releases/PNUT-MnM-*-windows.zip)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one verified release ZIP, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          archive=${archives[0]}
+          checksum="$archive.sha256"
+          name=$(basename "$archive")
+          version=${name#PNUT-MnM-}
+          version=${version%-windows.zip}
+          tag="v$version"
+          (cd dist/releases && sha256sum --check --strict "$name.sha256")
+          if view=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets,isDraft 2>/dev/null); then
+            missing=$(jq -r --arg zip "$name" '[$zip, $zip + ".sha256"] - [.assets[].name] | length' <<<"$view")
+            if [ "$missing" != 0 ]; then
+              echo "Release $tag exists without its verified package; attaching this run's assets."
+              gh release upload "$tag" "$archive" "$checksum" --repo "$GITHUB_REPOSITORY" --clobber
+            else
+              echo "Release $tag already carries $name and its checksum."
+            fi
+            if [ "$(jq -r .isDraft <<<"$view")" = true ]; then
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            fi
+          else
+            # Draft first so releases/latest never serves a release whose assets
+            # are still uploading: the updater rejects a package-less release.
+            gh release create "$tag" "$archive" "$checksum" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "PNUT M&M $version" --generate-notes --draft
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            echo "Published $tag with $name and its checksum."
+          fi

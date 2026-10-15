@@ -22,22 +22,33 @@ dialog can keep a failed process alive too.
 
 Then run `.venv\Scripts\python.exe scripts/package_release.py`. It creates the versioned
 ZIP under `dist/releases/`, extracts it into a temporary directory, and runs that extracted
-EXE with a minimal Windows PATH. Publish only the ZIP and its `.sha256` file after this
-check passes. Machine-specific install metadata and smoke reports are not release assets.
+EXE with a minimal Windows PATH. Only the ZIP and its `.sha256` file are release assets;
+machine-specific install metadata and smoke reports are not.
+
+Publishing is automated. Squash merging a PR that bumps `__version__` in
+`mnmparse/__init__.py` reruns the gates on the merged commit, and the workflow's release
+job then publishes `v<version>` on GitHub with that run's gated ZIP and checksum attached,
+so the released package's embedded provenance identifies the exact merged commit. The
+release is created as a draft and published only after both assets are uploaded, because
+the in-app updater rejects a release whose Windows package or checksum is missing. A main
+push whose version already has a published release with both assets publishes nothing.
+Do not create releases or tags by hand: v1.0.12 was tagged without a version bump or
+assets, which broke the **Update** button for every installed copy until the next
+published release. If a release job fails or is cancelled partway, run the workflow
+manually on main; it attaches the missing assets and publishes a leftover draft.
 
 Installed copies are updated through PNUT's **Update** feature. Development and release
-tasks must not replace binaries or change files in a user's installed App folder; publish
-the tested release to GitHub so the app can download it.
+tasks must not replace binaries or change files in a user's installed App folder; the
+pipeline publishes the tested release to GitHub so the app can download it.
 
 Use focused tests while editing, then the PR's complete Windows regression and portable
 release gate on the final commit. Do not repeat the full suite after it passes unless code
 changes or a new failure warrants it. CI runs on pull requests and main pushes; branch
 pushes and release tags do not duplicate the PR gate, and superseded runs are cancelled.
-After squash merging, build and verify the clean merged commit once for publication;
-the released package's embedded provenance must identify that exact commit.
 
 Every release must update the in-app **What's New!** notes for its version in
-`mnmparse/app/whats_new.py`, alongside `docs/RELEASE_<version>.md`. Keep the pop-up concise,
+`mnmparse/app/whats_new.py` (a regression check blocks a version bump without its
+announcement), alongside `docs/RELEASE_<version>.md`. Keep the pop-up concise,
 describe the new behavior and point to the relevant features or Settings section.
 Retain historical records: an update that skips versions must show every release newer
 than the last acknowledged version through the running version, with each release
