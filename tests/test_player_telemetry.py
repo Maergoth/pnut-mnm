@@ -2,7 +2,8 @@
 import json
 import unittest
 
-from mnmparse.player_telemetry import PlayerTelemetry
+from mnmparse.player_telemetry import PlayerTelemetry, XP_RATE_STALE_AFTER
+from mnmparse.session import SessionStats
 
 
 def reading(hp=None, xp=None, **extra):
@@ -215,6 +216,64 @@ class PlayerTelemetryTests(unittest.TestCase):
         self.assertEqual(telemetry.snapshot()["xp_gain_points"], .6)
         self.assertEqual(telemetry.snapshot()["xp_points_per_hour"], 18)
 
+    def test_carried_pixel_gain_ages_out_over_its_original_measurement_span(self):
+        telemetry = PlayerTelemetry()
+        sample(telemetry, 0, 1)
+        for start, end, fraction in ((2, 31, .502), (32, 61, .504), (62, 91, .506)):
+            sample(telemetry, start, end, fraction, xp_resolution_points=.5)
+        for start, end, expected in ((92, 3631, .4), (3632, 3661, .2), (3662, 3691, 0)):
+            sample(telemetry, start, end, .506, xp_resolution_points=.5)
+            snap = telemetry.snapshot()
+            self.assertAlmostEqual(snap["xp_rate_gain_points"], expected)
+            self.assertEqual(snap["xp_gain_points"], .6)
+            self.assertEqual(snap["xp_rate_observed_seconds"], 3600)
+
+    def test_carried_pixel_gain_does_not_move_a_later_burst_into_earlier_intervals(self):
+        telemetry = PlayerTelemetry()
+        sample(telemetry, 0, 1)
+        for start, end, fraction in ((2, 31, .502), (32, 61, .504), (62, 91, .8)):
+            sample(telemetry, start, end, fraction, xp_resolution_points=.5)
+        sample(telemetry, 92, 3661, .8, xp_resolution_points=.5)
+        snap = telemetry.snapshot()
+        self.assertEqual(snap["xp_gain_points"], 30)
+        self.assertEqual(snap["xp_rate_gain_points"], 29.6)
+        self.assertEqual(snap["xp_points_per_hour"], 29.6)
+
+    def test_unstable_bar_stops_showing_an_old_rate_without_inventing_idle(self):
+        telemetry = PlayerTelemetry()
+        sample(telemetry, 0, 1)
+        sample(telemetry, 2, 31, .52)
+        history = list(telemetry._xp_rate_intervals)
+        for ts in range(32, int(31 + XP_RATE_STALE_AFTER) + 1):
+            telemetry.update(reading(xp=.55 if ts % 2 else .57), ts)
+        self.assertEqual(telemetry.snapshot()["xp_points_per_hour"], 240)
+        telemetry.update(reading(xp=.57), 31 + XP_RATE_STALE_AFTER + 1)
+        snap = telemetry.snapshot()
+        self.assertIsNone(snap["xp_points_per_hour"])
+        self.assertEqual(snap["xp_rate_gain_points"], 0)
+        self.assertEqual(snap["xp_rate_observed_seconds"], 0)
+        self.assertEqual(snap["xp_gain_points"], 2)
+        self.assertEqual(telemetry._xp_rate_intervals, history)
+        # Session serialization must not reconstruct the stale rate from totals.
+        session = SessionStats("You", started=0)
+        session.note_player_status(snap)
+        self.assertIsNone(session.player_status["xp_points_per_hour"])
+        sample(telemetry, 93, 94, .54)
+        self.assertEqual(telemetry.snapshot()["xp_gain_points"], 4)
+        self.assertAlmostEqual(telemetry.snapshot()["xp_points_per_hour"], 4 * 3600 / 93, places=6)
+
+    def test_rolling_projection_ages_at_current_capture_time_without_mutating_history(self):
+        telemetry = PlayerTelemetry()
+        sample(telemetry, 0, 1)
+        sample(telemetry, 2, 3601, .52)
+        history = list(telemetry._xp_rate_intervals)
+        telemetry.update(reading(xp=.57), 3602)
+        snap = telemetry.snapshot()
+        self.assertEqual(snap["xp_rate_observed_seconds"], 3599)
+        self.assertAlmostEqual(snap["xp_rate_gain_points"], 2 * 29 / 30, places=6)
+        self.assertEqual(telemetry.snapshot(), snap)
+        self.assertEqual(telemetry._xp_rate_intervals, history)
+
     def test_one_pixel_jitter_ignored_and_blue_resolution_used(self):
         for resolution, expected in ((.5, 0), (.1, .2)):
             with self.subTest(resolution=resolution):
@@ -347,9 +406,9 @@ class PlayerTelemetryTests(unittest.TestCase):
         sample(telemetry, 0, 29, .1)
         sample(telemetry, 30, 31, .2)
         self.assertEqual(telemetry.snapshot()["xp_gain_points"], 10)
-        self.assertTrue(telemetry.note_level_up(31))
-        self.assertEqual(telemetry.snapshot()["xp_gain_points"], 110)
-        self.assertEqual(telemetry.snapshot()["xp_points_per_hour"], 13200)
+        self.assertFalse(telemetry.note_level_up(31))
+        self.assertEqual(telemetry.snapshot()["xp_gain_points"], 10)
+        self.assertEqual(telemetry.snapshot()["xp_points_per_hour"], 1200)
         self.assertFalse(telemetry.note_level_up(31))
         sample(telemetry, 32, 61, .2)
         self.assertEqual(telemetry.snapshot()["xp_gain_points"], 110)
@@ -360,10 +419,12 @@ class PlayerTelemetryTests(unittest.TestCase):
         telemetry = PlayerTelemetry()
         sample(telemetry, 0, 1801)
         self.assertEqual(telemetry.snapshot()["xp_points_per_hour"], 0)
-        self.assertTrue(telemetry.note_level_up(1801))
+        self.assertFalse(telemetry.note_level_up(1801))
+        self.assertEqual(telemetry.snapshot()["xp_gain_points"], 0)
+        sample(telemetry, 1802, 1831)
         snap = telemetry.snapshot()
         self.assertEqual(snap["xp_gain_points"], 100)
-        self.assertEqual(snap["xp_observed_seconds"], 1800)
+        self.assertEqual(snap["xp_observed_seconds"], 1830)
         self.assertEqual(snap["xp_rate_gain_points"], 100)
         self.assertEqual(snap["xp_rate_observed_seconds"], 30)
         self.assertEqual(snap["xp_points_per_hour"], 12000)

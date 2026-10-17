@@ -2230,8 +2230,7 @@ class App(QApplication):
         live._csv.setEnabled(False)
         live._json.setEnabled(False)
         self.window.on_session(bundle.session)
-        self.window.page("session")._export.setEnabled(False)
-        self.window.page("session")._demo_active = True
+        self.window.page("session").set_demo_active(True)
         if self.overlay is not None:
             self.overlay.set_config(presentation)
             self.overlay.set_snapshot(bundle.encounters[-1])
@@ -2250,10 +2249,9 @@ class App(QApplication):
         self.window._brand_sub.setText(APP_TAGLINE)
         self.window.set_config(self.cfg)
         self.window.page("live")._demo_active = False
-        self.window.page("session")._demo_active = False
+        self.window.page("session").set_demo_active(False)
         self.window.page("live").set_history([])
         self.window.on_session(self.engine.session_snapshot())
-        self.window.page("session")._export.setEnabled(True)
         self.window.on_state(getattr(self.engine, "state", "stopped"))
         if self.overlay is not None:
             self.overlay.set_config(self.cfg)

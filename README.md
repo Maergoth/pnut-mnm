@@ -322,8 +322,16 @@ the estimate; after an hour without gains, the next gaining interval starts a fr
 These are XP-bar percentage points, not exact XP numbers. The first rate appears after a
 complete 30-second comparison. Brief OCR misses are tolerated within the capture cadence;
 longer gaps, a changed region or pausing reset the recent window. Earlier measured totals
-remain. A detected own level-up confirms a bar wrap. Log imports
+remain. If unstable readings prevent a new comparison for more than a minute, the
+footer returns to **XP collecting…** until a fresh comparison is available. Small gains
+that need several comparisons to clear the pixel threshold age out over their measured
+time instead of all being assigned to the final comparison. A detected own level-up
+confirms a bar wrap; PNUT briefly waits for the bar to catch up when chat arrives first. Log imports
 cannot supply bar measurements. Older archived averages are labeled **XP session**.
+
+Use **New session** at the bottom right of the Session tab, beside the XP rate, to archive
+the current session and start a fresh one. The button is available while viewing your live
+session; archived, imported and demo sessions cannot reset it.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring

@@ -33,6 +33,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Timer triggers match in the background, keeping the overlay responsive while busy-system delays are retried.",
             "Countdowns account for matching delays, so delayed results do not extend a spell's duration.",
             "Hide Overlay now hides the map, detached Revenge List, timers, attack bar and visual alerts together, restoring your chosen panels when shown again.",
+            "New session is at the bottom right of the Session tab beside XP/hour. Rolling XP handles stale readings, small gains and level-up timing more accurately.",
         ),
         settings_label="Overlay settings",
         settings_target="overlay_enabled",
