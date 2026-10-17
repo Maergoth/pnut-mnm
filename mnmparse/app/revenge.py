@@ -1071,6 +1071,7 @@ class RevengePopoutWindow(QWidget):
         self._state_ready = False
         self._restored = False
         self._closing = False
+        self._overlay_visible = True
         self._wanted_visible = settings.value("revenge/visible", False, type=bool) if settings is not None else False
         self._locked = False
         self._drag: QPoint | None = None
@@ -1262,10 +1263,13 @@ class RevengePopoutWindow(QWidget):
         super().hideEvent(event)
 
     def _sync_visibility(self):
-        if not self.controller.enabled:
-            super().hide()
-        elif self._restored and self._wanted_visible and not self._closing:
-            super().show()
+        super().setVisible(bool(self._overlay_visible and self.controller.enabled
+                                and self._restored and self._wanted_visible and not self._closing))
+
+    def set_overlay_visible(self, visible: bool) -> None:
+        """Temporarily hide with the overlay without changing the pop-out preference."""
+        self._overlay_visible = bool(visible)
+        self._sync_visibility()
 
     def hide(self):
         if self._state_ready and not self._closing:
@@ -1280,7 +1284,7 @@ class RevengePopoutWindow(QWidget):
             self.save_state()
             # No activation or raising: adding a name uses the explicit normal
             # input dialog, while the passive list leaves game focus untouched.
-            super().show()
+            self._sync_visibility()
 
 
 __all__ = ["RevengeController", "RevengePrompts", "RevengeList", "RevengePopoutWindow", "RevengeEntry", "AttackerCandidate", "plausible_attacker"]

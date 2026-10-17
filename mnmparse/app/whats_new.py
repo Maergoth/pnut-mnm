@@ -28,6 +28,17 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.14": ReleaseNotes(
+        changes=(
+            "Timer triggers match in the background, keeping the overlay responsive while busy-system delays are retried.",
+            "Countdowns account for matching delays, so delayed results do not extend a spell's duration.",
+            "Hide Overlay now hides the map, detached Revenge List, timers, attack bar and visual alerts together, restoring your chosen panels when shown again.",
+        ),
+        settings_label="Overlay settings",
+        settings_target="overlay_enabled",
+        feature_page="triggers",
+        feature_label="Triggers",
+    ),
     "1.0.13": ReleaseNotes(
         changes=(
             "Releases now publish automatically with their Windows package and checksum, so Update always finds a complete release.",

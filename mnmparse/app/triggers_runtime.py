@@ -3,8 +3,8 @@
 :class:`AudioOut` plays the built-in cues (small .wav files generated on first use under
 ``assets/sounds``), sound files (QMediaPlayer, so .mp3/.ogg work too) and speech
 (QTextToSpeech: the Windows voices).  :class:`TriggerRunner` owns the :class:`TriggerStore`
-and the :class:`TimerBoard`; the app feeds it every chat line through :meth:`observe`.
-Everything runs in the GUI thread.
+and the :class:`TimerBoard`; live chat is submitted through :meth:`enqueue`.
+Matching runs on a dedicated worker. Timers, audio and result delivery stay in the GUI thread.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal, Slot
 
 from mnmparse.config import project_path
 from mnmparse.privacy import casual_enabled
@@ -312,6 +312,16 @@ class TriggerRunner(QObject):
         self._casual_mode = True
         self._muted = False
         self._last_fired: dict[str, float] = {}
+        self._timer_windows: dict[str, float] = {}
+        self._match_epoch = 0
+        self._closed = False
+        self._backlog_warning = False
+        self._trigger_snapshots: tuple[Any, ...] = ()
+        from mnmparse.app.trigger_matching import TriggerMatcher
+        self._matcher = TriggerMatcher(self)
+        self._matcher.completed.connect(self._accept_matches, Qt.ConnectionType.QueuedConnection)
+        matcher = self._matcher
+        self.destroyed.connect(lambda *_args: matcher.close())
         self._apply_audio_settings()
         self._clock = QTimer(self)
         self._clock.setInterval(TICK_MS)
@@ -353,31 +363,118 @@ class TriggerRunner(QObject):
         self.store_changed.emit()
 
     # -- matching ----------------------------------------------------------------------
+    def enqueue(self, line: str, now: float | None = None) -> None:
+        """Submit live chat without blocking the GUI or borrowing another match's budget."""
+        if self._closed or not line:
+            return
+        observed_at = time.time() if now is None else now
+        enabled = tuple(trigger for trigger in self.store.triggers if trigger.enabled)
+        if enabled != self._trigger_snapshots:
+            self._trigger_snapshots = tuple(replace(trigger) for trigger in enabled)
+        snapshots = self._trigger_snapshots
+        if not snapshots:
+            return
+        if not self._matcher.submit(line, observed_at, self._match_epoch, snapshots):
+            if not self._backlog_warning:
+                self.matching_warning.emit(
+                    "Trigger matching is falling behind; a chat line was skipped. "
+                    "Simplify slow expressions or reduce the number of active triggers."
+                )
+            self._backlog_warning = True
+        else:
+            self._backlog_warning = False
+
+    @Slot(object)
+    def _accept_matches(self, result: Any) -> None:
+        try:
+            self._deliver_matches(result)
+        finally:
+            result.delivered.set()
+
+    def _deliver_matches(self, result: Any) -> None:
+        if self._closed or result.request.epoch != self._match_epoch:
+            return
+        current = {}
+        live_by_id = {trigger.id: trigger for trigger in self.store.triggers}
+        for snapshot in result.request.triggers:
+            trigger = live_by_id.get(snapshot.id)
+            if trigger is not None and trigger == snapshot:
+                current[trigger.id] = trigger
+        warnings = {key: value for key, value in result.warnings.items() if not key or key in current}
+        disabled = False
+        for trigger_id in result.disabled_ids:
+            trigger = current.get(trigger_id)
+            if trigger is not None:
+                trigger.enabled = False
+                disabled = True
+        matches = []
+        for match in result.matches:
+            trigger = current.get(match.trigger.id)
+            if trigger is not None and trigger.enabled:
+                match.trigger = trigger
+                matches.append(match)
+        self._act_on_matches(matches, result.request.observed_at, delivered_at=time.time())
+        self._publish_warnings(warnings, disabled)
+
     def observe(self, line: str, now: float | None = None) -> list[Match]:
-        """Check one chat line against every trigger; act on the matches."""
+        """Synchronous matching for explicit callers; live chat uses :meth:`enqueue`."""
+        if self._closed:
+            return []
         now = time.time() if now is None else now
+        matches = self.store.matches(line)
+        fired = self._act_on_matches(matches, now)
+        self._publish_warnings(self.store.match_warnings,
+                               any(not trigger.enabled for trigger in self.store.triggers
+                                   if trigger.id in self.store.match_warnings))
+        return fired
+
+    def _act_on_matches(self, matches: list[Match], now: float, *,
+                        delivered_at: float | None = None) -> list[Match]:
         fired: list[Match] = []
-        for m in self.store.matches(line):
+        for m in matches:
             trig = m.trigger
             last = self._last_fired.get(trig.id)
             if trig.cooldown_s > 0 and last is not None and now - last < trig.cooldown_s:
                 continue
+            if trig.timer and trig.timer_mode == "retain" and now < self._timer_windows.get(trig.id, 0.0):
+                continue
+            if trig.timer and delivered_at is not None and now + trig.timer_seconds <= delivered_at:
+                # Preserve the event timeline for retain/cooldown, but don't play
+                # an obsolete start cue or present an already-expired countdown.
+                self._timer_windows[trig.id] = now + trig.timer_seconds
+                self._last_fired[trig.id] = now
+                continue
             if self.fire(m, now):
                 self._last_fired[trig.id] = now
                 fired.append(m)
-        if self.store.match_warnings:
-            message = " ".join(dict.fromkeys(self.store.match_warnings.values()))
+        return fired
+
+    def _publish_warnings(self, warnings: dict[str, str], disabled: bool) -> None:
+        self.store.match_warnings = dict(warnings)
+        if warnings:
+            message = " ".join(dict.fromkeys(warnings.values()))
             self.matching_warning.emit(message)
-            if any(self.store.match_warnings):
+            if disabled:
                 try:
                     self.store.save()
                 except (OSError, ValueError):
                     self.matching_warning.emit("An unsafe expression was disabled, but the change could not be saved. Retry saving triggers.")
                 self.store_changed.emit()
-        return fired
+
+    def close(self) -> None:
+        """Cancel pending matching and audio without waiting on a native regex."""
+        if self._closed:
+            return
+        self._closed = True
+        self._match_epoch += 1
+        self._matcher.close()
+        self._clock.stop()
+        self.audio.stop()
 
     def fire(self, m: Match, now: float | None = None) -> bool:
         """Run ``m``'s action and start its timer (also used by the page's Test button)."""
+        if self._closed:
+            return False
         trig = m.trigger
         values = m.values()
         scope = ""
@@ -388,6 +485,7 @@ class TriggerRunner(QObject):
             timer = self.board.start(trig, label, now)
             if timer is None:
                 return False  # Retain ignores the entire overlapping match, audio included.
+            self._timer_windows[trig.id] = timer.start + timer.duration
             timer.template_values = dict(values)
             if trig.timer_mode != "stack":
                 self.audio.cancel_speech(f"timer:{trig.id}:", prefix=True)
@@ -443,21 +541,29 @@ class TriggerRunner(QObject):
             return False
         self.audio.cancel_speech(self._timer_scope(timer))
         timer.start = time.time() if now is None else now
+        self._timer_windows[timer.trigger_id] = timer.start + timer.duration
         timer.warned = timer.ended = False
         self._clock.start()
         self.timers_changed.emit()
         return True
 
     def cancel_timer(self, timer_id: str) -> None:
+        trigger_ids = {timer.trigger_id for timer in self.board.timers if timer.id == timer_id}
         for timer in self.board.timers:
             if timer.id == timer_id:
                 self.audio.cancel_speech(self._timer_scope(timer))
         self.board.cancel(timer_id)
+        for trigger_id in trigger_ids:
+            if not any(timer.trigger_id == trigger_id and not timer.ended for timer in self.board.timers):
+                self._timer_windows.pop(trigger_id, None)
         if not any(not timer.ended or not timer.keep_until_dismissed for timer in self.board.timers):
             self._clock.stop()
         self.timers_changed.emit()
 
     def clear_timers(self) -> None:
+        self._match_epoch += 1
+        self._matcher.invalidate(self._match_epoch)
+        self._timer_windows.clear()
         self.audio.cancel_speech("timer:", prefix=True)
         self.board.clear()
         self._clock.stop()
@@ -495,12 +601,17 @@ class TriggerRunner(QObject):
 
     def test(self, trig: Trigger, line: str = "") -> None:
         """Fire ``trig`` as if ``line`` (or its pattern) had been read."""
+        if self._closed:
+            return
         # Explicit previews work even for disabled triggers, but still capture
         # the sample line's regex groups exactly as live matching would.
-        matched = match_trigger(replace(trig, enabled=True), line) if line else None
-        if trig.mode == "regex" and regex_problem(trig.pattern):
-            self.matching_warning.emit(regex_problem(trig.pattern))
-            return
+        warnings: dict[str, str] = {}
+        matched = match_trigger(replace(trig, enabled=True), line, warnings=warnings) if line else None
+        problem = regex_problem(trig.pattern) if trig.mode == "regex" else ""
+        if problem or warnings:
+            self.matching_warning.emit(problem or " ".join(dict.fromkeys(warnings.values())))
+            if problem or matched is None:
+                return
         if matched is not None:
             matched.trigger = trig
         self.fire(matched or Match(trig, line or trig.pattern, line or trig.pattern))

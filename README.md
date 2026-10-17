@@ -558,7 +558,10 @@ show only their countdown row. Notifications last four
 seconds and fade during the final second; up to four recent notifications appear at once,
 without displacing timer rows. "Quiet for" suppresses repeated non-timer notifications.
 The panel appears while timers or notifications are active (right-click >
-"Always show this panel" keeps it). Hiding the overlay also hides its notifications.
+"Always show this panel" keeps it). **Hide Overlay** hides all floating overlay parts,
+including the map, detached Revenge List, timer and attack panels, notifications and visual
+alerts. Showing it again restores the panels you chose to leave open, with their previous
+positions and map fullscreen state. Panels you closed individually stay closed.
 Right-click a timer to cancel it or all of them. Like the auto-attack bar it follows the
 overlay, and with the overlay unlocked it can be dragged off and snapped back (drop it near the
 overlay's bottom edge, double-click it, or right-click > Snap to overlay); the auto-attack bar

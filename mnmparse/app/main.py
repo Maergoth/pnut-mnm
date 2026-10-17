@@ -1305,6 +1305,8 @@ class App(QApplication):
         self.app_updates: Any | None = None
         self.triggers: Any | None = None
         self._low_health_flash: Any | None = None
+        self._overlay_group_visible = True
+        self._syncing_map_visibility = False
         self.tray: TrayIcon | None = None
         self._last_status: dict[str, Any] = {}
         self._selftest = False
@@ -1365,6 +1367,7 @@ class App(QApplication):
         self.tray.set_overlay_available(self.overlay is not None, lock_available=lock_available)
 
         show_overlay = self.settings.value("main/overlay_visible", bool(getattr(cfg, "overlay_enabled", False)), type=bool)
+        self._map_wanted_visible = self.settings.value("map/visible", True, type=bool)
         if selftest_seconds is not None:
             self._selftest = True
             show_overlay = True
@@ -1754,7 +1757,7 @@ class App(QApplication):
                               volume=self.cfg.low_health_volume, timer=False,
                               timer_label=f"Low HP: {percent:.1f}%", timer_color=theme.DANGER)
             self.triggers.fire(Match(trigger, "", "", {}, notification_seconds=3.0))
-        if self.cfg.low_health_flash:
+        if self.cfg.low_health_flash and self.__dict__.get("_overlay_group_visible", True):
             from mnmparse.app.low_health import LowHealthFlash
             from mnmparse.capture import find_game_window_info
             screen = None
@@ -1776,7 +1779,11 @@ class App(QApplication):
     def _on_message_for_triggers(self, msg: Any, ev: Any) -> None:
         text = getattr(msg, "text", "") or ""
         try:
-            self.triggers.observe(text)
+            enqueue = getattr(self.triggers, "enqueue", None)
+            if callable(enqueue):
+                enqueue(text, now=getattr(msg, "first_seen", None))
+            else:
+                self.triggers.observe(text)
         except Exception:  # noqa: BLE001
             log.exception("trigger evaluation failed on %r", text)
         page = self.window.page("triggers") if self.window is not None else None
@@ -1877,11 +1884,9 @@ class App(QApplication):
                 self.window.show_message(f"{pet} attributed to {owner}" if owner else f"Pet assignment cleared for {pet}")
 
     def set_map_visible(self, visible: bool) -> None:
-        if self.map_overlay is not None:
-            self.map_overlay.setVisible(bool(visible))
-        self._on_map_visibility(bool(visible))
-
-    def _on_map_visibility(self, visible: bool) -> None:
+        """Remember the map's own choice, subject to the global overlay switch."""
+        visible = bool(visible)
+        self._map_wanted_visible = visible
         if not self._shut_down:
             self.settings.setValue("map/visible", visible)
         if self.window is not None:
@@ -1889,6 +1894,24 @@ class App(QApplication):
             button.blockSignals(True)
             button.setChecked(visible)
             button.blockSignals(False)
+        self._sync_map_visibility()
+
+    def _on_map_visibility(self, visible: bool) -> None:
+        if self._shut_down or self.__dict__.get("_syncing_map_visibility", False):
+            return
+        self.set_map_visible(visible)
+
+    def _sync_map_visibility(self) -> None:
+        if self.map_overlay is None:
+            return
+        wanted = self.__dict__.get("_map_wanted_visible")
+        if wanted is None:
+            wanted = self.settings.value("map/visible", True, type=bool)
+        self._syncing_map_visibility = True
+        try:
+            self.map_overlay.setVisible(bool(wanted and self.__dict__.get("_overlay_group_visible", True)))
+        finally:
+            self._syncing_map_visibility = False
 
     def play_sound(self, name: str) -> None:
         """A built-in sound through the trigger audio (its volume and output device)."""
@@ -1918,7 +1941,7 @@ class App(QApplication):
     # -- overlay ----------------------------------------------------------------------
 
     def set_overlay_visible(self, visible: bool) -> None:
-        """Show or hide the overlay (our own window; shown without activation)."""
+        """Show or hide the full overlay, including its independent game windows."""
         if self.overlay is None:
             if self.window is not None:
                 self.window.set_overlay_state(False)
@@ -2053,6 +2076,14 @@ class App(QApplication):
         self._sync_overlay_settings()
 
     def _on_overlay_visibility(self, visible: bool) -> None:
+        self._overlay_group_visible = bool(visible)
+        self._sync_map_visibility()
+        popout = self.__dict__.get("revenge_popout")
+        if popout is not None:
+            popout.set_overlay_visible(visible)
+        flash = self.__dict__.get("_low_health_flash")
+        if not visible and flash is not None:
+            flash.stop()
         if self.window is not None:
             self.window.set_overlay_state(visible)
         if self.tray is not None:
@@ -2310,6 +2341,9 @@ class App(QApplication):
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)
         self.stop_capture()
+        close_triggers = getattr(self.triggers, "close", None)
+        if callable(close_triggers):
+            close_triggers()
         revenge = self.__dict__.get("revenge")
         flash = self.__dict__.get("_low_health_flash")
         if flash is not None:

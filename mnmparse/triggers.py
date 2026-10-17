@@ -35,7 +35,7 @@ import uuid
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import regex
 
@@ -55,13 +55,19 @@ _LEGACY_TIMER_MODES = {"restart": "replace", "ignore": "retain"}
 #: Built-in cues (generated as small .wav files the first time they are needed).
 BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling", "Siren")
 STORE_VERSION = 1
-# Each search has an enforceable engine deadline. The store also limits an entire
-# line so many individually expensive expressions cannot monopolize the GUI.
+# Matching CPU use above 30 ms is diagnostic; regex engine limits allow additional
+# scheduling time. Synchronous callers also limit work started for one line;
+# background callers can finish all triggers without sharing that line budget.
 REGEX_TIMEOUT_S = 0.030
+# Engine timeouts use wall time on Windows, so allow scheduling delays before
+# deciding whether an expression actually spent too much matcher CPU time.
+REGEX_SEARCH_TIMEOUT_S = 0.150
+REGEX_WORKER_TIMEOUT_S = 1.0
 LINE_MATCH_BUDGET_S = 0.150
 MAX_PATTERN_CHARS = 2048
 MAX_LINE_CHARS = 8192
 _quarantined_patterns: dict[str, str] = {}
+_quarantine_lock = threading.Lock()
 _store_replace_lock = threading.Lock()
 
 _WORD_RX = re.compile(r"[0-9a-z]+")
@@ -180,8 +186,10 @@ def regex_problem(pattern: str) -> str:
     """A safe, source-free explanation suitable for live/editor/import feedback."""
     if len(pattern) > MAX_PATTERN_CHARS:
         return f"The pattern is too long (maximum {MAX_PATTERN_CHARS} characters)."
-    if pattern in _quarantined_patterns:
-        return _quarantined_patterns[pattern]
+    with _quarantine_lock:
+        problem = _quarantined_patterns.get(pattern)
+    if problem:
+        return problem
     if _compiled(pattern) is None:
         return "The regular expression is invalid."
     return ""
@@ -202,38 +210,85 @@ def _word_ok(pat: str, word: str, fuzzy: bool) -> bool:
     return limit > 0 and edit_distance(pat, word, limit) <= limit
 
 
-def match_trigger(trigger: Trigger, line: str, *, deadline: float | None = None) -> Match | None:
-    """``Match`` when ``line`` satisfies ``trigger`` (disabled triggers never match)."""
+def match_trigger(trigger: Trigger, line: str, *, deadline: float | None = None,
+                  retry_busy: bool = False, cancelled: Callable[[], bool] | None = None,
+                  warnings: dict[str, str] | None = None) -> Match | None:
+    """Match one trigger, keeping scheduling timeouts separate from costly regexes.
+
+    ``retry_busy`` is for a background worker with a cancellation callback. The
+    default foreground path retries a scheduling delay only once. ``warnings``
+    receives transient failures without permanently invalidating the pattern.
+    """
     if not trigger.enabled or not trigger.pattern.strip() or not line:
         return None
     if len(trigger.pattern) > MAX_PATTERN_CHARS or len(line) > MAX_LINE_CHARS:
         return None
-    deadline = time.monotonic() + REGEX_TIMEOUT_S if deadline is None else deadline
-    if time.monotonic() >= deadline:
+    if deadline is not None and time.monotonic() >= deadline:
         return None
     if trigger.mode == "regex":
-        if trigger.pattern in _quarantined_patterns:
+        with _quarantine_lock:
+            quarantined = trigger.pattern in _quarantined_patterns
+        if quarantined:
             return None
         rx = _compiled(trigger.pattern)
         if rx is None:
             return None
-        try:
-            m = rx.search(line, timeout=max(0.0001, min(REGEX_TIMEOUT_S, deadline - time.monotonic())))
-        except TimeoutError:
-            # Repeating an expensive expression on every OCR line would consume
-            # the deadline repeatedly. Quarantine until its pattern is changed.
-            if len(_quarantined_patterns) >= 256:
-                _quarantined_patterns.pop(next(iter(_quarantined_patterns)))
-            _quarantined_patterns[trigger.pattern] = (
-                "Regular expression exceeded its time limit. Complex regular expressions can cause slowdowns; "
-                "simplify the pattern before enabling it again."
-            )
-            return None
+        attempts = 0
+        search_timeout = REGEX_WORKER_TIMEOUT_S if retry_busy else REGEX_SEARCH_TIMEOUT_S
+        while True:
+            if cancelled is not None and cancelled():
+                return None
+            wall_start = time.monotonic()
+            cpu_start = time.thread_time()
+            try:
+                m = rx.search(line, timeout=search_timeout, concurrent=True)
+            except TimeoutError:
+                cpu_elapsed = time.thread_time() - cpu_start
+                wall_elapsed = time.monotonic() - wall_start
+                log.warning(
+                    "Trigger %s regex timed out: wall=%.1f ms, matcher CPU=%.1f ms, search limit=%.1f ms",
+                    trigger.id, wall_elapsed * 1000, cpu_elapsed * 1000, search_timeout * 1000,
+                )
+                if cancelled is not None and cancelled():
+                    return None
+                if cpu_elapsed >= REGEX_TIMEOUT_S:
+                    # The engine's clock also counts Windows scheduling delays.
+                    # Only quarantine when this attempt used excessive CPU itself.
+                    with _quarantine_lock:
+                        if len(_quarantined_patterns) >= 256:
+                            _quarantined_patterns.pop(next(iter(_quarantined_patterns)))
+                        _quarantined_patterns[trigger.pattern] = (
+                            "Regular expression exceeded its time limit. Complex regular expressions can cause slowdowns; "
+                            "simplify the pattern before enabling it again."
+                        )
+                    return None
+                attempts += 1
+                if retry_busy or attempts < 2:
+                    continue
+                if warnings is not None:
+                    warnings[trigger.id] = (
+                        "Timer matching was delayed; this trigger remains enabled. "
+                        "That chat line could not be checked."
+                    )
+                log.warning("Trigger %s matching was delayed after %d attempts", trigger.id, attempts)
+                return None
+            cpu_elapsed = time.thread_time() - cpu_start
+            if cancelled is not None and cancelled():
+                return None
+            if cpu_elapsed >= REGEX_TIMEOUT_S:
+                log.warning("Trigger %s matching used %.1f ms of CPU", trigger.id, cpu_elapsed * 1000)
+                if warnings is not None:
+                    warnings[trigger.id] = (
+                        "Complex regular expressions can cause slowdowns. This trigger remains enabled; "
+                        "simplify its Text pattern if matching is delayed."
+                    )
+            break
         if m is None:
             return None
         groups = {k: v for k, v in m.groupdict().items() if v is not None}
         groups.update({str(i): g for i, g in enumerate(m.groups(), 1) if g is not None})
         return Match(trigger, line, m.group(0), groups)
+    deadline = time.monotonic() + REGEX_TIMEOUT_S if deadline is None else deadline
     pat = [w for w, _s, _e in _words(trigger.pattern)]
     if not pat:
         return None
@@ -420,22 +475,33 @@ class TriggerStore:
     def find(self, trigger_id: str) -> Trigger | None:
         return next((t for t in self.triggers if t.id == trigger_id), None)
 
-    def matches(self, line: str) -> list[Match]:
+    def matches(self, line: str, *, line_budget_s: float | None = LINE_MATCH_BUDGET_S,
+                retry_busy: bool = False, cancelled: Callable[[], bool] | None = None) -> list[Match]:
+        """Match one line; background callers can use ``line_budget_s=None``.
+
+        A line budget limits which searches are started. Once started, each regex
+        gets its full search allowance independently of compilation or earlier work.
+        """
         out = []
         self.match_warnings = {}
         if len(line) > MAX_LINE_CHARS:
             self.match_warnings[""] = f"Chat line exceeds the {MAX_LINE_CHARS}-character matching limit."
             return out
-        deadline = time.monotonic() + LINE_MATCH_BUDGET_S
+        deadline = None if line_budget_s is None else time.monotonic() + line_budget_s
         for trig in self.triggers:
-            if time.monotonic() >= deadline:
+            if cancelled is not None and cancelled():
+                break
+            if deadline is not None and time.monotonic() >= deadline:
                 self.match_warnings[""] = (
                     "Trigger matching reached the time limit for this line; some triggers were skipped. "
                     "Complex regular expressions can cause slowdowns; simplify them or reduce the number of active triggers."
                 )
                 break
-            m = match_trigger(trig, line, deadline=deadline)
-            if trig.enabled and trig.mode == "regex" and trig.pattern in _quarantined_patterns:
+            m = match_trigger(trig, line, deadline=deadline, retry_busy=retry_busy,
+                              cancelled=cancelled, warnings=self.match_warnings)
+            with _quarantine_lock:
+                quarantined = trig.pattern in _quarantined_patterns
+            if trig.enabled and trig.mode == "regex" and quarantined:
                 self.match_warnings[trig.id] = regex_problem(trig.pattern)
                 trig.enabled = False
             if m is not None:
