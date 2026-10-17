@@ -334,11 +334,13 @@ Check for overlapping enabled definitions when you hear duplicate alerts.</p>
 actual line in Feed and paste it into Test. Check the mode, spelling and rank. A regex ignores
 case but not punctuation or spacing. Quiet for or a running Retain timer can suppress a match.</p>
 <h3>A regular expression exceeds its time limit</h3>
-<p>Complex regular expressions can cause slowdowns. PNUT limits matching time to keep chat scanning
-responsive. During live capture, an expression that times out is disabled and a warning appears.
-Simplify its Text pattern before enabling it again. If the combined time limit for a chat line
-is reached, some triggers are skipped for that line; simplify slow patterns or reduce the
-number of active triggers.</p>
+<p>Live matching runs in the background so it cannot hold up the overlay. Busy-system delays
+are retried without disabling the expression. Countdown time is measured from when PNUT received
+the chat line, so a delayed result does not give a spell extra time.</p>
+<p>Complex regular expressions can still cause slowdowns. A search is disabled only when it
+exceeds its safety limit and has actually used excessive matching CPU time. The warning tells
+you to simplify its Text pattern before enabling it again. If matching falls far enough behind
+to fill the pending queue, a separate warning reports skipped lines.</p>
 <h3>The popup shows {damage} instead of a number</h3>
 <p>Use Regular expression with a named capture such as <code>(?P&lt;damage&gt;\d+)</code> in Text.
 Use exactly <code>{damage}</code> in Label. A Contains or Starts with pattern does not create

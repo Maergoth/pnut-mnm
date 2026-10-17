@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
@@ -59,7 +60,10 @@ def _mmss(seconds: float) -> str:
 class SessionView(QWidget):
     """Category tree of the session; ``compact`` is the overlay density."""
 
-    def __init__(self, compact: bool, parent: QWidget | None = None) -> None:
+    new_session_requested = Signal()
+
+    def __init__(self, compact: bool, parent: QWidget | None = None, *,
+                 show_new_session: bool = False) -> None:
         super().__init__(parent)
         self.compact = compact
         self._font_px = 13.0 if compact else 14.0
@@ -102,7 +106,19 @@ class SessionView(QWidget):
         self._footer = QLabel("", self)
         self._footer.setStyleSheet(f"color: {theme.MUTED}; background: transparent;")
         self._footer.setWordWrap(True)
-        root.addWidget(self._footer)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(12)
+        footer.addWidget(self._footer, 1)
+        self._new_session_button: QPushButton | None = None
+        if show_new_session and not compact:
+            self._new_session_button = QPushButton("New session", self)
+            self._new_session_button.setProperty("class", "primary")
+            self._new_session_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._new_session_button.setToolTip("Archive the current live session and start a new one.")
+            self._new_session_button.clicked.connect(self.new_session_requested)
+            footer.addWidget(self._new_session_button, 0, Qt.AlignmentFlag.AlignBottom)
+        root.addLayout(footer)
         self.set_font_scale(1.0)
 
     # ------------------------------------------------------------------
@@ -117,6 +133,11 @@ class SessionView(QWidget):
         self._view_mode = "self" if mode == "self" else "group"
         self._player = player or self._player
         self.set_snapshot(getattr(self, "_raw_snap", self._snap))
+
+    def set_new_session_enabled(self, enabled: bool) -> None:
+        """Only the owner of a live session may enable its optional footer action."""
+        if self._new_session_button is not None:
+            self._new_session_button.setEnabled(bool(enabled))
 
     def set_config(self, cfg: Any) -> None:
         self._cfg = cfg
@@ -200,7 +221,8 @@ class SessionView(QWidget):
                                 "Idle before gains is excluded; breaks after gains lower the rate.")
             elif status.get("xp_gain_points") is not None:
                 footer += "  ·  XP collecting…"
-                rate_tip = "Keep your XP bar visible for 30 seconds to estimate XP/hour."
+                rate_tip = ("Keep your XP bar visible for 30 seconds of stable comparisons to estimate XP/hour. "
+                            "An old rate is hidden if unstable readings prevent a new comparison for over a minute.")
             self._footer.setText(footer)
             self._footer.setToolTip(rate_tip)
         finally:

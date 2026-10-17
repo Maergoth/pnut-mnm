@@ -15,6 +15,9 @@ MAX_GAP = 2.0
 MAX_SAMPLE_GAP = 10.0
 XP_INTERVAL = 30.0
 XP_RATE_WINDOW = 3600.0
+# Allow an ordinary delayed comparison, but do not present an indefinitely old
+# rate while the bar keeps failing stability checks.
+XP_RATE_STALE_AFTER = 2 * XP_INTERVAL
 LEVEL_GRACE = 8.0
 PENDING_LIMIT = 64
 
@@ -76,10 +79,12 @@ class PlayerTelemetry:
         self._xp_width: float | None = None
         self._xp_candidate: float | None = None
         self._xp_candidate_count = 0
+        self._xp_candidate_ts: float | None = None
         self._xp_baseline: tuple[float, float] | None = None
         self._xp_stable: float | None = None
         self._xp_percent: float | None = None
         self._xp_drop: float | None = None
+        self._xp_drop_first_ts: float | None = None
         self._levels: list[float] = []
         self._used_levels: set[float] = set()
         self._checkpoint: tuple[float, float, set[float]] | None = None
@@ -164,11 +169,13 @@ class PlayerTelemetry:
     def _resolve_drop(self, ts: float) -> bool:
         if self._xp_drop is None:
             return True
+        first_low = self._xp_drop_first_ts if self._xp_drop_first_ts is not None else self._xp_drop
         matching = [level for level in self._levels if level not in self._used_levels
-                    and abs(level - self._xp_drop) <= LEVEL_GRACE]
+                    and abs(level - first_low) <= LEVEL_GRACE]
         if matching:
-            self._used_levels.add(min(matching, key=lambda level: abs(level - self._xp_drop)))
+            self._used_levels.add(min(matching, key=lambda level: abs(level - first_low)))
             self._xp_drop = None
+            self._xp_drop_first_ts = None
             return True
         if ts - self._xp_drop > LEVEL_GRACE:
             # A death or a bad reading must not become an automatic level wrap.
@@ -178,6 +185,7 @@ class PlayerTelemetry:
     def _start_window(self, ts: float, fraction: float | None) -> None:
         self._xp_baseline = (ts, fraction) if fraction is not None else None
         self._xp_drop = None
+        self._xp_drop_first_ts = None
         self._levels = []
         self._used_levels = set()
         self._checkpoint = None
@@ -195,6 +203,22 @@ class PlayerTelemetry:
             pending = self._xp_pending_gain_start
             self._xp_rate_intervals = [interval for interval in self._xp_rate_intervals
                                        if pending is not None and interval[1] > pending]
+        pending = self._xp_pending_gain_start
+        if (points > 0 and pending is not None and pending < start
+                and self._xp_pending_last_fraction is not None and self._xp_baseline is not None):
+            # A carried movement was measured across several checkpoints. The
+            # pixel deadband delayed confirmation, not the XP itself. Spread
+            # only the earlier portion over its measurement span so it ages out
+            # there. New gains and confirmed levels stay in the latest interval.
+            # As with a boundary inside one checkpoint, assume uniform progress
+            # where pixel resolution cannot locate the gain more precisely.
+            carried = min(points, max(0.0, 100.0 * (self._xp_pending_last_fraction - self._xp_baseline[1])))
+            rate = carried / (start - pending)
+            self._xp_rate_intervals = [
+                (begin, stop, gain + rate * max(0.0, stop - max(begin, pending)))
+                for begin, stop, gain in self._xp_rate_intervals
+            ]
+            points -= carried
         self._xp_rate_intervals.append((start, end, points))
         self._trim_rate_intervals(end)
 
@@ -212,19 +236,6 @@ class PlayerTelemetry:
             recent.append((start, stop, points))
         self._xp_rate_intervals = recent
 
-    def _correct_rate_checkpoint(self, start: float, end: float) -> None:
-        for index, (begin, stop, points) in enumerate(self._xp_rate_intervals):
-            if stop == end:
-                correction = 100.0 * (stop - begin) / (end - start)
-                if not any(gain > 0 for _begin, _stop, gain in self._xp_rate_intervals):
-                    # A late level line turns an idle-looking checkpoint into
-                    # the first gain; earlier idle must still be excluded.
-                    self._xp_rate_intervals = [(begin, stop, points + correction)]
-                else:
-                    self._xp_rate_intervals[index] = (begin, stop, points + correction)
-                return
-        self._record_rate_interval(start, end, 100.0)
-
     def _update_xp(self, fraction: float | None, ts: float, tolerance: float,
                    width: float | None, max_gap: float) -> None:
         if fraction is None:
@@ -237,6 +248,7 @@ class PlayerTelemetry:
                 self._xp_percent = None
                 self._xp_candidate = None
                 self._xp_candidate_count = 0
+                self._xp_candidate_ts = None
             return
         contiguous = (self._xp_previous_ts is not None and ts - self._xp_previous_ts <= max_gap
                       and width == self._xp_width)
@@ -250,6 +262,7 @@ class PlayerTelemetry:
             self._xp_gain = self._xp_seconds = 0.0
         if self._xp_candidate is None or abs(fraction - self._xp_candidate) > tolerance + 1e-12:
             self._xp_candidate, self._xp_candidate_count = fraction, 1
+            self._xp_candidate_ts = ts
             self._resolve_drop(ts)
             return
         self._xp_candidate_count += 1
@@ -265,12 +278,21 @@ class PlayerTelemetry:
                 # Two unconfirmed drops cannot establish a trustworthy interval.
                 self._start_window(ts, fraction)
                 return
+            # Match chat to the first low frame, not its later confirmation.
+            # The confirmation still starts the ordinary wait for late chat.
             self._xp_drop = ts
+            self._xp_drop_first_ts = self._xp_candidate_ts if self._xp_candidate_ts is not None else ts
         if not self._resolve_drop(ts):
             return
         start, baseline = self._xp_baseline
         duration = ts - start
         if duration < XP_INTERVAL:
+            return
+        levels = {level for level in self._levels if level <= ts}
+        if any(level not in self._used_levels and ts - level <= LEVEL_GRACE for level in levels):
+            # Chat can precede the visible bar wrap. Do not publish a whole
+            # level against a still-old endpoint while that transition settles.
+            # Older confirmations still cover full wraps missed between reads.
             return
         if (self._xp_pending_gain_start is not None
                 and ts - self._xp_pending_gain_start > XP_RATE_WINDOW):
@@ -280,7 +302,6 @@ class PlayerTelemetry:
             baseline = self._xp_pending_last_fraction if self._xp_pending_last_fraction is not None else baseline
             self._xp_pending_gain_start = None
             self._xp_pending_last_fraction = None
-        levels = {level for level in self._levels if start < level <= ts}
         delta = fraction - baseline + len(levels)
         if delta < -tolerance - 1e-12:
             self._start_window(ts, fraction)
@@ -314,17 +335,19 @@ class PlayerTelemetry:
         now = _number(ts)
         if now is None or self._xp_baseline is None or self._clock is None:
             return False
+        recent_checkpoint = False
         if self._checkpoint is not None:
             start, end, accepted = self._checkpoint
             if start < now <= end and self._clock - end <= LEVEL_GRACE:
-                if now not in accepted:
-                    accepted.add(now)
-                    self._xp_gain += 100.0
-                    self._xp_wraps += 1
-                    self._correct_rate_checkpoint(start, end)
-                return self.snapshot() != before
-        if not self._xp_baseline[0] < now <= self._clock + LEVEL_GRACE or now in self._levels:
+                if now in accepted:
+                    return False
+                recent_checkpoint = True
+        if ((not recent_checkpoint and not self._xp_baseline[0] < now <= self._clock + LEVEL_GRACE)
+                or now in self._levels):
             return False
+        # A late chat line belongs to the next verified comparison, even when
+        # its timestamp precedes that comparison's baseline. Keeping it pending
+        # lets a delayed visible wrap resolve without a phantom 100-point gain.
         self._levels.append(now)
         # More than this many pending levels is untrustworthy input.
         if len(self._levels) > PENDING_LIMIT:
@@ -334,8 +357,24 @@ class PlayerTelemetry:
         return self.snapshot() != before
 
     def snapshot(self) -> dict[str, Any]:
-        rate_gain = sum(points for _start, _end, points in self._xp_rate_intervals)
-        rate_seconds = sum(end - start for start, end, _points in self._xp_rate_intervals)
+        rate_gain = rate_seconds = 0.0
+        cutoff = self._clock - XP_RATE_WINDOW if self._clock is not None else -math.inf
+        for start, end, points in self._xp_rate_intervals:
+            # Project accepted measurements onto the current rolling window.
+            # Leave their original endpoints intact for future projections,
+            # weighting only the retained portion.
+            stop = min(end, self._clock) if self._clock is not None else end
+            duration = max(0.0, stop - max(start, cutoff))
+            measured_duration = end - start
+            if measured_duration > 0:
+                rate_gain += points * duration / measured_duration
+                rate_seconds += duration
+        if (self._xp_rate_intervals and self._clock is not None
+                and self._clock - self._xp_rate_intervals[-1][1] > XP_RATE_STALE_AFTER):
+            # Unstable samples are unknown progress, not proven idle time. Keep
+            # accepted history for recovery, but show collecting until a fresh
+            # comparison can replace this stale estimate.
+            rate_gain = rate_seconds = 0.0
         rate = rate_gain * 3600.0 / rate_seconds if rate_seconds else None
 
         def rounded(value: float | None) -> float | None:

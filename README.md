@@ -322,8 +322,16 @@ the estimate; after an hour without gains, the next gaining interval starts a fr
 These are XP-bar percentage points, not exact XP numbers. The first rate appears after a
 complete 30-second comparison. Brief OCR misses are tolerated within the capture cadence;
 longer gaps, a changed region or pausing reset the recent window. Earlier measured totals
-remain. A detected own level-up confirms a bar wrap. Log imports
+remain. If unstable readings prevent a new comparison for more than a minute, the
+footer returns to **XP collecting…** until a fresh comparison is available. Small gains
+that need several comparisons to clear the pixel threshold age out over their measured
+time instead of all being assigned to the final comparison. A detected own level-up
+confirms a bar wrap; PNUT briefly waits for the bar to catch up when chat arrives first. Log imports
 cannot supply bar measurements. Older archived averages are labeled **XP session**.
+
+Use **New session** at the bottom right of the Session tab, beside the XP rate, to archive
+the current session and start a fresh one. The button is available while viewing your live
+session; archived, imported and demo sessions cannot reset it.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring
@@ -558,7 +566,10 @@ show only their countdown row. Notifications last four
 seconds and fade during the final second; up to four recent notifications appear at once,
 without displacing timer rows. "Quiet for" suppresses repeated non-timer notifications.
 The panel appears while timers or notifications are active (right-click >
-"Always show this panel" keeps it). Hiding the overlay also hides its notifications.
+"Always show this panel" keeps it). **Hide Overlay** hides all floating overlay parts,
+including the map, detached Revenge List, timer and attack panels, notifications and visual
+alerts. Showing it again restores the panels you chose to leave open, with their previous
+positions and map fullscreen state. Panels you closed individually stay closed.
 Right-click a timer to cancel it or all of them. Like the auto-attack bar it follows the
 overlay, and with the overlay unlocked it can be dragged off and snapped back (drop it near the
 overlay's bottom edge, double-click it, or right-click > Snap to overlay); the auto-attack bar

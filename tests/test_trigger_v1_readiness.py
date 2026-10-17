@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
@@ -19,7 +20,7 @@ from PySide6.QtWidgets import QApplication
 
 from mnmparse.config import Config
 from mnmparse.trigger_exchange import TriggerExchangeError, validate_trigger
-from mnmparse.triggers import MAX_PATTERN_CHARS, Match, Trigger, TriggerStore, match_trigger
+from mnmparse.triggers import MAX_PATTERN_CHARS, REGEX_SEARCH_TIMEOUT_S, REGEX_TIMEOUT_S, Match, Trigger, TriggerStore, match_trigger
 
 
 class TriggerDeadlineTests(unittest.TestCase):
@@ -27,22 +28,201 @@ class TriggerDeadlineTests(unittest.TestCase):
         from mnmparse import triggers
         triggers._quarantined_patterns.clear()
 
-    def test_catastrophic_regex_is_bounded_and_quarantined(self):
+    def test_cold_compilation_does_not_consume_regex_search_allowance(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"^Your Smite hits (?P<target>.+?) for (?P<damage>\d+) points")
+        line = "Your Smite hits A Goblin for 154 points."
+        compiled = triggers._compiled(trigger.pattern)
+        search = Mock(wraps=compiled.search)
+        clock = SimpleNamespace(value=0.0)
+
+        def compile_after_delay(_pattern):
+            clock.value += 1.0
+            return SimpleNamespace(search=search)
+
+        with patch("mnmparse.triggers.time.monotonic", side_effect=lambda: clock.value), \
+                patch("mnmparse.triggers._compiled", side_effect=compile_after_delay):
+            matched = match_trigger(trigger, line)
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.groups["damage"], "154")
+        search.assert_called_once_with(line, timeout=REGEX_SEARCH_TIMEOUT_S, concurrent=True)
+        self.assertNotIn(trigger.pattern, triggers._quarantined_patterns)
+
+    def test_started_regex_keeps_full_allowance_when_line_deadline_expires(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"^Your Smite hits .+? for (?P<damage>\d+) points")
+        line = "Your Smite hits A Goblin for 154 points."
+        compiled = triggers._compiled(trigger.pattern)
+        search = Mock(wraps=compiled.search)
+        clock = SimpleNamespace(value=0.0)
+
+        def compile_after_delay(_pattern):
+            clock.value += 1.0
+            return SimpleNamespace(search=search)
+
+        with patch("mnmparse.triggers.time.monotonic", side_effect=lambda: clock.value), \
+                patch("mnmparse.triggers._compiled", side_effect=compile_after_delay):
+            matched = match_trigger(trigger, line, deadline=0.001)
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.groups["damage"], "154")
+        search.assert_called_once_with(line, timeout=REGEX_SEARCH_TIMEOUT_S, concurrent=True)
+        self.assertEqual(trigger.problems(), [])
+
+    def test_exhausted_line_budget_skips_regex_without_disabling_it(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"(?P<target>.+?) is rooted")
+        store = TriggerStore()
+        store.triggers = [trigger]
+        with patch("mnmparse.triggers._compiled", side_effect=AssertionError("Budget-exhausted search was started")):
+            self.assertIsNone(match_trigger(trigger, "A Goblin is rooted", deadline=time.monotonic() - 1))
+            self.assertEqual(store.matches("A Goblin is rooted", line_budget_s=0), [])
+        self.assertTrue(trigger.enabled)
+        self.assertNotIn(trigger.pattern, triggers._quarantined_patterns)
+        self.assertEqual(trigger.problems(), [])
+        self.assertIn("", store.match_warnings)
+
+    def test_background_matching_finishes_all_triggers_without_shared_line_budget(self):
+        from mnmparse import triggers
+
+        store = TriggerStore()
+        store.triggers = [Trigger(name="Root", mode="regex", pattern="rooted"),
+                          Trigger(name="Goblin", mode="regex", pattern="Goblin")]
+        compiled = {trigger.pattern: triggers._compiled(trigger.pattern) for trigger in store.triggers}
+        clock = SimpleNamespace(value=0.0)
+
+        def compile_after_delay(pattern):
+            clock.value += 1.0
+            return compiled[pattern]
+
+        with patch("mnmparse.triggers.time.monotonic", side_effect=lambda: clock.value), \
+                patch("mnmparse.triggers._compiled", side_effect=compile_after_delay):
+            matches = store.matches("A Goblin is rooted", line_budget_s=None)
+        self.assertEqual([matched.trigger.name for matched in matches], ["Root", "Goblin"])
+        self.assertEqual(store.match_warnings, {})
+        self.assertTrue(all(trigger.enabled for trigger in store.triggers))
+
+    def test_scheduling_timeout_retries_without_quarantining_simple_regex(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"(?P<target>.+?) is rooted")
+        line = "A Goblin is rooted"
+        matched = triggers._compiled(trigger.pattern).search(line)
+        search = Mock(side_effect=[TimeoutError, matched])
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=search)), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, 0.001, 0.001, 0.002]):
+            result = match_trigger(trigger, line)
+        self.assertEqual(result.groups["target"], "A Goblin")
+        self.assertEqual(search.call_count, 2)
+        self.assertNotIn(trigger.pattern, triggers._quarantined_patterns)
+        self.assertEqual(trigger.problems(), [])
+
+    def test_repeated_scheduling_delays_remain_bounded_and_leave_trigger_enabled(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"(?P<target>.+?) is rooted")
+        store = TriggerStore()
+        store.triggers = [trigger]
+        search = Mock(side_effect=TimeoutError)
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=search)), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, 0.001, 0.001, 0.002]):
+            self.assertEqual(store.matches("A Goblin is rooted"), [])
+        self.assertEqual(search.call_count, 2)
+        self.assertTrue(trigger.enabled)
+        self.assertNotIn(trigger.pattern, triggers._quarantined_patterns)
+        self.assertEqual(trigger.problems(), [])
+        self.assertIn("remains enabled", store.match_warnings[trigger.id])
+
+    def test_successful_slow_regex_is_logged_without_chat_text_or_quarantine(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"(?P<target>.+?) is rooted")
+        line = "A Goblin is rooted"
+        matched = triggers._compiled(trigger.pattern).search(line)
+        warnings = {}
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=Mock(return_value=matched))), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, REGEX_TIMEOUT_S + 0.001]), \
+                self.assertLogs("mnmparse.triggers", level="WARNING") as logged:
+            result = match_trigger(trigger, line, warnings=warnings)
+        self.assertEqual(result.groups["target"], "A Goblin")
+        self.assertIn(trigger.id, " ".join(logged.output))
+        self.assertNotIn(line, " ".join(logged.output))
+        self.assertEqual(trigger.problems(), [])
+        self.assertTrue(trigger.enabled)
+        self.assertIn("Complex regular expressions can cause slowdowns", warnings[trigger.id])
+        self.assertIn("remains enabled", warnings[trigger.id])
+
+    def test_worker_retries_scheduling_delays_until_original_line_matches(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern=r"(?P<target>.+?) is rooted")
+        store = TriggerStore()
+        store.triggers = [trigger]
+        line = "A Goblin is rooted"
+        matched = triggers._compiled(trigger.pattern).search(line)
+        search = Mock(side_effect=[TimeoutError, TimeoutError, TimeoutError, matched])
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=search)), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, 0.001, 0.001, 0.002, 0.002, 0.003, 0.003, 0.004]):
+            matches = store.matches(line, line_budget_s=None, retry_busy=True, cancelled=Event().is_set)
+        self.assertEqual([result.groups["target"] for result in matches], ["A Goblin"])
+        self.assertEqual(search.call_count, 4)
+        self.assertTrue(trigger.enabled)
+        self.assertEqual(store.match_warnings, {})
+
+    def test_worker_scheduling_retry_stops_when_cancelled(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern="rooted")
+        store = TriggerStore()
+        store.triggers = [trigger]
+        cancelled = Event()
+
+        def delayed_search(*_args, **_kwargs):
+            cancelled.set()
+            raise TimeoutError
+
+        search = Mock(side_effect=delayed_search)
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=search)), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, 0.001]):
+            self.assertEqual(store.matches("A Goblin is rooted", line_budget_s=None,
+                                           retry_busy=True, cancelled=cancelled.is_set), [])
+        self.assertEqual(search.call_count, 1)
+        self.assertTrue(trigger.enabled)
+        self.assertEqual(store.match_warnings, {})
+        self.assertNotIn(trigger.pattern, triggers._quarantined_patterns)
+
+    def test_timeout_quarantines_only_when_that_search_used_matcher_cpu(self):
+        from mnmparse import triggers
+
+        trigger = Trigger(mode="regex", pattern="rooted")
+        store = TriggerStore()
+        store.triggers = [trigger]
+        search = Mock(side_effect=TimeoutError)
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=search)), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, REGEX_TIMEOUT_S + 0.001]), \
+                self.assertLogs("mnmparse.triggers", level="WARNING") as logged:
+            self.assertEqual(store.matches("A Goblin is rooted"), [])
+        self.assertEqual(search.call_count, 1)
+        self.assertFalse(trigger.enabled)
+        self.assertIn(trigger.pattern, triggers._quarantined_patterns)
+        self.assertIn("Complex regular expressions can cause slowdowns", store.match_warnings[trigger.id])
+        self.assertIn("simplify the pattern", store.match_warnings[trigger.id])
+        diagnostics = " ".join(logged.output)
+        for expected in (trigger.id, "wall=", "matcher CPU=", "search limit="):
+            self.assertIn(expected, diagnostics)
+        self.assertNotIn("A Goblin is rooted", diagnostics)
+        self.assertNotIn(trigger.pattern, diagnostics)
+        trigger.enabled = True
+        with patch("mnmparse.triggers._compiled", side_effect=AssertionError("Quarantined regex was retried")):
+            self.assertIsNone(match_trigger(trigger, "A Goblin is rooted"))
+
+    def test_catastrophic_regex_search_is_bounded(self):
         trigger = Trigger(mode="regex", pattern=r"(?:(?:a+)+)+$")
         start = time.monotonic()
         self.assertIsNone(match_trigger(trigger, "a" * 6000 + "!"))
         self.assertLess(time.monotonic() - start, 0.5)
-        self.assertIn("time limit", " ".join(trigger.problems()))
-        store = TriggerStore()
-        store.triggers = [trigger]
-        self.assertEqual(store.matches("a" * 6000 + "!"), [])
-        self.assertFalse(trigger.enabled)
-        self.assertIn(trigger.id, store.match_warnings)
-        self.assertIn("Complex regular expressions can cause slowdowns", store.match_warnings[trigger.id])
-        self.assertIn("simplify the pattern before enabling it again", store.match_warnings[trigger.id])
-        trigger.enabled = True
-        with patch("mnmparse.triggers._compiled", side_effect=AssertionError("Quarantined regex was retried")):
-            self.assertIsNone(match_trigger(trigger, "a" * 6000 + "!"))
 
     def test_many_expensive_patterns_have_one_line_budget(self):
         store = TriggerStore()
@@ -53,7 +233,7 @@ class TriggerDeadlineTests(unittest.TestCase):
             clock.value += .033
             return None
 
-        # Separate the store's wall-clock policy from the native engine's CPU
+        # Separate the store's wall-clock policy from the native engine's search
         # deadline, already verified above. This cannot depend on CPU contention
         # or timeout-check scheduling during the full suite.
         with patch("mnmparse.triggers.time.monotonic", side_effect=lambda: clock.value), \
@@ -318,7 +498,9 @@ class TriggerPresentationTests(unittest.TestCase):
         self.runner.fired.emit(Match(self.trigger, "Peer99 hits for 17", "Peer99"))
         self.assertEqual(page.recent.count(), 1)
         warning_trigger = Trigger(mode="regex", pattern=r"(?:(?:a+)+)+$")
-        self.assertIsNone(match_trigger(warning_trigger, "a" * 6000 + "!"))
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=Mock(side_effect=TimeoutError))), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, REGEX_TIMEOUT_S + 0.001]):
+            self.assertIsNone(match_trigger(warning_trigger, "a" * 6000 + "!"))
         message = " ".join(warning_trigger.problems())
         with patch.object(page, "_schedule_save") as schedule:
             self.runner.matching_warning.emit(message)
@@ -374,8 +556,39 @@ class TriggerPresentationTests(unittest.TestCase):
     def test_timed_out_manual_preview_cannot_fall_back_to_firing(self):
         self.runner.set_casual_mode(False)
         slow = Trigger(pattern=r"(?:(?:a+)+)+$(?#preview)", mode="regex")
-        self.runner.test(slow, "a" * 6000 + "!")
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=Mock(side_effect=TimeoutError))), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, REGEX_TIMEOUT_S + 0.001]):
+            self.runner.test(slow, "a" * 6000 + "!")
         self.runner.audio.run.assert_not_called()
+
+    def test_scheduling_delayed_manual_preview_cannot_fall_back_to_firing(self):
+        self.runner.set_casual_mode(False)
+        trigger = Trigger(pattern="rooted", mode="regex")
+        with patch("mnmparse.triggers._compiled", return_value=SimpleNamespace(search=Mock(side_effect=TimeoutError))), \
+                patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, 0.001, 0.001, 0.002]):
+            self.runner.test(trigger, "A Goblin is rooted")
+        self.runner.audio.run.assert_not_called()
+        self.assertTrue(trigger.enabled)
+        self.assertEqual(trigger.problems(), [])
+
+    def test_successful_slow_manual_preview_warns_and_still_fires_timer_and_audio(self):
+        self.runner.set_casual_mode(False)
+        warnings = []
+        fired = []
+        self.runner.matching_warning.connect(warnings.append)
+        self.runner.fired.connect(fired.append)
+        line = "Peer99 hits for 17"
+        with patch("mnmparse.triggers.time.thread_time", side_effect=[0.0, 0.04]), \
+                self.assertLogs("mnmparse.triggers", level="WARNING"):
+            self.runner.test(self.trigger, line)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Complex regular expressions can cause slowdowns", warnings[0])
+        self.assertEqual([matched.line for matched in fired], [line])
+        self.assertEqual([timer.label for timer in self.runner.board.timers], ["Peer99 17"])
+        self.runner.audio.run.assert_called_once()
+        self.assertEqual(self.runner.audio.run.call_args.args, ("speak",))
+        self.assertEqual(self.runner.audio.run.call_args.kwargs["speech"], "Peer99 hits for 17; Peer99 17")
+        self.assertTrue(self.trigger.enabled)
 
 
 if __name__ == "__main__":

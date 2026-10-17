@@ -28,6 +28,8 @@ def _probe(root: Path):
     with patch("mnmparse.app.main.QSettings", return_value=settings):
         app = App([])
     app.bootstrap(cfg, config_path=config_path)
+    assert not app.overlay.isVisible()
+    assert not app.map_overlay.isVisible()
     assert not any(isinstance(page, _MissingPage) for page in app.window._pages.values())
     assert "Carebear Mode" in app.window._mode_button.text()
     assert not app.triggers.store.path.samefile(Path(__file__).parents[1] / "triggers.json") if (Path(__file__).parents[1] / "triggers.json").exists() else True
@@ -50,6 +52,13 @@ def _probe(root: Path):
     assert app.revenge.remove_saved("a rat")
     app.overlay._revenge.pop_out_button.click()
     app.processEvents()
+    assert app.revenge_popout.isHidden(), "A pop-out request must respect the hidden overlay"
+    assert settings.value("revenge/visible", False, type=bool), "Remember the requested pop-out while hidden"
+    assert settings.value("map/visible", False, type=bool), "Global hiding must preserve the map preference"
+    app.set_overlay_visible(True)
+    app.processEvents()
+    assert app.overlay.isVisible()
+    assert app.map_overlay.isVisible()
     assert app.revenge_popout.isVisible()
     popout = app.revenge_popout
     app.revenge.pop_out_requested.emit()

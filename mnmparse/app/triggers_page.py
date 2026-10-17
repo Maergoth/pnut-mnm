@@ -1099,9 +1099,11 @@ class TriggersPage(QWidget):
             self.test_result.setText(f"⚠ Test line is too long (maximum {MAX_LINE_CHARS} characters).")
             return
         probe = Trigger.from_dict({**t.to_dict(), "enabled": True})
-        m = match_trigger(probe, line)
+        warnings: dict[str, str] = {}
+        m = match_trigger(probe, line, warnings=warnings)
         if m is None:
             problem = regex_problem(t.pattern) if t.mode == "regex" else ""
+            problem = problem or warnings.get(t.id, "")
             self.test_result.setText("⚠ " + problem if problem else "✗ No match")
         else:
             m = safe_trigger_match(m, self._cfg)
@@ -1110,6 +1112,8 @@ class TriggersPage(QWidget):
             said = fill_placeholders(t.speech, values) if t.action == "speak" else ""
             extra = f"  ·  says “{said}”" if said else ""
             result = f"✓ Matches  ·  label “{label}”{extra}"
+            if warnings:
+                result += "  ·  ⚠ " + " ".join(dict.fromkeys(warnings.values()))
             self.test_result.setText(result)
             self.test_result.setToolTip(f"{result}\nMatched text: {m.text}")
 
@@ -1130,10 +1134,15 @@ class TriggersPage(QWidget):
         elif which == "file":
             audio.play_file(self.file.text().strip(), t.volume)
         else:
-            m = match_trigger(Trigger.from_dict({**t.to_dict(), "enabled": True}), self.test_line.text())
-            if t.mode == "regex" and regex_problem(t.pattern):
-                self._update_test()
-                return
+            warnings: dict[str, str] = {}
+            m = match_trigger(Trigger.from_dict({**t.to_dict(), "enabled": True}), self.test_line.text(),
+                              warnings=warnings)
+            problem = regex_problem(t.pattern) if t.mode == "regex" else ""
+            problem = problem or warnings.get(t.id, "")
+            if problem:
+                self.test_result.setText("⚠ " + problem)
+                if regex_problem(t.pattern) or m is None:
+                    return
             values = (safe_trigger_match(m, self._cfg).values() if m
                       else {"line": t.pattern, "match": t.pattern, "name": t.name})
             audio.speak(fill_placeholders(self.speech.text(), values), t.volume)

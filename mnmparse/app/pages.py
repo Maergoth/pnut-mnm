@@ -3634,14 +3634,11 @@ class SessionPage(QWidget):
         top.addStretch(1)
         self._export = QPushButton("Export JSON")
         self._export.clicked.connect(self._on_export)
-        self._reset = QPushButton("New session")
-        self._reset.clicked.connect(self._on_reset)
         self._resume = QPushButton("Resume selected session")
         self._resume.clicked.connect(self._on_resume)
         self._resume.hide()
         top.addWidget(self._resume)
         top.addWidget(self._export)
-        top.addWidget(self._reset)
         layout.addLayout(top)
 
         history_row = QHBoxLayout()
@@ -3657,7 +3654,8 @@ class SessionPage(QWidget):
         for widget in (self._newer, self._older, self._history_hint):
             widget.hide()
 
-        self._view = SessionView(compact=False, parent=self)
+        self._view = SessionView(compact=False, parent=self, show_new_session=True)
+        self._view.new_session_requested.connect(self._on_reset)
         layout.addWidget(self._view, 1)
         self._status = _label("", "Muted")
         layout.addWidget(self._status)
@@ -3720,6 +3718,12 @@ class SessionPage(QWidget):
                 self._source.setItemText(index, f"Imported: {key}")
         self._display(self.shown())
 
+    def set_demo_active(self, active: bool) -> None:
+        """Synthetic data cannot archive or reset the user's current live session."""
+        self._demo_active = bool(active)
+        self._export.setEnabled(not self._demo_active)
+        self._update_new_session_action()
+
     def refresh_archives(self) -> None:
         getter = getattr(self._engine, "archived_sessions", None)
         if not callable(getter):
@@ -3739,7 +3743,7 @@ class SessionPage(QWidget):
             self._since.setText(f"since {started}")
         else:
             self._since.setText("")
-        self._reset.setEnabled(self._source.currentData() is None)
+        self._update_new_session_action()
         self._resume.setVisible(str(self._source.currentData()).startswith("archive:"))
         self._resume.setEnabled(not bool(getattr(self._engine, "is_running", False)))
 
@@ -3795,6 +3799,8 @@ class SessionPage(QWidget):
         self._view.set_view_mode("self" if checked and not casual_enabled(self._cfg) else "group", self._cfg.player_name or "You")
 
     def _on_reset(self) -> None:
+        if self._source.currentData() is not None or getattr(self, "_demo_active", False):
+            return
         reset = getattr(self._engine, "reset_session", None)
         if callable(reset):
             if reset() is False:
@@ -3803,6 +3809,10 @@ class SessionPage(QWidget):
             self.new_session_requested.emit()
             self.refresh_archives()
             self._status.setText("Previous session archived. New session started.")
+
+    def _update_new_session_action(self) -> None:
+        self._view.set_new_session_enabled(self._source.currentData() is None
+                                           and not getattr(self, "_demo_active", False))
 
     def _on_export(self) -> None:
         if getattr(self, "_demo_active", False):

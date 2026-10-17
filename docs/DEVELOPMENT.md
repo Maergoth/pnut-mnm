@@ -143,6 +143,24 @@ number of items use `widgets.FlowLayout`; long single-line text uses `widgets.El
 text in the tooltip); meter columns carry a `drop` priority; the main window's minimum size is
 re-read from its content on every layout request (`MainWindow._sync_minimum_size`).
 
+### Trigger matching and timer delivery
+
+Live chat triggers use `TriggerRunner.enqueue()` and a single FIFO worker in
+`app/trigger_matching.py`. Only matching happens off the GUI thread: immutable trigger
+snapshots are checked, then results are delivered through a queued Qt signal. The GUI
+rejects results after edits, deletion, disabling, timer clearing or shutdown. Timers and
+cooldowns use the line's original observation time; an already-expired delayed timer
+does not play a new start cue or receive a fresh duration.
+
+Regex compilation is excluded from the search allowance, and each expression gets an
+independent engine limit. The Windows regex engine's elapsed-time clock can include
+descheduling, so a timeout alone cannot quarantine a pattern. Matching-thread CPU time
+must also reach 30 ms. Foreground previews allow 150 ms per attempt and retry once;
+the background worker allows one second per attempt and retries scheduling-only delays
+until completion or cancellation. Successful matches using over 30 ms of CPU are logged
+without raw chat or patterns. The worker finishes every trigger instead of sharing the
+synchronous API's 150 ms line budget; its bounded queue reports overflow explicitly.
+
 ### Pipeline, step by step
 
 1. **Capture.** `capture.WgcWindowSource` finds the game window through a read-only

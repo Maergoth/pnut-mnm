@@ -6,7 +6,7 @@ import inspect
 import os
 from pathlib import Path
 import tempfile
-from types import MethodType
+from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -93,6 +93,7 @@ class MapLockWiringTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.temp.name) / "settings.ini"), QSettings.Format.IniFormat)
+        self.settings.setValue("main/overlay_visible", True)
         self.host = None
 
     def tearDown(self):
@@ -115,12 +116,12 @@ class MapLockWiringTests(unittest.TestCase):
         self.qt_app.processEvents()
         self.temp.cleanup()
 
-    def bootstrap(self, cfg=None, *, combat_available=True, trigger_runner=None):
+    def bootstrap(self, cfg=None, *, combat_available=True, trigger_runner=None, map_factory=_MapWindow):
         self.host = _AppHarness(self.settings, combat_available=combat_available, trigger_runner=trigger_runner)
         with patch("mnmparse.app.main.app_icon.ensure_icon_file"), \
              patch("mnmparse.app.main.QSystemTrayIcon.isSystemTrayAvailable", return_value=False), \
              patch("mnmparse.app.main.TrayIcon", side_effect=lambda icon, _parent: TrayIcon(icon)), \
-             patch("mnmparse.app.map_overlay.MapOverlay", _MapWindow), \
+             patch("mnmparse.app.map_overlay.MapOverlay", map_factory), \
              patch("mnmparse.app.map_downloads.MapDownloadController", side_effect=lambda *_: _DownloadController()), \
              patch("mnmparse.app.app_updates.AppUpdateController", side_effect=lambda *_: _DownloadController()):
             self.host.bootstrap(replace(cfg or Config(), start_capture_on_launch=False, setup_complete=True),
@@ -187,6 +188,143 @@ class MapLockWiringTests(unittest.TestCase):
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
         self.assertTrue(reopened.value("revenge/visible", False, type=bool))
         self.assertEqual(reopened.value("revenge/geometry", QRect()), saved)
+
+    def test_hide_overlay_hides_and_restores_detached_windows_without_changing_preferences(self):
+        self.settings.setValue("revenge/visible", True)
+        host = self.bootstrap(Config(player_name="Hero", revenge_enabled=True))
+        host.overlay.timer_panel.set_always_show(True)
+        host.overlay.attack_bar.enabled = True
+        host.overlay.attack_bar.sync()
+        host.overlay.timer_panel._docked = False
+        host.overlay.attack_bar._docked = False
+        self.assertTrue(host.overlay.timer_panel.isVisible())
+        self.assertTrue(host.overlay.attack_bar.isVisible())
+        self.assertTrue(host.map_overlay.isVisible())
+        self.assertTrue(host.revenge_popout.isVisible())
+
+        host.tray._overlay_action.trigger()
+        for widget in (host.overlay, host.overlay.timer_panel, host.overlay.attack_bar,
+                       host.map_overlay, host.revenge_popout):
+            self.assertFalse(widget.isVisible(), widget.objectName())
+        self.assertTrue(self.settings.value("map/visible", False, type=bool))
+        self.assertTrue(self.settings.value("revenge/visible", False, type=bool))
+        self.assertTrue(host.window._map_button.isChecked())
+
+        host.tray._overlay_action.trigger()
+        for widget in (host.overlay, host.overlay.timer_panel, host.overlay.attack_bar,
+                       host.map_overlay, host.revenge_popout):
+            self.assertTrue(widget.isVisible(), widget.objectName())
+
+    def test_overlay_hidden_at_startup_keeps_saved_map_and_revenge_choices(self):
+        self.settings.setValue("main/overlay_visible", False)
+        self.settings.setValue("revenge/visible", True)
+        host = self.bootstrap(Config(player_name="Hero", revenge_enabled=True))
+        self.assertFalse(host.map_overlay.isVisible())
+        self.assertFalse(host.revenge_popout.isVisible())
+        self.assertTrue(self.settings.value("map/visible", False, type=bool))
+        self.assertTrue(self.settings.value("revenge/visible", False, type=bool))
+        host.shutdown()
+        self.assertFalse(self.settings.value("main/overlay_visible", True, type=bool))
+        self.assertTrue(self.settings.value("map/visible", False, type=bool))
+        self.assertTrue(self.settings.value("revenge/visible", False, type=bool))
+
+    def test_global_show_preserves_individually_closed_map_and_revenge_list(self):
+        host = self.bootstrap(Config(player_name="Hero", revenge_enabled=True))
+        host.show_revenge_popout()
+        host.map_overlay.close()
+        host.revenge_popout.hide()
+        host.set_overlay_visible(False)
+        host.set_overlay_visible(True)
+        self.assertFalse(host.map_overlay.isVisible())
+        self.assertFalse(host.revenge_popout.isVisible())
+        self.assertFalse(self.settings.value("map/visible", True, type=bool))
+        self.assertFalse(self.settings.value("revenge/visible", True, type=bool))
+
+    def test_windows_requested_or_refreshed_while_hidden_wait_for_global_show(self):
+        host = self.bootstrap(Config(player_name="Hero", revenge_enabled=True))
+        host.set_map_visible(False)
+        host.set_overlay_visible(False)
+        host.set_map_visible(True)
+        host.show_revenge_popout()
+        host.revenge.save_attacker("Bandit")
+        host.revenge.prompts_changed.emit()
+        host.revenge.set_config(replace(host.cfg, revenge_enabled=False))
+        host.revenge.set_config(host.cfg)
+        # Even a direct show request from an independent map control is gated.
+        host.map_overlay.show()
+        self.assertFalse(host.map_overlay.isVisible())
+        self.assertFalse(host.revenge_popout.isVisible())
+        host.set_overlay_visible(True)
+        self.assertTrue(host.map_overlay.isVisible())
+        self.assertTrue(host.revenge_popout.isVisible())
+
+    def test_fullscreen_map_survives_global_hide_show_with_its_state_and_preference(self):
+        from mnmparse.app.map_overlay import MapOverlay
+        from mnmparse.maps import MapRepository
+
+        repo = MapRepository(Path(self.temp.name) / "maps")
+        host = self.bootstrap(map_factory=lambda settings: MapOverlay(settings, repo))
+        host.map_overlay.toggle_fullscreen()
+        self.qt_app.processEvents()
+        self.assertTrue(host.map_overlay.isFullScreen())
+        host.set_overlay_visible(False)
+        self.assertFalse(host.map_overlay.isVisible())
+        self.assertTrue(self.settings.value("map/fullscreen", False, type=bool))
+        self.assertTrue(self.settings.value("map/visible", False, type=bool))
+        host.set_overlay_visible(True)
+        self.qt_app.processEvents()
+        self.assertTrue(host.map_overlay.isVisible())
+        self.assertTrue(host.map_overlay.isFullScreen())
+
+    def test_hidden_overlay_stays_hidden_when_timers_revenge_alerts_and_prompts_arrive(self):
+        from mnmparse.app.triggers_runtime import TriggerRunner
+        from mnmparse.parser import parse_line
+        from mnmparse.triggers import TriggerStore
+
+        runner = TriggerRunner(TriggerStore(Path(self.temp.name) / "triggers.json"))
+        runner.audio.run = Mock()
+        runner.audio.voices = Mock(return_value=[])
+        runner.audio.devices = Mock(return_value=[])
+        host = self.bootstrap(Config(player_name="Hero", revenge_enabled=True), trigger_runner=runner)
+        host.set_overlay_visible(False)
+        runner.start_one_time_timer("Root", 30)
+        host._on_revenge_alert("Bandit")
+        source = "Caster's Lesser Iceblast hits YOU for 177 points of Cold Damage!"
+        host.revenge.on_message(SimpleNamespace(text=source), parse_line(source, 1, "Hero"))
+        panel = host.overlay.timer_panel
+        self.assertTrue(panel._popups)
+        self.assertIn("caster", panel._revenge_buttons)
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(host.overlay.attack_bar.isVisible())
+        timer_start = runner.board.timers[0].start
+        popup_start = panel._popups[-1].created_at
+        host.set_overlay_visible(True)
+        self.assertTrue(panel.isVisible())
+        self.assertEqual(runner.board.timers[0].start, timer_start)
+        self.assertEqual(panel._popups[-1].created_at, popup_start)
+
+    def test_combat_overlay_header_hide_also_hides_independent_windows_and_flash(self):
+        host = self.bootstrap(Config(player_name="Hero", revenge_enabled=True))
+        host.show_revenge_popout()
+        host._low_health_flash = Mock()
+        host.overlay.hide()
+        self.assertFalse(host.map_overlay.isVisible())
+        self.assertFalse(host.revenge_popout.isVisible())
+        host._low_health_flash.stop.assert_called_once()
+        self.assertFalse(self.settings.value("main/overlay_visible", True, type=bool))
+
+    def test_low_health_while_overlay_hidden_keeps_audio_but_does_not_create_flash(self):
+        host = self.bootstrap(Config(player_status_enabled=True, low_health_enabled=True,
+                                     low_health_flash=True, low_health_threshold=30))
+        host.set_overlay_visible(False)
+        host.triggers = SimpleNamespace(fire=Mock())
+        try:
+            with patch("mnmparse.app.low_health.LowHealthFlash") as flash:
+                host._on_low_health(10)
+            host.triggers.fire.assert_called_once()
+            flash.assert_not_called()
+        finally:
+            host.triggers = None
 
     def test_bootstrap_uses_persisted_effective_lock_and_appearance(self):
         self.settings.setValue("overlay/locked", True)
