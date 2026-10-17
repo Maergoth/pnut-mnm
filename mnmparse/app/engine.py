@@ -1662,6 +1662,11 @@ class Engine(QObject):
         key = (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop), tuple(shape),
                tuple(reading.panel_rect) if reading is not None else None)
         prior = self._player_panel_key
+        if prior is not None and key[:2] == prior[:2] and not shape and reading is None:
+            # A missing frame has unknown dimensions, not a newly sized panel.
+            # Preserve its identity while telemetry applies the normal bounded
+            # missing-sample allowance. Real dimensions are checked on recovery.
+            key = prior
         if prior is not None and key[:3] == prior[:3] and reading is None:
             # The crop is unchanged; an OCR miss is not a new panel. Telemetry
             # bounds XP continuity from its last valid reading and resets HP.
@@ -1785,6 +1790,21 @@ class Engine(QObject):
                 "ocr_scale": float(cfg.ocr_scale),
                 "preprocess": cfg.preprocess,
                 "ocr_ms": round(ocr_ms, 1),
+                "player_status": {
+                    "enabled": bool(cfg.player_status_enabled),
+                    "xp_enabled": bool(cfg.player_status_xp),
+                    "separate_region": bool(separate),
+                    "frame_available": status_raw is not None,
+                    "fresh": bool(fresh),
+                    "panel_readable": reading is not None,
+                    "input_shape": list(status_raw.shape) if status_raw is not None else None,
+                    "panel_rect": list(reading.panel_rect) if reading is not None else None,
+                    "xp_bar_rect": list(reading.xp_bar_rect)
+                    if reading is not None and reading.xp_bar_rect is not None else None,
+                    "xp_percent": reading.xp_percent if reading is not None else None,
+                    "xp_resolution_points": reading.xp_resolution_points if reading is not None else None,
+                    "measurements": dict(getattr(self._session_stats, "player_status", {})),
+                },
                 "row_count": len(lines),
                 "rows_truncated": len(lines) > DIAG_ROW_LIMIT,
                 "coordinate_space": "unscaled_combat_crop_pixels",

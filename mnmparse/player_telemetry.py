@@ -250,12 +250,22 @@ class PlayerTelemetry:
                 self._xp_candidate_count = 0
                 self._xp_candidate_ts = None
             return
+        same_width = (width == self._xp_width or width is not None and self._xp_width is not None
+                      and abs(width - self._xp_width) <= 2)
         contiguous = (self._xp_previous_ts is not None and ts - self._xp_previous_ts <= max_gap
-                      and width == self._xp_width)
+                      and same_width)
+        if contiguous and width != self._xp_width:
+            # A changed denominator can move the fraction even with identical
+            # fill pixels. Ignore a small geometry glitch without resetting the
+            # anchor's candidate or extending its last-valid-sample deadline.
+            return
         if not contiguous:
             self._clear_xp()
         self._xp_previous_ts = ts
-        self._xp_width = width
+        if not contiguous:
+            # Persistent new geometry must establish fresh endpoints. Keep this
+            # anchor fixed so a slow resize cannot walk through the tolerance.
+            self._xp_width = width
         if self._checkpoint is not None and ts - self._checkpoint[1] > LEVEL_GRACE:
             self._checkpoint = None
         if self._xp_gain is None:

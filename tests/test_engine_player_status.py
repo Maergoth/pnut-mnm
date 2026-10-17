@@ -212,6 +212,120 @@ class EnginePlayerStatusTests(unittest.TestCase):
                 self.assertIsNone(engine._telemetry().snapshot()["xp_points_per_hour"])
                 self.assertEqual(engine._telemetry().snapshot()["xp_gain_points"], 2)
 
+    def test_four_fps_missing_raw_stats_image_preserves_completed_xp_comparisons(self):
+        cfg = dataclasses.replace(self.cfg, fps=4, player_status_separate=True,
+                                  player_status_crop=(20, 0, 28, 8))
+        engine = Engine(cfg)
+        engine._tracker = Tracker()
+        engine._ocr = Mock(read=Mock(return_value=[]))
+        chat = np.zeros((8, 8, 3), np.uint8)
+        stats = np.ones((8, 8, 3), np.uint8)
+        now = [100.0]
+
+        def read_stats(*_args):
+            return dataclasses.replace(self.reading(), xp_percent=22.0 if now[0] >= 110 else 20.0), []
+
+        with patch("mnmparse.player_status.read_status_crop", side_effect=read_stats) as reader, \
+                patch("mnmparse.app.engine.time.time", side_effect=lambda: now[0]):
+            for tick in range(245):
+                now[0] = 100 + tick / 4
+                # A missing raw image reaches the observer with shape=(), not
+                # the previous image's shape used by the ordinary OCR-miss test.
+                missing = tick in (80, 160)
+                previous_baseline = engine._telemetry()._xp_baseline
+                engine._process_frame(chat, cfg, cropped=True,
+                                      status_frame=None if missing else stats)
+                if missing:
+                    self.assertEqual(engine._telemetry()._xp_baseline, previous_baseline)
+                    self.assertFalse(engine._telemetry().snapshot()["hp_low"])
+            self.assertEqual(reader.call_count, 243)
+        summary = engine.session_snapshot().player_status
+        self.assertEqual(summary["xp_observed_seconds"], 60)
+        self.assertEqual(summary["xp_gain_points"], 2)
+        self.assertEqual(summary["xp_points_per_hour"], 120)
+
+    def test_real_flame_animation_completes_xp_window_without_inventing_gain(self):
+        from pathlib import Path
+        import cv2
+        from tests.test_player_status import panel
+
+        frames = []
+        for index in (1, 10, 30):
+            path = Path(__file__).parent / "fixtures" / f"xp-animated-bar-{index}.png"
+            track = cv2.imread(str(path))
+            self.assertIsNotNone(track, str(path))
+            image = np.full((260, 400, 3), 90, dtype=np.uint8)
+            image[191:220, 82:340] = track
+            frames.append(image)
+        cfg = dataclasses.replace(self.cfg, fps=4, crop=(0, 0, 400, 260),
+                                  player_status_separate=False)
+        engine = Engine(cfg)
+        engine._tracker = Tracker()
+        engine._ocr = Mock(read=Mock(return_value=panel()))
+        now = [100.0]
+        with patch("mnmparse.app.engine.time.time", side_effect=lambda: now[0]):
+            for tick in range(161):
+                now[0] = 100 + tick / 4
+                # Only OCR is stubbed. The captured bar pixels travel through
+                # the real reader, Engine observer, telemetry and session store.
+                engine._process_frame(frames[tick % len(frames)], cfg, cropped=True)
+        summary = engine.session_snapshot().player_status
+        self.assertAlmostEqual(summary["xp_percent"], 88.7, delta=.1)
+        self.assertGreaterEqual(summary["xp_observed_seconds"], 30)
+        self.assertEqual(summary["xp_gain_points"], 0)
+        self.assertEqual(summary["xp_points_per_hour"], 0)
+
+    def test_missing_raw_stats_image_does_not_extend_the_two_second_continuity_budget(self):
+        cfg = dataclasses.replace(self.cfg, fps=4, player_status_separate=True,
+                                  player_status_crop=(20, 0, 28, 8))
+        engine = Engine(cfg)
+        for tick in range(125):
+            now = 100 + tick / 4
+            value = dataclasses.replace(self.reading(), xp_percent=22.0 if now >= 110 else 20.0)
+            engine._observe_player_status(value, cfg, now, (8, 8, 3))
+        self.assertEqual(engine.session_snapshot().player_status["xp_points_per_hour"], 240)
+        # Brief image loss preserves completed comparisons; the time budget is
+        # measured from the last valid sample, not renewed by each missing frame.
+        engine._observe_player_status(None, cfg, 131.5, ())
+        self.assertEqual(engine.session_snapshot().player_status["xp_points_per_hour"], 240)
+        engine._observe_player_status(None, cfg, 133.25, ())
+        summary = engine.session_snapshot().player_status
+        self.assertIsNone(summary["xp_points_per_hour"])
+        self.assertEqual(summary["xp_observed_seconds"], 30)
+        self.assertEqual(summary["xp_gain_points"], 2)
+        for now in (133.5, 133.75):
+            engine._observe_player_status(dataclasses.replace(self.reading(), xp_percent=80.0),
+                                          cfg, now, (8, 8, 3))
+        self.assertEqual(engine._telemetry()._xp_baseline, (133.75, .8))
+        self.assertIsNone(engine.session_snapshot().player_status["xp_points_per_hour"])
+        self.assertEqual(engine.session_snapshot().player_status["xp_gain_points"], 2)
+
+    def test_real_capture_crop_and_image_dimension_changes_still_restart_partial_xp_windows(self):
+        original = dataclasses.replace(self.cfg, fps=4, player_status_separate=True,
+                                       player_status_crop=(20, 0, 28, 8))
+        changes = (
+            ("chat crop", dataclasses.replace(original, crop=(1, 0, 9, 8)), (8, 8, 3)),
+            ("stats crop", dataclasses.replace(original, player_status_crop=(21, 0, 29, 8)), (8, 8, 3)),
+            ("image dimensions", original, (9, 8, 3)),
+        )
+        for name, changed_cfg, changed_shape in changes:
+            with self.subTest(change=name):
+                engine = Engine(original)
+                for tick in range(80):
+                    engine._observe_player_status(self.reading(), original, 100 + tick / 4, (8, 8, 3))
+                engine._observe_player_status(None, changed_cfg, 120, ())
+                value = dataclasses.replace(self.reading(), xp_percent=80.0)
+                engine._observe_player_status(value, changed_cfg, 120.25, changed_shape)
+                self.assertIsNone(engine._telemetry()._xp_baseline)
+                engine._observe_player_status(value, changed_cfg, 120.5, changed_shape)
+                self.assertEqual(engine._telemetry()._xp_baseline, (120.5, .8))
+                for tick in range(1, 41):
+                    engine._observe_player_status(value, changed_cfg, 120.5 + tick / 4, changed_shape)
+                summary = engine.session_snapshot().player_status
+                self.assertEqual(summary["xp_observed_seconds"], 0)
+                self.assertEqual(summary["xp_gain_points"], 0)
+                self.assertIsNone(summary["xp_points_per_hour"])
+
     def test_unreadable_health_does_not_stop_xp_or_invent_low_health_alerts(self):
         signals = []
         self.engine.low_health.connect(signals.append)

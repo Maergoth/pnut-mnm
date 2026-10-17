@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
+import cv2
 import numpy as np
 
 from mnmparse.ocr import OcrLine
@@ -127,6 +129,34 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertAlmostEqual(reading.xp_percent, percent, delta=0.5)
                 expected = (20 if percent % 20 else 100) / (rect[2] - rect[0])
                 self.assertAlmostEqual(reading.xp_resolution_points, expected)
+
+    def test_real_animated_orange_bar_keeps_its_full_track_and_stable_reading(self):
+        readings = []
+        for frame in (1, 10, 30):
+            with self.subTest(frame=frame):
+                # Only the framed XP track is retained from these live captures;
+                # player names, text, other stats and chat are excluded.
+                path = Path(__file__).parent / "fixtures" / f"xp-animated-bar-{frame}.png"
+                track = cv2.imread(str(path))
+                self.assertIsNotNone(track)
+                image = np.full((260, 400, 3), 90, dtype=np.uint8)
+                image[191:220, 82:340] = track
+                reading = read_player_status(panel(), image, xp_bar_confirmed=True)
+                self.assertIsNotNone(reading)
+                self.assertEqual(reading.xp_bar_rect, (90, 196, 331, 215))
+                self.assertAlmostEqual(reading.xp_percent, 88.7, delta=.1)
+                self.assertAlmostEqual(reading.xp_resolution_points, 20 / 241)
+                readings.append(reading.xp_percent)
+        self.assertEqual(len(set(readings)), 1, "Animation must not change the measured bar position")
+
+    def test_orange_text_below_weight_is_not_an_xp_track(self):
+        image = np.full((260, 400, 3), 90, dtype=np.uint8)
+        cv2.putText(image, "Experience gained", (90, 212), cv2.FONT_HERSHEY_SIMPLEX,
+                    .5, (0, 90, 255), 1, cv2.LINE_AA)
+        reading = read_player_status(panel(), image, xp_bar_confirmed=True)
+        self.assertIsNotNone(reading)
+        self.assertIsNone(reading.xp_percent)
+        self.assertIsNone(reading.xp_bar_rect)
 
     def test_unconfirmed_bar_and_invalid_calibration_do_not_create_xp(self):
         image, rect = pixels(73.2)

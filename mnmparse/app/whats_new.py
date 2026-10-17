@@ -28,6 +28,17 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.15": ReleaseNotes(
+        changes=(
+            "XP/hour now reads the animated orange and yellow XP bar reliably, fixing sessions stuck on XP collecting.",
+            "Small bar-size detection changes and briefly missing stat frames preserve XP comparisons.",
+            "Local OCR diagnosis reports include mini-stat readings and measurement progress for troubleshooting.",
+        ),
+        settings_label="Mini stat settings",
+        settings_target="player_status_enabled",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.14": ReleaseNotes(
         changes=(
             "Timer triggers match in the background, keeping the overlay responsive while busy-system delays are retried.",
