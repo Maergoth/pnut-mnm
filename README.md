@@ -315,7 +315,9 @@ red screen edges. The threshold defaults to **10%**. Choose the threshold, sound
 and flash in the same section; **Preview sound** plays the selected tone and volume.
 
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
-Yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
+Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
+The reader supports the fill animation's darker shades; small detection jitter and briefly
+missing stat frames do not restart a comparison.
 The footer uses a time-weighted rolling average of the last **hour**, starting with
 the first gaining interval so earlier idle time does not dilute it. Breaks after gains lower
 the estimate; after an hour without gains, the next gaining interval starts a fresh rate.

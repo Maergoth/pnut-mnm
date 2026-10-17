@@ -86,7 +86,10 @@ def _image(bgr: np.ndarray | None) -> np.ndarray | None:
 def _colors(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     hsv = cv2.cvtColor(np.ascontiguousarray(bgr), cv2.COLOR_BGR2HSV)
     hue, saturation, value = cv2.split(hsv)
-    gold = (hue >= 14) & (hue <= 42) & (saturation >= 100) & (value >= 90)
+    # The live bar animates through orange and shaded gold. Treat the whole
+    # fill as one track: restricting this to bright yellow fragments both the
+    # framed-bar detector and the prefix measurement as the texture moves.
+    gold = (hue >= 4) & (hue <= 42) & (saturation >= 100) & (value >= 45)
     blue = (hue >= 85) & (hue <= 130) & (saturation >= 80) & (value >= 55)
     dark = value <= 35
     return gold, blue, dark

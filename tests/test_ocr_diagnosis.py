@@ -150,6 +150,35 @@ class EngineOcrDiagnosisTests(unittest.TestCase):
         self.engine._ocr = SimpleNamespace(read=lambda _image: [])
         self.assertIsNone(self.engine.ocr_diagnosis()["active_ocr"]["recognizer_language"])
 
+    def test_stat_bar_evidence_distinguishes_missing_images_and_detaches_history(self) -> None:
+        from mnmparse.player_status import PlayerStatusReading
+
+        cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(2, 3, 12, 13))
+        self.engine.update_config(cfg)
+        frame = np.zeros((20, 20, 3), np.uint8)
+        stats = np.zeros((10, 10, 3), np.uint8)
+        reading = PlayerStatusReading(20, 100, (0, 0, 10, 10), (), 88.7, (1, 7, 9, 9), .08)
+        with mock.patch("mnmparse.player_status.read_status_crop", return_value=(reading, [])):
+            self.engine._process_frame(frame, cfg, status_frame=stats)
+        report = self.engine.ocr_diagnosis()
+        evidence = report["recent_ocr_frames"][-1]["player_status"]
+        self.assertTrue(evidence["frame_available"])
+        self.assertTrue(evidence["panel_readable"])
+        self.assertEqual(evidence["xp_percent"], 88.7)
+        self.assertEqual(evidence["xp_bar_rect"], [1, 7, 9, 9])
+        original = copy.deepcopy(evidence)
+        evidence["xp_bar_rect"][0] = -999
+        evidence["measurements"]["xp_gain_points"] = 999
+        self.engine._session_stats.player_status["xp_gain_points"] = 123
+        stored = self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]["player_status"]
+        self.assertEqual(stored, original)
+        self.engine._process_frame(frame, cfg, cropped=True, status_frame=None)
+        missing = self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]["player_status"]
+        self.assertFalse(missing["frame_available"])
+        self.assertFalse(missing["panel_readable"])
+        self.assertIsNone(missing["xp_bar_rect"])
+        self.assertIsNone(missing["xp_percent"])
+
     def test_carebear_keeps_raw_diagnostic_input_and_authored_config(self) -> None:
         self.engine.update_config(dataclasses.replace(self.cfg, casual_mode=True,
                                                       casual_mode_confirmed=False))

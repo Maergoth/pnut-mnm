@@ -143,6 +143,19 @@ number of items use `widgets.FlowLayout`; long single-line text uses `widgets.El
 text in the tooltip); meter columns carry a `drop` priority; the main window's minimum size is
 re-read from its content on every layout request (`MainWindow._sync_minimum_size`).
 
+### XP bar capture evidence
+
+Readable HP does not prove that XP extraction is succeeding. The XP bar's flame
+animation includes dark orange pixels, so flat bright-yellow fixtures alone miss
+real capture failures. `tests/fixtures/xp-animated-bar-*.png` preserve only the framed
+track from three animation phases, without names, other stats or chat. Reader changes
+must keep their detected track and percentage consistent and complete the real engine's
+30-second comparison when those phases are cycled.
+
+Each bounded `recent_ocr_frames` diagnostic entry includes `player_status`: stat-image
+availability, detected panel/bar rectangles, raw XP and the completed measurement summary.
+This distinguishes an unreadable bar or lost comparison from a rate-display problem.
+
 ### Trigger matching and timer delivery
 
 Live chat triggers use `TriggerRunner.enqueue()` and a single FIFO worker in

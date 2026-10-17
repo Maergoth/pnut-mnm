@@ -327,6 +327,62 @@ class PlayerTelemetryTests(unittest.TestCase):
                 self.assertEqual(telemetry.snapshot()["xp_gain_points"], 2)
                 self.assertEqual(telemetry.snapshot()["xp_observed_seconds"], 31)
 
+    def test_one_or_two_pixel_width_jitter_preserves_xp_comparisons(self):
+        for pixels in (1, 2):
+            with self.subTest(pixels=pixels):
+                telemetry = PlayerTelemetry()
+                for ts in range(63):
+                    width = 200 if ts % 2 == 0 else 200 + (pixels if ts % 4 == 1 else -pixels)
+                    telemetry.update(reading(xp=.5 if ts < 3 else .52, xp_pixels=width), ts)
+                snap = telemetry.snapshot()
+                self.assertEqual(snap["xp_gain_points"], 2)
+                self.assertEqual(snap["xp_observed_seconds"], 60)
+                self.assertEqual(snap["xp_points_per_hour"], 120)
+                self.assertEqual(telemetry._xp_width, 200)
+
+    def test_changed_width_cannot_invent_xp_from_constant_yellow_or_blue_fill(self):
+        for fine in (False, True):
+            with self.subTest(fine=fine):
+                telemetry = PlayerTelemetry()
+                for ts in range(63):
+                    width = 200 if ts % 2 == 0 else 202 if ts % 4 == 1 else 198
+                    fraction = .4 + .2 * 150 / width if fine else 198 / width
+                    resolution = (20 if fine else 100) / width
+                    telemetry.update(reading(xp=fraction, xp_pixels=width,
+                                             xp_resolution_points=resolution), ts)
+                snap = telemetry.snapshot()
+                self.assertEqual(snap["xp_gain_points"], 0)
+                self.assertEqual(snap["xp_observed_seconds"], 60)
+                self.assertEqual(snap["xp_points_per_hour"], 0)
+
+    def test_persistent_minor_width_change_reacquires_after_original_sample_gap(self):
+        telemetry = PlayerTelemetry()
+        sample(telemetry, 0, 10, .5)
+        for ts in (11, 12):
+            telemetry.update(reading(xp=100 / 202, xp_pixels=202), ts)
+            self.assertEqual(telemetry._xp_previous_ts, 10)
+            self.assertEqual(telemetry._xp_baseline, (1, .5))
+        telemetry.update(reading(xp=100 / 202, xp_pixels=202), 13)
+        self.assertEqual(telemetry._xp_width, 202)
+        self.assertIsNone(telemetry._xp_baseline)
+        for ts in range(14, 45):
+            telemetry.update(reading(xp=100 / 202, xp_pixels=202), ts)
+        snap = telemetry.snapshot()
+        self.assertEqual(snap["xp_gain_points"], 0)
+        self.assertEqual(snap["xp_observed_seconds"], 30)
+        self.assertEqual(snap["xp_points_per_hour"], 0)
+
+    def test_width_jitter_uses_stable_anchor_instead_of_accepting_cumulative_resize(self):
+        telemetry = PlayerTelemetry()
+        sample(telemetry, 0, 10, .5)
+        for ts, width in ((11, 201), (12, 202)):
+            telemetry.update(reading(xp=.5, xp_pixels=width), ts)
+            self.assertEqual(telemetry._xp_baseline, (1, .5))
+        telemetry.update(reading(xp=.5, xp_pixels=203), 13)
+        self.assertIsNone(telemetry._xp_baseline)
+        self.assertEqual(telemetry._xp_width, 203)
+        self.assertEqual(telemetry.snapshot()["xp_observed_seconds"], 0)
+
     def test_brief_ocr_misses_preserve_xp_comparisons_but_require_fresh_health(self):
         for missing in ({}, reading(hp=50)):
             with self.subTest(missing=missing):
