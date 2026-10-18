@@ -224,7 +224,9 @@ class SessionView(QWidget):
                 rate_tip = ("Keep your XP bar visible for 30 seconds of stable comparisons to estimate XP/hour. "
                             "An old rate is hidden if unstable readings prevent a new comparison for over a minute.")
             self._footer.setText(footer)
-            self._footer.setToolTip(rate_tip)
+            session_tip = (f"Kills, items and coin per hour use {_mmss(snap.elapsed)} total session time, "
+                           "including idle time. New session starts a fresh average.")
+            self._footer.setToolTip(session_tip + ("\n\n" + rate_tip if rate_tip else ""))
         finally:
             self._tree.setUpdatesEnabled(True)
 

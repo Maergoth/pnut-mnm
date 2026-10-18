@@ -213,7 +213,7 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertEqual(clipped_widgets(view), [])
 
-    def test_unmeasured_sessions_omit_xp_and_clear_previous_footer_tooltip(self):
+    def test_unmeasured_sessions_omit_xp_and_keep_only_session_rate_tooltip(self):
         view = self.view()
         session = SessionStats(PLAYER, started=0)
         session.note_player_status(status())
@@ -221,7 +221,8 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
         view.set_snapshot(SessionStats(PLAYER, started=0).snapshot(now=600))
         self.assertIsNone(self.category(view, "experience"))
         self.assertNotIn("XP", view._footer.text())
-        self.assertEqual(view._footer.toolTip(), "")
+        self.assertIn("10:00 total session time, including idle time", view._footer.toolTip())
+        self.assertNotIn("30-second", view._footer.toolTip())
         view.set_snapshot(None)
         self.assertEqual(view._footer.toolTip(), "")
 

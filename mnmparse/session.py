@@ -26,6 +26,7 @@ from typing import Any
 from .grammar import Event, is_npc_name, is_you
 from .interrupts import CC_CATEGORIES
 from .party import PartyRoster
+from .parser import normalize_ocr
 from .player_telemetry import XP_RATE_WINDOW
 from .stats import canonical_names
 from .vocab import Vocabulary
@@ -383,6 +384,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
 
 #: "Your party member X has slain Y!" (also with a dropped first letter).
 _PARTY_LINE_RX = re.compile(r"^\W*[YV]?our\s+party\s+member\s", re.IGNORECASE)
+_OWN_PET_SUBJECT_RX = re.compile(r"^Your\s+pet\s+([A-Z][A-Za-z]*)\b")
 #: The same player cannot die twice this quickly: a second report is a re-read of the first.
 DEATH_DEDUP_S = 60.0
 
@@ -433,6 +435,9 @@ class SessionStats:
         self._rewards: list[LootEntry] = []
         #: every slain line: (ts, killer, victim, said "Your party member" / "You have slain")
         self._slain: list[tuple[float, str | None, str, bool]] = []
+        #: Explicit "Your pet" evidence, also learned from hits before a generic slain line.
+        #: A dictionary survives archive recovery without changing legacy slain rows.
+        self._observed_pet_owners: dict[str, str] = {}
         self._cc_by_type: Counter[str] = Counter()
         self._cc_on_npcs = 0
         self._cc_on_players = 0
@@ -501,6 +506,14 @@ class SessionStats:
                 self._version += 1
         if self.roster is None:
             self._local_roster.observe(ev)
+        if ev.is_pet:
+            # Passive slain messages swap actor/target: "Your pet Sprout has
+            # been slain by a wolf" identifies Sprout, not the killing wolf.
+            subject = _OWN_PET_SUBJECT_RX.match(normalize_ocr(ev.text or "")) if ev.kind == "kill" else None
+            pet = subject.group(1) if subject is not None else ev.actor
+            if pet and self._observed_pet_owners.get(pet) != self._you():
+                self._observed_pet_owners[pet] = self._you()
+                self._version += 1
         kind = ev.kind
         if kind == "loot" and ev.item:
             looter = self._name(ev.actor) or "?"
@@ -640,8 +653,23 @@ class SessionStats:
         """
         you = self._you()
         party, _known = self._party(who)
+        roster = self.roster if self.roster is not None else self._local_roster
+        pet_owners = {who(pet).casefold(): who(owner)
+                      for pet, owner in self._observed_pet_owners.items()}
+        # Manual corrections take precedence over automatic own-pet evidence,
+        # matching the combat meter. A pet follows its owner's group membership.
+        pet_owners.update({who(pet).casefold(): who(owner)
+                           for pet, owner in roster.pet_owners().items()})
+        party = {name for name in party if name.casefold() not in pet_owners}
+        party_by_name = {name.casefold(): name for name in party}
+
+        def credited_killer(raw: str) -> str:
+            name = who(raw)
+            owner = pet_owners.get(name.casefold(), name)
+            return party_by_name.get(owner.casefold(), owner)
+
         # Anyone seen killing an "a/an/the" mob is a player (outside the party, too).
-        players = party | {who(k) for _ts, k, v, _o in self._slain if k and is_npc_name(v)}
+        players = party | {credited_killer(k) for _ts, k, v, _o in self._slain if k and is_npc_name(v)}
         kills = deque(maxlen=detail_limit)
         deaths = deque(maxlen=detail_limit)
         outsiders = deque(maxlen=detail_limit)
@@ -658,8 +686,17 @@ class SessionStats:
         outsider_kills = 0
         last_death: dict[str, float] = {}
         for ts, killer_raw, victim_raw, ours in self._slain:
-            killer = who(killer_raw) if killer_raw else None
+            killer = credited_killer(killer_raw) if killer_raw else None
             victim = who(victim_raw)
+            if victim.casefold() in pet_owners:
+                # A summoned or charmed pet dying is neither a monster kill nor
+                # a player death, even when its name starts with "a/an/the".
+                continue
+            pet_killer = bool(killer_raw and who(killer_raw).casefold() in pet_owners)
+            if pet_killer:
+                # A party-addressed line about an assigned outsider's pet must
+                # follow the corrected owner rather than stale party evidence.
+                ours = ours and killer in party and victim not in party
             if ours:
                 killed(ts, killer, victim)
                 continue
@@ -670,7 +707,7 @@ class SessionStats:
             elif killer is not None and is_npc_name(killer):
                 is_death = True
             elif victim in party:
-                is_death = killer not in party
+                is_death = killer not in party or pet_killer
             elif killer in party:
                 is_death = False
             else:
@@ -714,8 +751,19 @@ class SessionStats:
         # the vocabulary keeps different mobs apart ("a jackal" is not "a jackal pup")
         canon = canonical_names(self._names, vocab=self.vocab) if self._names else {}
         vocab = self.vocab
+        roster = self.roster if self.roster is not None else self._local_roster
+        assignments = dict(self._observed_pet_owners)
+        assignments.update(roster.pet_owners())
+        # Explicit ownership declares separate identities. Otherwise a similar
+        # pet spelling can merge into its owner and hide real player deaths.
+        identities = set(assignments) | set(assignments.values())
+        protected = {name.casefold(): name for name in sorted(identities)}
+        protected.update({name.casefold(): name for name in sorted(roster.members() | {self._you()})
+                          if name.casefold() in protected})
 
         def who(name: str) -> str:
+            if name.casefold() in protected:
+                return protected[name.casefold()]
             name = canon.get(name, name)
             if vocab is None or is_you(name):
                 return name

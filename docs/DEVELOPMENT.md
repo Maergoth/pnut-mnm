@@ -282,7 +282,12 @@ synchronous API's 150 ms line budget; its bounded queue reports overflow explici
    the party known by then, so a member identified after their death still counts. With a
    roster (`SessionStats(roster=...)`, `set_roster`) that knows anyone, the roster decides the
    party for kills, deaths and crafts; other players' crafts go to `outsider_crafts`. A
-   `coin_split` joins the latest coin loot without a split within `COIN_SPLIT_JOIN_S` (5 s) if
+   pet's final blow is credited to its owner using explicit "Your pet" evidence or the
+   roster's manual assignments (manual corrections win). These identities are kept
+   distinct even when OCR would merge similar spellings; known pet deaths are excluded.
+   Ownership corrections rebuild existing kill totals, including bounded detail views.
+   Kills, items and coin per hour use total elapsed session time, including idle time.
+   A `coin_split` joins the latest coin loot without a split within `COIN_SPLIT_JOIN_S` (5 s) if
    it is not larger; `reward` goes to `rewards`; `coin_received` (splits plus your own loots
    without one) is the "Mine only" coin figure.
 8a. **Fused lines and garbled numbers** (`parser.py`). `split_fused` cuts a line whose parse
