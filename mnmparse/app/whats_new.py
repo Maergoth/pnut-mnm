@@ -28,6 +28,13 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.17": ReleaseNotes(
+        changes=("The Session footer now uses a compact Hourly label without repeated /h suffixes.",),
+        settings_label="App updates",
+        settings_target="app_update_button",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.16": ReleaseNotes(
         changes=(
             "Session kill totals now include your pets and assigned group pets, crediting their final blows to their owners.",

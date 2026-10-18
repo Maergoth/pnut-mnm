@@ -201,21 +201,20 @@ class SessionView(QWidget):
                     (f"Faction {f}", f"{'+' if d > 0 else ''}{d}", "") for f, d in snap.faction
                 ] + [("Experience ticks", f"{snap.xp_ticks}", "")]
                 self._add_category("personal", "Personal", f"{len(detail)}", detail, tooltip="viewer-only lines")
-            rate_label = "Rolling hour" if snap.activity_rates.get("kind") == "rolling" else "Session average"
             footer = (
                 f"{_mmss(snap.combat_seconds)} in combat over {snap.encounters} encounters  ·  "
-                f"{rate_label}: {snap.kills_per_hour:,.0f} kills/h  ·  {snap.items_per_hour:,.0f} items/h  ·  "
-                f"{format_coin(int(snap.coin_per_hour))}/h"
+                f"Hourly: {snap.kills_per_hour:,.0f} kills  ·  {snap.items_per_hour:,.0f} items  ·  "
+                f"{format_coin(int(snap.coin_per_hour))}"
             )
             status = snap.player_status
             rate = status.get("xp_points_per_hour")
             rate_tip = ""
             if rate is not None:
                 if status.get("xp_rate_kind", "session") == "session":
-                    footer += f"  ·  XP session ~{rate:,.1f}%/h"
+                    footer += f"  ·  XP session ~{rate:,.1f}%"
                     rate_tip = "Session average recorded by an older version, in estimated level percentage points per hour."
                 else:
-                    footer += f"  ·  XP ~{rate:,.1f}%/h"
+                    footer += f"  ·  XP ~{rate:,.1f}%"
                     measured = _mmss(status.get("xp_rate_observed_seconds") or 0)
                     rate_tip = ("Rolling one-hour estimate in level percentage points per hour, from 30-second bar comparisons. "
                                 f"Based on {measured} measured so far. "

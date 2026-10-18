@@ -204,7 +204,7 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
                 self.assertIn("Measured time", text)
                 self.assertNotIn("kill", text)
                 self.assertNotIn("HP", text)
-                self.assertIn("XP ~18.0%/h", view._footer.text())
+                self.assertIn("XP ~18.0%", view._footer.text())
                 self.assertIn("30-second bar comparisons", view._footer.toolTip())
                 self.assertIn("hour", view._footer.toolTip())
                 top.setExpanded(True)
@@ -234,7 +234,7 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
             with self.subTest(compact=compact):
                 view = self.view(compact)
                 view.set_snapshot(session.snapshot(now=600))
-                self.assertIn("XP session ~18.0%/h", view._footer.text())
+                self.assertIn("XP session ~18.0%", view._footer.text())
                 self.assertIn("older version", view._footer.toolTip())
 
     def test_collecting_state_shows_current_bar_without_fake_rate_or_gain(self):
