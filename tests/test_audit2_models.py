@@ -339,7 +339,10 @@ class CoinTests(unittest.TestCase):
         self.assertEqual(mine.coin_total, 6 + 19 + 20 + 200)
         self.assertEqual(mine.coin_by_looter, [(LOOTED_BY_YOU, 11 + 37 + 200)])
         self.assertEqual(mine.coin_split, 6 + 19 + 20)
-        self.assertAlmostEqual(mine.coin_per_hour, 245.0)
+        # The first payment is exactly one hour old: retain it in session totals,
+        # but exclude it from the rolling (now - one hour, now] rate.
+        self.assertAlmostEqual(mine.coin_per_hour, 239.0)
+        self.assertAlmostEqual(snap.coin_per_hour, 277.0)
         self.assertEqual(snap.coin_total, 11 + 37 + 40 + 200, "the group view still shows everything looted")
 
 
