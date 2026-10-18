@@ -28,6 +28,17 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.16": ReleaseNotes(
+        changes=(
+            "Session kill totals now include your pets and assigned group pets, crediting their final blows to their owners.",
+            "Pet ownership corrections also update previously recorded kills. Pet deaths do not count as monster kills or player deaths.",
+            "Kills/hour, items/hour and coin/hour now use a rolling hour like XP/hour, keeping an old session's idle time from diluting your current pace.",
+        ),
+        settings_label="App updates",
+        settings_target="app_update_button",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.15": ReleaseNotes(
         changes=(
             "XP/hour now reads the animated orange and yellow XP bar reliably, fixing sessions stuck on XP collecting.",
