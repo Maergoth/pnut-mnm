@@ -26,7 +26,8 @@ EXE with a minimal Windows PATH. Only the ZIP and its `.sha256` file are release
 machine-specific install metadata and smoke reports are not.
 
 Publishing is automated. Squash merging a PR that bumps `__version__` in
-`mnmparse/__init__.py` reruns the gates on the merged commit, and the workflow's release
+`mnmparse/__init__.py` runs the build, startup and portable package gates on the merged
+commit without repeating the full regression suite, and the workflow's release
 job then publishes `v<version>` on GitHub with that run's gated ZIP and checksum attached,
 so the released package's embedded provenance identifies the exact merged commit. The
 release is created as a draft and published only after both assets are uploaded, because
@@ -42,9 +43,12 @@ tasks must not replace binaries or change files in a user's installed App folder
 pipeline publishes the tested release to GitHub so the app can download it.
 
 Use focused tests while editing, then the PR's complete Windows regression and portable
-release gate on the final commit. Do not repeat the full suite after it passes unless code
-changes or a new failure warrants it. CI runs on pull requests and main pushes; branch
-pushes and release tags do not duplicate the PR gate, and superseded runs are cancelled.
+release gate on the final commit. Merge release changes only after the PR gate passes;
+the full suite runs only for pull requests. Main pushes and manual workflow dispatches
+run the clean build, embedded startup/provenance and
+extracted ZIP checks before publishing or repairing a release. Do not repeat the full
+suite after it passes unless code changes or a new failure warrants it. Branch pushes
+and release tags do not duplicate the PR gate, and superseded runs are cancelled.
 
 Every release must update the in-app **What's New!** notes for its version in
 `mnmparse/app/whats_new.py` (a regression check blocks a version bump without its

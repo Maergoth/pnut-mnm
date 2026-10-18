@@ -31,6 +31,9 @@ jobs:
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
           if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
       - name: Run regression suite without game capture
+        # Regressions gate the PR; release runs verify the merged executable
+        # and portable package without repeating the full test suite.
+        if: github.event_name == 'pull_request'
         shell: pwsh
         run: |
           .\.venv\Scripts\python.exe -m unittest discover -s tests -v
