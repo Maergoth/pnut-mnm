@@ -81,7 +81,7 @@ from mnmparse.app import theme
 from mnmparse.app.crop_picker import CropPicker, button_qss, css_color, qcolor
 from mnmparse.app.models import ActorRow, EncounterSnapshot, SkillRow, build_snapshot, merge_snapshots, owner_row, snapshot_rows_for_tab
 from mnmparse.app.widgets import (
-    ElidedLabel, FeedView, FlowLayout, MeterTable, SliderRow, StatusChip,
+    AGGRO_EVENTS_TIP, ElidedLabel, FeedView, FlowLayout, MeterTable, SliderRow, StatusChip,
     ToggleSwitch, actor_display_name, prevent_wheel_value_changes,
 )
 from mnmparse.config import (
@@ -208,12 +208,12 @@ def _cc_types_text(types: dict[str, int]) -> str:
 
 
 def _utility_types_text(row: Any) -> str:
-    """``"2 stun, 1 condemned, 3 aggro"`` combining CC types, debuff types and aggro."""
+    """``"2 stun, 1 condemned, 3 aggro events"`` combining CC, debuffs and reported aggro events."""
     parts = [f"{n} {cat}" for cat, n in (getattr(row, "cc_types", None) or {}).items() if n]
     parts += [f"{n} {cat}" for cat, n in (getattr(row, "debuffs", None) or {}).items() if n]
     aggro = int(getattr(row, "aggro", 0) or 0)
     if aggro:
-        parts.append(f"{aggro} aggro")
+        parts.append(f"{aggro} aggro events")
     return ", ".join(parts) if parts else "-"
 
 
@@ -486,7 +486,7 @@ class _Segmented(QWidget):
 
 
 class _EncounterHeader(QWidget):
-    """Label, duration, total damage, raid DPS and a live/ended chip for one snapshot.
+    """Label, duration, total damage, group DPS and a live/ended chip for one snapshot.
 
     Wide: one row ``[title / subtitle] [stats] [chip] [actions]``.  When that does not
     fit, the stats move to a second row, so the header can get narrow without clipping
@@ -529,7 +529,7 @@ class _EncounterHeader(QWidget):
         stats_layout.setContentsMargins(0, 0, 0, 0)
         stats_layout.setSpacing(18)
         self._stats: dict[str, QLabel] = {}
-        for key, caption in (("duration", "Duration"), ("damage", "Total damage"), ("dps", "Raid DPS")):
+        for key, caption in (("duration", "Duration"), ("damage", "Total damage"), ("dps", "Group DPS")):
             col = QVBoxLayout()
             col.setSpacing(0)
             value = _label("-", "Stat")
@@ -820,7 +820,7 @@ class _DetailsPanel(QFrame):
             "max_hit": "Largest single hit, and the average damaging hit",
             "heals": f"{_num(row.heals)} healing done ({row.hps:,.1f} per second)",
             "taken": "Damage taken after mitigation; prevented = blocked plus absorbed",
-            "utility": "Crowd control landed + debuffs landed + aggro gained",
+            "utility": "Crowd control landed + debuffs landed + aggro events.\n\n" + AGGRO_EVENTS_TIP,
         }
         for key in ("damage", "dps", "heals"):
             if not metric_available(row, key):

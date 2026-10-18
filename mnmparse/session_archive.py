@@ -25,9 +25,8 @@ from .session import LootEntry, SessionEntry, SessionSnapshot, SessionStats, _Co
 from .stats import Encounter, Stats
 
 DETAIL_FIELDS = {"_loot": LootEntry, "_rewards": LootEntry, "_coins": _Coin,
-                 "_slain": tuple, "_craft_entries": tuple, "_mez_breaks": tuple, "_mez_break_entries": tuple}
-COUNTER_FIELDS = {"_items_by_name", "_items_by_looter", "_coin_by_looter", "_cc_by_type", "_faction", "_names",
-                  "_mez_break_counts"}
+                 "_slain": tuple, "_craft_entries": tuple}
+COUNTER_FIELDS = {"_items_by_name", "_items_by_looter", "_coin_by_looter", "_cc_by_type", "_faction", "_names"}
 
 
 def _json(value: Any) -> str:
@@ -225,7 +224,8 @@ class SessionArchive:
                     roster.merge_dict(value, max_age_s=float("inf"))
                     setattr(stats, name, roster)
             elif name == "_recent":
-                stats._recent = deque((SessionEntry(**entry) for entry in value), maxlen=200)
+                stats._recent = deque((SessionEntry(**entry) for entry in value if entry.get("kind") != "awaken"),
+                                      maxlen=200)
             elif name in COUNTER_FIELDS:
                 setattr(stats, name, Counter(value))
             elif name == "_item_looters":
@@ -273,26 +273,22 @@ class SessionArchive:
             return None
         data = json.loads(row[0])
         personal = data.pop("_personal_totals", {})
+        # Retired metric fields may still exist in previews from earlier releases.
+        for field in ("mez_breaks", "mez_break_details", "mez_breaks_by_breaker", "mez_breaks_unknown", "mez_breaks_total"):
+            data.pop(field, None)
         for field in ("loot", "rewards"):
             data[field] = [LootEntry(**item) for item in data[field]]
-        data["recent"] = [SessionEntry(**item) for item in data["recent"]]
-        for field in ("items_by_name", "items_by_looter", "mez_breaks", "kill_entries", "craft_entries",
+        data["recent"] = [SessionEntry(**item) for item in data["recent"] if item.get("kind") != "awaken"]
+        for field in ("items_by_name", "items_by_looter", "kill_entries", "craft_entries",
                       "coin_by_looter", "crafts_by_crafter", "crafts_by_item", "kills_by_killer", "kills_by_target",
-                      "deaths_by_player", "cc_by_type", "skill_ups", "faction", "outsider_deaths", "outsider_crafts",
-                      "mez_break_details", "mez_breaks_by_breaker"):
+                      "deaths_by_player", "cc_by_type", "skill_ups", "faction", "outsider_deaths", "outsider_crafts"):
             if field in data:
                 data[field] = [tuple(item) for item in data[field]]
         data["item_looters"] = {item: [tuple(pair) for pair in looters] for item, looters in data["item_looters"].items()}
         size = max(0, int(detail_limit))
         if "player_status" in data:
             data["player_status"] = _copy_player_status(data["player_status"])
-        # Older previews may contain inferred breakers; keep only observed targets/times.
-        data["mez_breaks_by_breaker"] = []
-        data["mez_breaks_total"] = data.get("mez_breaks_total", len(data.get("mez_breaks", [])))
-        data["mez_breaks_unknown"] = data["mez_breaks_total"]
-        if "mez_break_details" in data:
-            data["mez_break_details"] = [(ts, mob, None) for ts, mob, _actor in data["mez_break_details"]]
-        for field in ("loot", "rewards", "recent", "mez_breaks", "kill_entries", "craft_entries", "mez_break_details"):
+        for field in ("loot", "rewards", "recent", "kill_entries", "craft_entries"):
             if field in data:
                 data[field] = data[field][-size:] if size else []
         snap = SessionSnapshot(**data)

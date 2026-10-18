@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import logging
 import threading
+from io import BytesIO
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
@@ -18,6 +19,48 @@ from mnmparse.config import project_path
 from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title, zone_from_who
 
 log = logging.getLogger(__name__)
+
+# Ancient Crypt has 78 million pixels: its decoded image exceeds Qt's default
+# 256 MiB reader limit even though its compressed download is only 40 MiB.
+MAX_MAP_PIXELS = 100_000_000
+_MAP_DECODE_LOCK = threading.Lock()
+
+
+def _decode_map_image(data: bytes) -> QImage:
+    """Decode bounded originals off-thread without changing Qt's global limit."""
+    # Serialize decoding so rapid zone changes cannot expand several large
+    # originals at once. Downloads may still use both worker slots.
+    with _MAP_DECODE_LOCK:
+        buffer = QBuffer()
+        buffer.setData(data)
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        reader = QImageReader(buffer)
+        size = reader.size()
+        pixels = size.width() * size.height()
+        if size.isEmpty():
+            raise ValueError("The map image could not be read: " + reader.errorString())
+        if pixels > MAX_MAP_PIXELS:
+            raise ValueError("The map exceeds the supported image pixel limit")
+        limit = QImageReader.allocationLimit() * 1024 * 1024
+        if not limit or pixels * 4 <= limit:
+            image = reader.read()
+            if not image.isNull():
+                return image
+
+        # PNG readers need the original allocation even when scaled decoding
+        # is requested. Pillow can decode this explicitly bounded image while
+        # retaining full-resolution labels and alpha for zooming.
+        from PIL import Image
+        from PIL.ImageQt import toqimage
+
+        with Image.open(BytesIO(data)) as original:
+            if original.width * original.height > MAX_MAP_PIXELS:
+                raise ValueError("The map exceeds the supported image pixel limit")
+            if original.mode == "RGBA":
+                return toqimage(original)
+            with original.convert("RGBA") as rgba:
+                # ImageQt owns its backing bytes after the Pillow image closes.
+                return toqimage(rgba)
 
 
 def _wiki_icon() -> QIcon:
@@ -125,7 +168,7 @@ class _Load:
             data = self.repo.image(selected, refresh=self.refresh) if selected else b""
             # QImage is reentrant; decode expensive originals in this worker.
             # QPixmap creation and all scene changes remain in the GUI callback.
-            data = QImage.fromData(data) if data else QImage()
+            data = _decode_map_image(data) if data else QImage()
         except Exception as exc:
             log.info("Map load for %s: %s", self.zone, exc)
             error = str(exc)
@@ -451,11 +494,8 @@ class MapOverlay(QWidget):
         image = data if isinstance(data, QImage) else QImage.fromData(data)
         if image.isNull():
             self._set_status("The map image could not be read. Download maps in Settings to retry.")
-            # An incomplete cached response should not poison later retries.
-            try:
-                self.repo._path(selected_url, ".image").unlink(missing_ok=True)
-            except OSError:
-                pass
+            # A decoder/resource failure does not prove the cached bytes are
+            # corrupt. Explicit map updates can replace a damaged download.
             return
         self.view.set_image(image, preserve_view=(token == self._preserve_view_token
                                                   and selected_url == self._selected_url))

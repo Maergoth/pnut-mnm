@@ -615,6 +615,12 @@ def _row_color(row: Any) -> str:
 
 
 _TIP_STYLE = "font-family:'Segoe UI'; font-size:12px;"
+AGGRO_EVENTS_TIP = (
+    'Counts "looks angry at" notices and explicit taunts; matching notices just after a taunt count once.\n'
+    "Repeated notices may name the same holder.\n"
+    "These events do not establish actual target changes or measure threat."
+)
+_AGGRO_EVENTS_HTML = "<i>" + html.escape(AGGRO_EVENTS_TIP).replace("\n", "<br>") + "</i>"
 
 
 def _tip_table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -659,7 +665,7 @@ def _cell_tooltip(row: Any, key: str) -> str:
             ["Healing", _metric_text(row, "heals", f"{int(g('heals')):,}"),
              _metric_text(row, "hps", f"{float(g('hps')):,.1f} HPS")],
             ["Utility", f"{int(g('utility')):,}",
-             f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro"],
+             f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro events"],
             ["Taken", f"{int(g('taken')):,}",
              f"{float(g('dtps')):,.1f} DTPS, {int(g('prevented')):,} prevented"],
             ["Deaths", f"{int(g('deaths'))}", ""],
@@ -667,6 +673,8 @@ def _cell_tooltip(row: Any, key: str) -> str:
         table = _tip_table(["", "Total", ""], lines)
         note = (f"<br>{AVERAGE_UNAVAILABLE_TEXT}" if any(
             not metric_available(row, metric) for metric in ("damage", "heals")) else "")
+        if int(g("aggro")):
+            note += "<br>" + _AGGRO_EVENTS_HTML
         return f"<div style=\"{_TIP_STYLE}\">{title}<br>{table}{note}</div>"
     if key in ("damage", "dps", "hit_pct", "max", "share"):
         skills = list(g("skills", []) or [])
@@ -727,16 +735,18 @@ def _cell_tooltip(row: Any, key: str) -> str:
         lines += [[f"Debuff: {cat}", f"{n}"] for cat, n in debuffs.items()]
         taunts = int(g("taunts"))
         if aggro:
-            lines.append(["Aggro: taunts" if taunts == aggro else "Aggro gained", f"{aggro}"])
-        if taunts and taunts != aggro:
+            lines.append(["Aggro events", f"{aggro}"])
+        if taunts:
             lines.append(["  of which taunts", f"{taunts}"])
         table = _tip_table(["Effect", "Landed"], lines) if lines else ""
         by_skill = _tip_table(["Ability", "Landed"], [[name, f"{n}"] for name, n in list(skills.items())[:10]]) if skills else ""
         summary = (
             f"Utility {int(g('utility'))}: crowd control {landed} of {tries} tries{rate}, "
-            f"debuffs {sum(debuffs.values())}, aggro {aggro}"
+            f"debuffs {sum(debuffs.values())}, aggro events {aggro}"
         )
         parts = [p for p in (table, by_skill) if p]
+        if aggro:
+            parts.append(_AGGRO_EVENTS_HTML)
         return f"<div style=\"{_TIP_STYLE}\">{title}<br>{summary}{'<br>' + '<br>'.join(parts) if parts else ''}</div>"
     return _row_tooltip(row)
 
@@ -758,7 +768,7 @@ def zone_tooltip(row: Any, *, zone: str, fights: int, combat_s: float, of: int |
         ["Healing", _metric_text(row, "heals", f"{int(g('heals')):,}"),
          _metric_text(row, "hps", f"{float(g('hps')):,.1f} HPS")],
         ["Taken", f"{int(g('taken')):,}", f"{int(g('prevented')):,} prevented"],
-        ["Utility", f"{int(g('utility'))}", f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro"],
+        ["Utility", f"{int(g('utility'))}", f"{int(g('cc'))} CC, {sum(dict(g('debuffs', {}) or {}).values())} debuffs, {int(g('aggro'))} aggro events"],
         ["Melee", f"{int(g('hits'))}/{int(g('swings'))}",
          (f"{float(g('hit_pct')):.0f}% hit" if getattr(row, "misses_shown", True) else "hit rate unknown")
          + f", max {int(g('max_hit')):,}"],
@@ -769,6 +779,8 @@ def zone_tooltip(row: Any, *, zone: str, fights: int, combat_s: float, of: int |
         parts.append(_tip_table(["Top abilities", "Hits", "Total", "Max"], skills))
     if any(not metric_available(row, metric) for metric in ("damage", "heals")):
         parts.append(AVERAGE_UNAVAILABLE_TEXT)
+    if int(g("aggro")):
+        parts.append(_AGGRO_EVENTS_HTML)
     return f"<div style=\"{_TIP_STYLE}\">{head}<br>{'<br>'.join(parts)}</div>"
 
 
@@ -2022,6 +2034,7 @@ class WarningLatch:
 
 
 __all__ = [
+    "AGGRO_EVENTS_TIP",
     "METRICS",
     "zone_tooltip",
     "WarningLatch",

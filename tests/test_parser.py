@@ -92,6 +92,7 @@ SPEC_LINES: list[tuple[str, dict[str, object]]] = [
      dict(kind="kill", actor=ZOMBIE, target="You")),
     # ---- STATE / STATUS -------------------------------------------------
     ("Starting to attack.", dict(kind="status", amount=None)),
+    ("a stumbling zombie awakens.", dict(kind="awaken", target=ZOMBIE)),
     ("Stopped attacking.", dict(kind="status", amount=None)),
     ("Pidef jabs a stumbling zombie.", dict(kind="status", actor="Pidef", target=ZOMBIE, skill="jab", amount=None)),
     ("Pidef ambushes their victim!", dict(kind="status", actor="Pidef")),

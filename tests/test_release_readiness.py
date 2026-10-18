@@ -316,13 +316,14 @@ class QtReadinessTests(unittest.TestCase):
         worker = _Load(1, repo, "Night Harbor", entry, False, threading.Semaphore(1))
         results = []
         decoder_threads = []
-        original = QImage.fromData
+        from mnmparse.app.map_overlay import _decode_map_image
+        original = _decode_map_image
         def decode(data):
             decoder_threads.append(threading.get_ident())
             return original(data)
         worker.signal.ready.connect(lambda token, result, error: results.append((result, error)), Qt.ConnectionType.DirectConnection)
         thread = threading.Thread(target=worker.run)
-        with patch("mnmparse.app.map_overlay.QImage.fromData", side_effect=decode):
+        with patch("mnmparse.app.map_overlay._decode_map_image", side_effect=decode):
             thread.start()
             thread.join(3)
         self.assertFalse(thread.is_alive())

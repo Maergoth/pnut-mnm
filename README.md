@@ -277,8 +277,7 @@ past without being captured cannot be recovered.
   (a split line that wrapped onto a second row is joined to its loot), kills by mob type,
   deaths (yours and your party's; see "Encounters" below), crafted items (your party's only;
   other players' crafts are listed in the tooltip when **Show other groups** is on), quest rewards (kept out of the loot
-  count), zones entered and mez-break targets with times. The combat log does not name
-  who broke mez, so this list does not assign breaks to players. Session also shows time in combat and
+  count) and zones entered. Session also shows time in combat and
   hourly rates. The party is the same roster the meter uses. Hovering a category
   or an item shows the detail. "Mine only" (and the overlay's self view) keeps just your own
   loot, coin, kills, deaths and crafts; there the coin row is "Coin received", what you

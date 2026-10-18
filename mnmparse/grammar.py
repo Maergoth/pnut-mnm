@@ -284,6 +284,13 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("personal", r"^It\s+is\s+locked,\s+and\s+you\s+are\s+not\s+holding\s+the\s+key\b.*$"),
     ("personal", r"^Your\s+skin\s+tingles\b.*$"),
     ("personal", r"^You\s+(?:are\s+(?:starving|hungry|thirsty)\b.*|have\s+nothin\w*\s+to\s+(?:eat|drink)\b.*)$"),
+    ("personal", rf"^You\s+are\s+low\s+on\s+drink{_TAIL}"),
+    ("personal", rf"^You\s+glance\s+back,\s+certain\s+you\s+saw\s+movement{_TAIL}"),
+    ("personal", rf"^Your\s+pulse\s+quickens,\s+your\s+mind\s+uncertain\s+of\s+the\s+cause{_TAIL}"),
+    # Only a single command token: a free-form tail can swallow a fused combat message.
+    ("personal", rf"^Unknown\s+command:\s+\S+{_TAIL}"),
+    # A trade confirmation reports outgoing money, never coin looted or received.
+    ("personal", rf"^(?P<actor>You)\s+give\s+{_AMOUNT}\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+as\s+part\s+of\s+the\s+trade{_TAIL}"),
     # no experience for the viewer from this kill (outcome "too high level")
     ("personal", r"^Someone\s+in\s+your\s+party\s+is\s+(?P<outcome>too\s+high\s+level)\s+for\s+you\s+to\s+receive\s+experience\b.*$"),
     ("personal", rf"^You\s+harvest\s+[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)JlI|]?(?:\s*[lI1|])?{_TAIL}"),
@@ -297,12 +304,13 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     # a player: "Gozif Battle with them would be quite risky." / "Gozif You would probably be defeated by them in battle."
     ("consider", rf"^(?P<target>{PLAYER})\s+(?:Battle\s+with\s+them\s+would|You\s+would\s+(?:\w+\s+){{0,3}}(?:be\s+defeated|emerge\s+victorious))\b.*$"),
     ("consider", r"^(?:Would\s+you\s+like\s+to\s+die|You\s+would\s+(?:\w+\s+){0,2}be\s+defeated|be\s+defeated\s+in\s+battle|Battle\s+with\s+them\s+would|What\s+would\s+you\s+like\s+your\s+tombstone)\b.*$"),
+    ("consider", rf"^You\s+would\s+almost\s+certainly\s+be\s+crushed\s+by\s+them\s+in\s+battle[.!]?\s*\(PvP\s+Aggro\){_TAIL}"),
     # a corpse: "Gozif is dead. Their corpse will decay in 5 days and 19 hours."
     ("consider", rf"^(?P<target>{NAME})\s+is\s+dead\W+Their\s+corpse\s+will\s+decay\b.*$"),
     # ---- ZONE changes --------------------------------------------------------------------
     ("zone", r"^(?:Entering|You\s+have\s+entered)\s+(?P<target>.+?)\.?$"),
     ("zone", r"^Loading,?\s+please\s+wait\b.*$"),
-    ("personal", rf"^Your\s+skill\s+in\s+(?P<skill>.+?)\s+has\s+increased!?\s*(?:\((?P<amount>\d+)\))?{_TAIL}"),
+    ("personal", rf"^Your\s+[s•]kill\s+in\s+(?P<skill>.+?)\s+has\s+increased!?\s*(?:\((?P<amount>\d+)\))?{_TAIL}"),
     ("personal", rf"^(?P<actor>You|{PLAYER})\s+opts?\s+into\s+higher\s+level\s+PvP{_TAIL}"),
     ("personal", rf"^You\s+are\s+no\s+longer\s+opted\s+into\s+higher\s+level\s+PvP(?:\s+combat)?{_TAIL}"),
     ("personal", rf"^You\s+(?:eat|drink)\s+(?P<item>.+?){_TAIL}"),
@@ -363,7 +371,12 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     # an area stun with no target: "Fipuduzuleg smashes the ground around them with great force."
     ("cast", rf"^(?P<actor>{NAME})\s+(?P<skill>smash)es\s+the\s+[gz]round\b.*$"),
     ("interrupt", rf"^{_POSSESSIVE}\s+(?:casting|spell)\s+(?:is|was|has\s+been)\s+interrupted{_TAIL}"),
-    # ---- STATE / STATUS (no numbers) ------------------------------------
+    # ---- STATE / STATUS (never damage or HP healing) --------------------
+    ("status", rf"^{_POSSESSIVE}\s+(?P<skill>.+?)\s+restores\s+{_AMOUNT}\s+of\s+their\s+(?P<dtype>Mana){_TAIL}"),
+    ("status", rf"^(?P<actor>You|{PLAYER})\s+throws?\s+the\s+dice[.!]\s+Between\s+[\dO]+\s+and\s+\d+,\s+(?:you|they)\s+(?P<outcome>roll)\s+a\s+{_AMOUNT}{_TAIL}"),
+    # Hardcore broadcasts are separate from character XP levels and combat deaths.
+    ("status", rf"^(?P<actor>{PLAYER})\s+is\s+now\s+Hardcore\s+Level\s+{_AMOUNT}{_TAIL}"),
+    ("status", rf"^(?P<actor>{PLAYER})\s+has\s+died\s+and\s+joined\s+the\s+Heroes\s+of\s+Hardcore[.!]?\s*\(Level\s+{_AMOUNT}\){_TAIL}"),
     ("status", rf"^(?:Starting\s+to\s+attack|Stopped\s+attacking){_TAIL}"),
     ("status", rf"^(?P<actor>{NAME})\s+(?P<skill>dispel)s?\s+magic\s+from\s+(?P<target>you|{NAME})(?:\s*[.!]?\s*\((?P<outcome>[^()]+)\))?{_TAIL}"),
     ("status", rf"^(?P<actor>{NAME})\s+fires?\s+an\s+(?P<skill>exposing)\s+shot\s+at\s+(?P<target>YOU|you|{NAME}){_TAIL}"),

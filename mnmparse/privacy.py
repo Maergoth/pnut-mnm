@@ -127,9 +127,6 @@ def project_session(snap: Any, cfg: Any = None) -> Any:
     rewards = [dataclasses.replace(e, looter=player, source=None) for e in own.rewards]
     crafts = [(ts, player, item, n) for ts, _actor, item, n in own.craft_entries]
     kills = [(ts, player, "Enemy") for ts, _actor, _target in own.kill_entries]
-    hidden_targets = {name.casefold() for name in snap.party if name and name.casefold() != player.casefold()}
-    mez_details = [(ts, "Group member" if mob.casefold() in hidden_targets else mob, actor)
-                   for ts, mob, actor in own.mez_break_details]
     recent = [SessionEntry(e.ts, "loot", player, f"You looted {e.item}") for e in loot[-200:]]
     members = {n.casefold() for n in snap.party if n}
     if player:
@@ -140,8 +137,7 @@ def project_session(snap: Any, cfg: Any = None) -> Any:
     return dataclasses.replace(
         own, loot=loot, rewards=rewards, craft_entries=crafts, kill_entries=kills,
         recent=recent, party=[player] if player else [], outsider_deaths=[], outsider_kills=0,
-        outsider_crafts=[], mez_breaks=[(ts, mob) for ts, mob, _actor in mez_details],
-        mez_break_details=mez_details, cc_total=0, cc_by_type=[], cc_on_npcs=0, cc_on_players=0,
+        outsider_crafts=[], cc_total=0, cc_by_type=[], cc_on_npcs=0, cc_on_players=0,
         kills_by_target=[("Enemy", own.kills)] if own.kills else [],
         coin_split=own.coin_split if player else 0, coin_received=own.coin_received if player else 0,
         coin_total=own.coin_total if player else 0,

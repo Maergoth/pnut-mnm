@@ -113,7 +113,7 @@ class QtViewTests(unittest.TestCase):
         view.set_snapshot(s.snapshot(now=5.0))
         tree = view._tree
         titles = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
-        self.assertEqual(titles, ["Items looted", "Coin looted", "Kills", "Deaths", "Crafted", "Zones", "Mez breaks"])
+        self.assertEqual(titles, ["Items looted", "Coin looted", "Kills", "Deaths", "Crafted", "Zones"])
         items = tree.topLevelItem(0)
         self.assertEqual(items.text(1), "1")
         self.assertEqual(items.child(0).text(0), "Abepulifif")
@@ -152,46 +152,6 @@ class QtViewTests(unittest.TestCase):
         self.assertIn("Septimal", {items.child(i).text(0) for i in range(items.childCount())})
         view.close()
         view.deleteLater()
-
-    def test_mez_tree_lists_targets_and_times_without_individual_breaker_counts(self) -> None:
-        from PySide6.QtCore import Qt
-        from mnmparse.app.session_view import SessionView
-        from mnmparse.config import Config
-
-        stats = SessionStats(PLAYER, started=0)
-        for index, actor in enumerate(("You",) * 3 + ("Povebizu",)):
-            ts = index * 10
-            for offset, text in ((0, "a rat is mesmerized."),
-                                 (1, f"{actor} crushes a rat for 8 points of damage."),
-                                 (1.2, "a rat awakens.")):
-                stats.add(parse_line(text, ts + offset, PLAYER))
-        stats.add(parse_line("a skeleton awakens.", 50, PLAYER))
-        snap = stats.snapshot(now=60, detail_limit=2)
-        for compact in (False, True):
-            with self.subTest(compact=compact):
-                view = SessionView(compact=compact)
-                view.set_config(Config(player_name=PLAYER, casual_mode=False, casual_mode_confirmed=True))
-                view.set_snapshot(snap)
-
-                def mez():
-                    return next(view._tree.topLevelItem(i) for i in range(view._tree.topLevelItemCount())
-                                if view._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == "mez")
-
-                top = mez()
-                self.assertEqual(top.text(1), "5")
-                self.assertEqual([top.child(i).text(0) for i in range(top.childCount())],
-                                 ["a rat", "a skeleton"])
-                self.assertTrue(all(top.child(i).text(2) for i in range(top.childCount())))
-                self.assertTrue(all(top.child(i).childCount() == 0 for i in range(top.childCount())))
-                top.setExpanded(True)
-                view.set_snapshot(snap)
-                self.assertTrue(mez().isExpanded())
-                view.set_config(Config(player_name=PLAYER))
-                self.assertEqual(mez().text(1), "5")
-                self.assertEqual([mez().child(i).text(0) for i in range(mez().childCount())],
-                                 ["a rat", "a skeleton"])
-                view.close()
-                view.deleteLater()
 
     def test_overlay_lock_and_click_through_flags(self) -> None:
         from PySide6.QtCore import QSettings, Qt
@@ -274,7 +234,7 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(rows["Povebizu"].utility, 1)
         self.assertEqual(rows["Povebizu"].debuff_skills, {"Interdiction": 1})
 
-    def test_session_self_filter_and_mez_breaks(self) -> None:
+    def test_session_self_filter(self) -> None:
         from mnmparse.session import filter_session
 
         s = SessionStats(PLAYER, started=0.0)
@@ -291,7 +251,6 @@ class UtilityTests(unittest.TestCase):
             s.add(parse_line(text, float(ts), PLAYER))
         snap = s.snapshot(now=10.0)
         self.assertEqual(snap.items, 2)
-        self.assertEqual(snap.mez_breaks, [(6.0, "a skeletal warrior")])
         mine = filter_session(snap, PLAYER)
         self.assertEqual(mine.items, 1)
         self.assertEqual(mine.items_by_name, [("Worn Bow", 1)])
@@ -300,7 +259,6 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(mine.coin_split, 2)
         self.assertEqual((mine.kills, mine.kills_by_target), (1, [("a skeletal warrior", 1)]))
         self.assertEqual(mine.crafts, 1)
-        self.assertEqual(mine.mez_breaks, snap.mez_breaks)
 
 
 if __name__ == "__main__":

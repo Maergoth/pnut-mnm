@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import time
 
 from mnmparse.app import theme
 from mnmparse.session import SessionSnapshot, filter_session, format_coin
@@ -43,7 +42,6 @@ CATEGORY_COLORS: dict[str, str] = {
     "crafts": theme.KIND_COLORS.get("craft", "#a5d6a7"),
     "rewards": theme.KIND_COLORS.get("reward", theme.ACCENT),
     "zones": theme.KIND_COLORS.get("zone", "#7fc8c8"),
-    "mez": theme.KIND_COLORS.get("awaken", "#9fb3c8"),
     "personal": theme.KIND_COLORS.get("personal", "#7a8290"),
 }
 
@@ -194,7 +192,6 @@ class SessionView(QWidget):
                 )
             self._add_category("zones", "Zones", f"{len(snap.zones)}", [(z, "", "") for z in snap.zones],
                                tooltip=" → ".join(snap.zones) if snap.zones else "no zone change seen")
-            self._add_mez_breaks(snap)
             self._add_experience(snap)
             if snap.personal_included:
                 detail = [(f"Skill {s}", f"{v}", "") for s, v in snap.skill_ups] + [
@@ -258,14 +255,6 @@ class SessionView(QWidget):
             text = " · ".join(child.text(column) for column in range(3) if child.text(column))
             for column in range(3):
                 child.setToolTip(column, text + "\n" + tip)
-
-    def _add_mez_breaks(self, snap: SessionSnapshot) -> None:
-        """Show observed targets and times without guessing individual breakers."""
-        details = [(mob, "", time.strftime("%H:%M:%S", time.localtime(ts)))
-                   for ts, mob in snap.mez_breaks[-MAX_CHILDREN:]]
-        total = snap.mez_breaks_total or len(snap.mez_breaks)
-        self._add_category("mez", "Mez breaks", f"{total:,}", details,
-                           tooltip="The combat log names the target that awoke, not who broke mez.")
 
     def _add_items(self, snap: SessionSnapshot) -> None:
         """One expandable subtotal per person, followed by their complete item breakdown."""
