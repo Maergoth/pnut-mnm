@@ -28,6 +28,18 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.18": ReleaseNotes(
+        changes=(
+            "Ancient Crypt and other large maps now load at full resolution. Image-reading failures preserve cached maps.",
+            "Mez Breaks has been removed from Session statistics and exports; normal mez tracking is unchanged.",
+            "Combat headers now say Group DPS. Aggro events describes reported aggro notices and taunts more clearly.",
+            "More game messages are recognized, including mana restoration, dice rolls, trades and skill-up notices.",
+        ),
+        settings_label="App updates",
+        settings_target="app_update_button",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.17": ReleaseNotes(
         changes=("The Session footer now uses a compact Hourly label without repeated /h suffixes.",),
         settings_label="App updates",
