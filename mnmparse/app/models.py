@@ -188,13 +188,13 @@ class ActorRow:
     heal_skills: list[SkillRow] = field(default_factory=list)  #: healing breakdown by spell
     taken_from: list[SkillRow] = field(default_factory=list)  #: damage taken by "attacker: skill"
     cc_skills: dict[str, int] = field(default_factory=dict)  #: landed effects by ability name
-    utility: int = 0  #: Utility score = CC landed + debuffs landed + aggro gained
+    utility: int = 0  #: Utility score = CC landed + debuffs landed + reported aggro events
     debuffs: dict[str, int] = field(default_factory=dict)  #: non-damage effects and other utility actions by type
     debuff_skills: dict[str, int] = field(default_factory=dict)  #: debuffs landed by ability name
-    aggro: int = 0  #: times a mob turned on this actor ("X looks angry at Y")
+    aggro: int = 0  #: reported "looks angry at" notices plus taunts, with matching follow-up notices counted once
     prevented: int = 0  #: damage prevented on this actor by blocks and absorbs
     estimated: int = 0  #: hits and heals by this actor whose amount is a Dummy Fix estimate
-    taunts: int = 0  #: taunts used (each is also one aggro)
+    taunts: int = 0  #: taunts used (each is also one aggro event)
     enemy_heals: int = 0  #: healing this actor landed on enemies (a PvP foe, a mob): not in heals or hps
     #: On the viewer's side and in their group (you, your pet, your party): counted in the
     #: totals.  False for enemies and for players outside the group (other groups nearby).
@@ -320,7 +320,7 @@ class _Acc:
     max_hit: int = 0
     max_heal: int = 0
     estimated: int = 0  #: hits and heals whose amount is a Dummy Fix estimate
-    taunts: int = 0  #: taunts used (each also counts as aggro)
+    taunts: int = 0  #: taunts used (each also counts as an aggro event)
     cc_landed: int = 0
     cc_attempts: int = 0
     cc_types: dict[str, int] = field(default_factory=dict)
@@ -630,12 +630,12 @@ def _accumulate(
             if holder is not None and not is_npc_name(holder.name):
                 if not any(t[1] is holder and t[2] == canon.get(ev.actor, ev.actor) and float(ev.ts) - t[0] <= CREDIT_WINDOW_S
                            for t in taunts):
-                    holder.aggro += 1  # a taunt just before already counted this
+                    holder.aggro += 1  # Independent notices count even when they name the same holder.
             continue
         if ev.kind == "status" and (ev.skill or "").lower() in ("taunt", "taunts") and ev.actor and ev.target:
             # "You taunt a dunes madman.": the game prints no "looks angry at you" for the viewer, so
-            # the taunt itself is the aggro action (one per taunt; an "angry at" line right after it
-            # is the same aggro).
+            # Count the reported taunt as an aggro event. A matching "angry at" notice right
+            # after it is counted once; later notices count even if they name the same holder.
             taunter = get(ev.actor)
             get(ev.target)
             if taunter is not None and not is_npc_name(taunter.name):
@@ -908,7 +908,7 @@ def self_rows(snap: EncounterSnapshot, tab: str, player_name: str) -> list[Actor
                 debuffs={name: debuff} if debuff else {},
             ))
         if tab == "overview" and me.aggro:
-            rows.append(make("Aggro gained", utility=me.aggro, aggro=me.aggro))
+            rows.append(make("Aggro events", utility=me.aggro, aggro=me.aggro))
         key = (lambda r: (-r.dps, -r.hps, -r.utility, r.name)) if tab == "overview" else (lambda r: (-r.damage, r.name))
         rows.sort(key=key)
     elif tab == "healing":

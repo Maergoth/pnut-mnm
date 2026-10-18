@@ -281,7 +281,7 @@ class OverlayExtrasTests(unittest.TestCase):
                 self.assertIn("Utility 0" if label == "earlier" else "Utility 9", tip)
                 self.assertIn("Deaths 0" if label == "earlier" else "Deaths 1", tip)
                 if label != "earlier":
-                    self.assertIn("2 CC, 3 debuffs, 4 aggro", tip)
+                    self.assertIn("2 CC, 3 debuffs, 4 aggro events", tip)
                     self.assertIn("7 prevented", tip)
 
     def test_self_name_hover_describes_the_ability_for_the_active_tab(self) -> None:
