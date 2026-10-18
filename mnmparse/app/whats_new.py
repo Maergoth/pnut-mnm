@@ -32,7 +32,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Session kill totals now include your pets and assigned group pets, crediting their final blows to their owners.",
             "Pet ownership corrections also update previously recorded kills. Pet deaths do not count as monster kills or player deaths.",
-            "The Session footer explains that kills/hour uses total session time, including idle time. New session starts a fresh average.",
+            "Kills/hour, items/hour and coin/hour now use a rolling hour like XP/hour, keeping an old session's idle time from diluting your current pace.",
         ),
         settings_label="App updates",
         settings_target="app_update_button",

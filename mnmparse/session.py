@@ -28,6 +28,7 @@ from .interrupts import CC_CATEGORIES
 from .party import PartyRoster
 from .parser import normalize_ocr
 from .player_telemetry import XP_RATE_WINDOW
+from .session_rates import ACTIVITY_RATE_WINDOW, activity_rate, build_activity_rates, project_activity_rates
 from .stats import canonical_names
 from .vocab import Vocabulary
 
@@ -199,21 +200,19 @@ class SessionSnapshot:
     mez_breaks_unknown: int = 0
     mez_breaks_total: int = 0
     player_status: dict[str, Any] = field(default_factory=dict)
+    activity_rates: dict[str, Any] = field(default_factory=dict)
 
     @property
     def kills_per_hour(self) -> float:
-        hours = max(self.elapsed, 60.0) / 3600.0
-        return self.kills / hours
+        return activity_rate(self.activity_rates, "kills", fallback_count=self.kills, elapsed=self.elapsed)
 
     @property
     def items_per_hour(self) -> float:
-        hours = max(self.elapsed, 60.0) / 3600.0
-        return self.items / hours
+        return activity_rate(self.activity_rates, "items", fallback_count=self.items, elapsed=self.elapsed)
 
     @property
     def coin_per_hour(self) -> float:
-        hours = max(self.elapsed, 60.0) / 3600.0
-        return self.coin_total / hours
+        return activity_rate(self.activity_rates, "coin", fallback_count=self.coin_total, elapsed=self.elapsed)
 
 
 #: The Me view's detail row under the coin it received (``coin_by_looter`` there holds this one row).
@@ -312,6 +311,7 @@ def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         deaths=sum(count for _name, count in deaths), deaths_by_player=deaths,
         recent=[entry for entry in snap.recent if recent_included(entry)],
         outsider_deaths=[], outsider_kills=0, outsider_crafts=[],
+        activity_rates=project_activity_rates(snap.activity_rates, included),
     )
     if hasattr(snap, "_personal_totals"):
         projected._personal_totals = snap._personal_totals
@@ -379,6 +379,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         mez_breaks_by_breaker=mez_counts,
         mez_breaks_unknown=unknown,
         mez_breaks_total=sum(n for _name, n in mez_counts) + unknown,
+        activity_rates=project_activity_rates(snap.activity_rates, own, personal_coin=True),
     )
 
 
@@ -639,7 +640,8 @@ class SessionStats:
         roster = self.roster if self.roster is not None else self._local_roster
         return {who(n) for n in roster.members()} | {you}, True
 
-    def _classify_slain(self, who: Any, detail_limit: int | None = None) -> tuple[Any, Any, Any, int, dict[str, Any]]:
+    def _classify_slain(self, who: Any, detail_limit: int | None = None, *,
+                        rate_cutoff: float = -math.inf) -> tuple[Any, Any, Any, int, dict[str, Any]]:
         """Split the slain lines into party kills, party deaths, outsider deaths and outsider kills.
 
         ``who(name)`` maps a raw name to its displayed spelling.  Rules, in order: a line
@@ -675,12 +677,15 @@ class SessionStats:
         outsiders = deque(maxlen=detail_limit)
         totals = {name: Counter() for name in ("killers", "targets", "deaths", "outsiders", "own_targets")}
         totals["kill_targets"] = Counter()
+        totals["rate_events"] = []
         def killed(ts: float, killer: str | None, victim: str) -> None:
             kills.append((ts, killer, victim))
             if killer:
                 totals["killers"][killer] += 1
             totals["targets"][victim] += 1
             totals["kill_targets"][(killer, victim)] += 1
+            if ts > rate_cutoff:
+                totals["rate_events"].append((ts, killer, 1, 0, 0, 0))
             if killer == you:
                 totals["own_targets"][victim] += 1
         outsider_kills = 0
@@ -728,18 +733,20 @@ class SessionStats:
 
     def snapshot(self, now: float | None = None, *, detail_limit: int | None = None) -> SessionSnapshot:
         """Reuse stable session content; only elapsed changes while idle."""
+        now = time.time() if now is None else now
         detail_limit = None if detail_limit is None else max(1, int(detail_limit))
         roster = self.roster if self.roster is not None else self._local_roster
         dependency = (self.version, self.player_name, self.include_personal, id(roster), getattr(roster, "version", 0),
                       id(self.vocab), getattr(self.vocab, "_version", 0), self.encounters, self.combat_seconds, detail_limit)
         content = self._snapshot_cache.get(dependency)
-        if content is None:
-            content = self._build_snapshot(self.started, detail_limit=detail_limit)
+        if content is None or now < content._rate_as_of:
+            content = self._build_snapshot(now, detail_limit=detail_limit)
             self._snapshot_revision += 1
             content.revision = self._snapshot_revision
             self._snapshot_cache = {dependency: content}
-        result = dataclasses.replace(content, elapsed=max(0.0, (time.time() if now is None else now) - self.started),
-                                   player_status=_copy_player_status(content.player_status))
+        result = dataclasses.replace(content, elapsed=max(0.0, now - self.started),
+                                   player_status=_copy_player_status(content.player_status),
+                                   activity_rates=build_activity_rates(content._rate_events, now=now, started=self.started))
         result._personal_totals = content._personal_totals
         result._participant_totals = content._participant_totals
         return result
@@ -789,7 +796,12 @@ class SessionStats:
         if legacy_count:
             begin = 0 if detail_limit is None else max(0, legacy_count - max(0, detail_limit - len(mez_details)))
             mez_details = [(ts, who(mob), None) for ts, mob in self._mez_breaks[begin:legacy_count]] + mez_details
-        kill_list, death_list, outsider_list, outsider_kills, slain = self._classify_slain(who, detail_limit)
+        cutoff = now - ACTIVITY_RATE_WINDOW
+        kill_list, death_list, outsider_list, outsider_kills, slain = self._classify_slain(
+            who, detail_limit, rate_cutoff=cutoff)
+        rate_events = slain["rate_events"]
+        rate_events.extend((entry.ts, who(entry.looter), 0, 1, 0, 0)
+                           for entry in self._loot if entry.ts > cutoff)
         kills_by_killer = slain["killers"]
         kills_by_target = slain["targets"]
         deaths_by_player = slain["deaths"]
@@ -826,10 +838,15 @@ class SessionStats:
                 own_crafts[item] += n
         # What the viewer got: every split (theirs by definition), and their own loots without
         # one (solo, no "as your split").
-        coin_received = sum(
-            c.split if c.split is not None else (c.copper if who(c.looter) == you or is_you(c.looter) else 0)
-            for c in self._coins
-        )
+        coin_received = 0
+        for coin in self._coins:
+            looter = who(coin.looter)
+            received = coin.split if coin.split is not None else (coin.copper if looter == you or is_you(coin.looter) else 0)
+            coin_received += received
+            if coin.ts > cutoff:
+                rate_events.append((coin.ts, looter, 0, 0, coin.copper, 0))
+                if received:
+                    rate_events.append((coin.ts, you, 0, 0, 0, received))
         snap = SessionSnapshot(
             started=self.started,
             elapsed=max(0.0, now - self.started),
@@ -892,6 +909,10 @@ class SessionStats:
         # bounded views can filter former members without scanning raw history.
         snap._participant_totals = {"kill_targets": slain["kill_targets"],
                                     "craft_items": craft_items_by_participant}
+        # Complete recent activity is separate from bounded display details.
+        # Cached timestamps are reprojected as the clock moves, including idle.
+        snap._rate_events = rate_events
+        snap._rate_as_of = now
         return snap
 
     # ------------------------------------------------------------------

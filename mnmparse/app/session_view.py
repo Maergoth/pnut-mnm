@@ -201,9 +201,10 @@ class SessionView(QWidget):
                     (f"Faction {f}", f"{'+' if d > 0 else ''}{d}", "") for f, d in snap.faction
                 ] + [("Experience ticks", f"{snap.xp_ticks}", "")]
                 self._add_category("personal", "Personal", f"{len(detail)}", detail, tooltip="viewer-only lines")
+            rate_label = "Rolling hour" if snap.activity_rates.get("kind") == "rolling" else "Session average"
             footer = (
                 f"{_mmss(snap.combat_seconds)} in combat over {snap.encounters} encounters  ·  "
-                f"{snap.kills_per_hour:,.0f} kills/h  ·  {snap.items_per_hour:,.0f} items/h  ·  "
+                f"{rate_label}: {snap.kills_per_hour:,.0f} kills/h  ·  {snap.items_per_hour:,.0f} items/h  ·  "
                 f"{format_coin(int(snap.coin_per_hour))}/h"
             )
             status = snap.player_status
@@ -224,8 +225,13 @@ class SessionView(QWidget):
                 rate_tip = ("Keep your XP bar visible for 30 seconds of stable comparisons to estimate XP/hour. "
                             "An old rate is hidden if unstable readings prevent a new comparison for over a minute.")
             self._footer.setText(footer)
-            session_tip = (f"Kills, items and coin per hour use {_mmss(snap.elapsed)} total session time, "
-                           "including idle time. New session starts a fresh average.")
+            if snap.activity_rates.get("kind") == "rolling":
+                session_tip = ("Rolling one-hour rates for kills, items and coin, matching XP's one-hour horizon. "
+                               "New sessions use their shorter elapsed time. Breaks within the window lower the rates. "
+                               "The category totals above still cover the whole session.")
+            else:
+                session_tip = (f"Recorded session averages over {_mmss(snap.elapsed)} total session time, "
+                               "including idle time. This older archive has no rolling activity measurements.")
             self._footer.setToolTip(session_tip + ("\n\n" + rate_tip if rate_tip else ""))
         finally:
             self._tree.setUpdatesEnabled(True)
