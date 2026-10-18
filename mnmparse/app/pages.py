@@ -486,7 +486,7 @@ class _Segmented(QWidget):
 
 
 class _EncounterHeader(QWidget):
-    """Label, duration, total damage, raid DPS and a live/ended chip for one snapshot.
+    """Label, duration, total damage, group DPS and a live/ended chip for one snapshot.
 
     Wide: one row ``[title / subtitle] [stats] [chip] [actions]``.  When that does not
     fit, the stats move to a second row, so the header can get narrow without clipping
@@ -529,7 +529,7 @@ class _EncounterHeader(QWidget):
         stats_layout.setContentsMargins(0, 0, 0, 0)
         stats_layout.setSpacing(18)
         self._stats: dict[str, QLabel] = {}
-        for key, caption in (("duration", "Duration"), ("damage", "Total damage"), ("dps", "Raid DPS")):
+        for key, caption in (("duration", "Duration"), ("damage", "Total damage"), ("dps", "Group DPS")):
             col = QVBoxLayout()
             col.setSpacing(0)
             value = _label("-", "Stat")

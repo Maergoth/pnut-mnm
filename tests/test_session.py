@@ -37,49 +37,6 @@ def feed(session: SessionStats) -> None:
 
 
 class SessionTests(unittest.TestCase):
-    def test_mez_breaks_record_targets_without_guessing_from_nearby_damage(self) -> None:
-        session = SessionStats(PLAYER, started=0)
-        for ts, text in (
-                (1, "a rat is mesmerized."),
-                (2, "You crush a rat for 20 points of damage."),
-                (2.2, "a rat awakens."),
-                (10, "a skeleton is mesmerized."),
-                (11, "a skeleton awakens."),
-                (11.2, "Povebizu slashes a skeleton for 8 points of damage.")):
-            session.add(parse_line(text, ts, PLAYER))
-        snap = session.snapshot(now=12)
-        self.assertEqual(snap.mez_breaks_by_breaker, [])
-        self.assertEqual(snap.mez_break_details, [(2.2, "a rat", None), (11.0, "a skeleton", None)])
-        self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 2))
-        from mnmparse.config import Config
-        from mnmparse.privacy import project_session
-        self.assertEqual(project_session(snap, Config(player_name=PLAYER)).mez_break_details,
-                         snap.mez_break_details, "Carebear retains shared target/time events")
-
-    def test_bounded_mez_details_keep_full_target_count_in_all_modes(self) -> None:
-        from mnmparse.config import Config
-        from mnmparse.privacy import project_session
-
-        session = SessionStats(PLAYER, started=0)
-        for index, actor in enumerate(("You",) * 5 + ("Povebizu",) * 3):
-            ts = index * 10
-            for offset, text in ((0, "a rat is mesmerized."),
-                                 (1, f"{actor} crushes a rat for 20 points of damage."),
-                                 (1.2, "a rat awakens.")):
-                session.add(parse_line(text, ts + offset, PLAYER))
-        session.add(parse_line("a skeleton awakens.", 90, PLAYER))
-        snap = session.snapshot(now=100, detail_limit=2)
-        self.assertEqual((snap.mez_breaks_total, len(snap.mez_break_details)), (9, 2))
-        self.assertEqual(snap.mez_breaks_by_breaker, [])
-        mine = filter_session(snap, PLAYER)
-        self.assertEqual(mine.mez_breaks_by_breaker, [])
-        self.assertEqual((mine.mez_breaks_total, mine.mez_breaks_unknown), (9, 9))
-        safe = project_session(snap, Config(player_name=PLAYER))
-        self.assertEqual(safe.mez_breaks_by_breaker, [])
-        self.assertEqual(safe.mez_breaks_total, 9)
-        self.assertTrue(all(actor is None for _ts, _mob, actor in safe.mez_break_details))
-        self.assertNotIn("Povebizu", str(safe))
-
     def test_counts(self) -> None:
         s = SessionStats(PLAYER, started=0.0)
         feed(s)

@@ -84,65 +84,84 @@ class SnapshotCacheTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
-    def test_legacy_mez_archive_preserves_targets_without_assigning_new_breakers(self) -> None:
+    def test_legacy_inline_mez_state_is_ignored_and_capture_can_continue(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SessionArchive(Path(directory) / "sessions.sqlite3")
             session = SessionStats(PLAYER, started=100)
-            store.attach_details(session, "old")
-            session.add(parse_line("a rat awakens.", 101, PLAYER))
-            store.save_session("old", session)
-            # Older sessions persist awakening targets but have none of the new evidence fields.
+            session.add(parse_line("You loot [Bone Chips] from a rat's corpse.", 101, PLAYER))
+            store.save_session("old", session, ended=110)
+            awakening = {"ts": 102.0, "kind": "awaken", "actor": None, "text": "Mez broke on a rat"}
+            # Old in-memory archives include detail lists and obsolete attribution state.
             with closing(sqlite3.connect(store.path)) as db, db:
                 state, preview = db.execute("SELECT state,preview FROM sessions WHERE id='old'").fetchone()
                 state, preview = json.loads(state), json.loads(preview)
-                for name in ("_mez_break_counts", "_mez_active", "_mez_hits", "_mez_pending"):
-                    state.pop(name, None)
-                for name in ("mez_break_details", "mez_breaks_by_breaker", "mez_breaks_unknown", "mez_breaks_total"):
-                    preview.pop(name, None)
-                db.execute("DELETE FROM details WHERE session_id='old' AND field='_mez_break_entries'")
+                state.update(_mez_breaks=[[102.0, "a rat"]],
+                             _mez_break_entries=[[102.0, "a rat", PLAYER]],
+                             _mez_break_counts={PLAYER: 1}, _mez_active={"a rat": 100.0},
+                             _mez_hits={"a rat": [[101.0, PLAYER]]}, _mez_pending=[[102.0, "a rat"]])
+                state["_recent"].append(awakening)
+                preview.update(mez_breaks=[[102.0, "a rat"]],
+                               mez_break_details=[[102.0, "a rat", PLAYER]],
+                               mez_breaks_by_breaker=[[PLAYER, 1]], mez_breaks_unknown=0, mez_breaks_total=1)
+                preview["recent"].append(awakening)
                 db.execute("UPDATE sessions SET state=?,preview=? WHERE id='old'", (json.dumps(state), json.dumps(preview)))
-            self.assertEqual(store.preview("old").mez_breaks, [(101.0, "a rat")])
+
+            preview = store.preview("old")
+            self.assertEqual(preview.items, 1)
+            self.assertFalse(any(name.startswith("mez_break") for name in dataclasses.asdict(preview)))
+            self.assertTrue(all(entry.kind != "awaken" for entry in preview.recent))
             restored = store.restore("old")
-            for ts, text in ((110, "a skeleton is mesmerized."),
-                             (111, "You crush a skeleton for 8 points of damage."), (111.2, "a skeleton awakens.")):
+            self.assertFalse(any(name.startswith("_mez_") for name in vars(restored)))
+            for ts, text in ((111, "a skeleton is mesmerized."), (112, "a skeleton awakens."),
+                             (113, "You have slain a skeleton!"),
+                             (114, "You loot [Worn Bow] from a skeleton's corpse.")):
                 restored.add(parse_line(text, ts, PLAYER))
             snap = restored.snapshot(now=120)
-            self.assertEqual((snap.mez_breaks_total, snap.mez_breaks_unknown), (2, 2))
-            self.assertEqual(snap.mez_breaks_by_breaker, [])
-            self.assertEqual(snap.mez_break_details, [(101.0, "a rat", None), (111.2, "a skeleton", None)])
+            self.assertEqual((snap.items, snap.kills, snap.cc_total), (2, 1, 1))
+            self.assertFalse(any(name.startswith("mez_break") for name in dataclasses.asdict(snap)))
+            self.assertTrue(all(entry.kind != "awaken" for entry in snap.recent))
+            self.assertNotIn("Mez broke", json.dumps(dataclasses.asdict(snap)))
 
-    def test_mez_targets_survive_disk_recovery_and_old_guesses_are_ignored(self) -> None:
+    def test_legacy_disk_mez_rows_and_preview_fields_are_inert_after_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SessionArchive(Path(directory) / "sessions.sqlite3")
             session = SessionStats(PLAYER, started=100)
             store.attach_details(session, "first")
-            for ts, text in ((100, "a rat is mesmerized."), (101, "You crush a rat for 8 points of damage."),
-                             (101.2, "a rat awakens."), (110, "a skeleton is mesmerized."),
-                             (111, "a skeleton awakens.")):
-                session.add(parse_line(text, ts, PLAYER))
-            store.save_session("first", session)
-            restored = store.restore("first")
-            self.assertIsInstance(restored._mez_break_entries, DiskDetails)
-            restored.add(parse_line("Tovozen slashes a skeleton for 8 points of damage.", 111.2, PLAYER))
-            restored._mez_break_entries[0] = (101.2, "a rat", PLAYER)
-            restored._mez_break_entries[1] = (111.0, "a skeleton", "Tovozen")
-            store.save_session("first", restored)
+            session.add(parse_line("You loot [Bone Chips] from a rat's corpse.", 101, PLAYER))
+            store.save_session("first", session, ended=110)
             with closing(sqlite3.connect(store.path)) as db, db:
                 state, preview = db.execute("SELECT state,preview FROM sessions WHERE id='first'").fetchone()
                 state, preview = json.loads(state), json.loads(preview)
                 state["_mez_break_counts"] = {PLAYER: 1, "Tovozen": 1}
+                state["_mez_pending"] = {"legacy": "unrecognized attribution format"}
+                awakening = {"ts": 102.0, "kind": "awaken", "actor": None, "text": "Mez broke on a rat"}
+                state["_recent"].append(awakening)
+                preview["mez_breaks"] = [[102.0, "a rat"], [103.0, "a skeleton"]]
                 preview["mez_breaks_by_breaker"] = [[PLAYER, 1], ["Tovozen", 1]]
                 preview["mez_breaks_unknown"] = 0
-                preview["mez_break_details"] = [[101.2, "a rat", PLAYER], [111.0, "a skeleton", "Tovozen"]]
+                preview["mez_breaks_total"] = 2
+                preview["mez_break_details"] = [[102.0, "a rat", PLAYER], [103.0, "a skeleton", "Tovozen"]]
+                preview["recent"].append(awakening)
+                db.executemany("INSERT INTO details VALUES(?,?,?,?)", (
+                    ("first", "_mez_breaks", 0, json.dumps([102.0, "a rat"])),
+                    ("first", "_mez_break_entries", 0, json.dumps([102.0, "a rat", PLAYER])),
+                ))
                 db.execute("UPDATE sessions SET state=?,preview=? WHERE id='first'", (json.dumps(state), json.dumps(preview)))
             preview = store.preview("first", detail_limit=1)
-            self.assertEqual(preview.mez_breaks_total, 2)
-            self.assertEqual(preview.mez_breaks_by_breaker, [])
-            self.assertEqual(preview.mez_break_details, [(111.0, "a skeleton", None)])
-            full = store.restore("first").snapshot(now=120)
-            self.assertEqual(full.mez_breaks_unknown, 2)
-            self.assertEqual(full.mez_breaks_by_breaker, [])
-            self.assertEqual(full.mez_break_details, [(101.2, "a rat", None), (111.0, "a skeleton", None)])
+            self.assertEqual(preview.items, 1)
+            self.assertFalse(any(name.startswith("mez_break") for name in dataclasses.asdict(preview)))
+            self.assertTrue(all(entry.kind != "awaken" for entry in preview.recent))
+            restored = store.restore("first")
+            self.assertIsInstance(restored._loot, DiskDetails)
+            self.assertFalse(any(name.startswith("_mez_") for name in vars(restored)))
+            restored.add(parse_line("a skeleton awakens.", 111, PLAYER))
+            restored.add(parse_line("You have slain a skeleton!", 112, PLAYER))
+            store.save_session("first", restored, ended=120)
+            for snap in (store.preview("first", detail_limit=1), store.restore("first").snapshot(now=120)):
+                self.assertEqual((snap.items, snap.kills), (1, 1))
+                self.assertFalse(any(name.startswith("mez_break") for name in dataclasses.asdict(snap)))
+                self.assertTrue(all(entry.kind != "awaken" for entry in snap.recent))
+                self.assertNotIn("Mez broke", json.dumps(dataclasses.asdict(snap)))
 
     def test_disk_details_and_wrapped_coin_split_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

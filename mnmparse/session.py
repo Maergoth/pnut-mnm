@@ -154,7 +154,6 @@ class SessionSnapshot:
     items_by_looter: list[tuple[str, int]]  #: (looter, count) desc
     item_looters: dict[str, list[tuple[str, int]]]  #: item -> [(looter, count)] desc
     zones: list[str]  #: zones entered, in order, without repeats
-    mez_breaks: list[tuple[float, str]]  #: (ts, mob) for every "X awakens." (a mesmerize broke)
     kill_entries: list[tuple[float, str | None, str]]  #: (ts, killer, victim) for NPC kills
     craft_entries: list[tuple[float, str, str, int]]  #: (ts, crafter, item, quantity), the group's crafts
     loot: list[LootEntry]  #: every item, oldest first
@@ -195,10 +194,6 @@ class SessionSnapshot:
     group_averages: dict[str, float] = field(default_factory=dict)
     group_average_count: int = 0
     emitted_at: float = 0.0
-    mez_break_details: list[tuple[float, str, str | None]] = field(default_factory=list)
-    mez_breaks_by_breaker: list[tuple[str, int]] = field(default_factory=list)
-    mez_breaks_unknown: int = 0
-    mez_breaks_total: int = 0
     player_status: dict[str, Any] = field(default_factory=dict)
     activity_rates: dict[str, Any] = field(default_factory=dict)
 
@@ -326,7 +321,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     The coin is what the viewer received (``coin_received``: their splits, plus their own
     loots without a split), which is also what coin per hour is worked out from; the gross
     coin they looted themselves is one detail row, ``(LOOTED_BY_YOU, copper)``, in
-    ``coin_by_looter``. Zones and awakenings stay shared; the log does not name mez breakers.
+    ``coin_by_looter``. Zones stay shared.
     """
     player = player or "You"
     own = lambda name: bool(name) and name.casefold() == player.casefold()
@@ -351,9 +346,6 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     craft_counts = complete.get("crafts_by_item", sorted(by_item.items(), key=lambda kv: (-kv[1], kv[0])))
     craft_total = complete.get("crafts", sum(by_item.values()))
     kill_total = complete.get("kills", len(kills))
-    mez_counts = [(name, n) for name, n in snap.mez_breaks_by_breaker if own(name)]
-    mez_details = [entry for entry in snap.mez_break_details if entry[2] is None or own(entry[2])]
-    unknown = snap.mez_breaks_unknown or (len(snap.mez_breaks) if not snap.mez_breaks_total else 0)
     return dataclasses.replace(
         snap,
         items=item_total,
@@ -374,11 +366,6 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         deaths_by_player=deaths,
         kill_entries=kills,
         craft_entries=crafts,
-        mez_breaks=[(ts, mob) for ts, mob, _actor in mez_details] if snap.mez_break_details else snap.mez_breaks,
-        mez_break_details=mez_details,
-        mez_breaks_by_breaker=mez_counts,
-        mez_breaks_unknown=unknown,
-        mez_breaks_total=sum(n for _name, n in mez_counts) + unknown,
         activity_rates=project_activity_rates(snap.activity_rates, own, personal_coin=True),
     )
 
@@ -426,8 +413,6 @@ class SessionStats:
         self._items_by_looter: Counter[str] = Counter()
         self._item_looters: dict[str, Counter[str]] = {}
         self._zones: list[str] = []
-        self._mez_breaks: list[tuple[float, str]] = []
-        self._mez_break_entries: list[tuple[float, str, str | None]] = []
         self._kill_entries: list[tuple[float, str | None, str]] = []
         #: every craft line, the party's and other players' (told apart in the snapshot)
         self._craft_entries: list[tuple[float, str, str, int]] = []
@@ -576,9 +561,6 @@ class SessionStats:
             if not self._zones or self._zones[-1] != ev.target:
                 self._zones.append(ev.target)
             self._push(ev.ts, "zone", None, f"Entered {ev.target}")
-        elif kind == "awaken" and ev.target:
-            self._add_mez_break(ev)
-            self._push(ev.ts, "awaken", None, f"Mez broke on {ev.target}")
         elif kind == "experience":
             self._xp_ticks += 1
             if self.include_personal:
@@ -595,11 +577,6 @@ class SessionStats:
         self._version += 1
 
     # ------------------------------------------------------------------
-    def _add_mez_break(self, ev: Event) -> None:
-        ts, mob = float(ev.ts), self._name(ev.target) or ev.target
-        self._mez_breaks.append((ts, mob))
-        self._mez_break_entries.append((ts, mob, None))
-
     def _you(self) -> str:
         return self.player_name or "You"
 
@@ -787,15 +764,6 @@ class SessionStats:
 
         items_by_looter = fold(self._items_by_looter)
         coin_by_looter = fold(self._coin_by_looter)
-        # Preserve targets/times from older archives, discarding inferred breakers.
-        mez_details = [(ts, who(mob), None)
-                       for ts, mob, _actor in (self._mez_break_entries if detail_limit is None
-                                             else self._mez_break_entries[-detail_limit:])]
-        # Old archives contain awakening targets but no attribution evidence.
-        legacy_count = len(self._mez_breaks) - len(self._mez_break_entries)
-        if legacy_count:
-            begin = 0 if detail_limit is None else max(0, legacy_count - max(0, detail_limit - len(mez_details)))
-            mez_details = [(ts, who(mob), None) for ts, mob in self._mez_breaks[begin:legacy_count]] + mez_details
         cutoff = now - ACTIVITY_RATE_WINDOW
         kill_list, death_list, outsider_list, outsider_kills, slain = self._classify_slain(
             who, detail_limit, rate_cutoff=cutoff)
@@ -859,7 +827,6 @@ class SessionStats:
                 item: sorted(counter.items(), key=lambda kv: (-kv[1], kv[0])) for item, counter in item_looters.items()
             },
             zones=zones,
-            mez_breaks=[(ts, who(mob)) for ts, mob in (self._mez_breaks if detail_limit is None else self._mez_breaks[-detail_limit:])],
             kill_entries=kill_list,
             craft_entries=list(crafts),
             loot=[dataclasses.replace(e, looter=who(e.looter), item=item_name(e.item))
@@ -892,10 +859,6 @@ class SessionStats:
             rewards=[dataclasses.replace(e, looter=who(e.looter), item=item_name(e.item))
                      for e in (self._rewards if detail_limit is None else self._rewards[-detail_limit:])],
             capture_quality=dict(self.capture_quality),
-            mez_break_details=mez_details,
-            mez_breaks_by_breaker=[],
-            mez_breaks_unknown=len(self._mez_breaks),
-            mez_breaks_total=len(self._mez_breaks),
             player_status=_copy_player_status(self.player_status),
         )
         own_items = {item: counts.get(you, 0) for item, counts in item_looters.items() if counts.get(you, 0)}
