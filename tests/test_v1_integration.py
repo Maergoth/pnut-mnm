@@ -123,6 +123,32 @@ def _probe(root: Path):
     tools.create_backup(root / "preferences.zip")
     tools.restore_backup(root / "preferences.zip")
     assert app.cfg.casual_mode and not app.cfg.casual_mode_confirmed
+    # Full UI preferences reach an already-created bar immediately after restore.
+    bar = app.overlay.attack_bar
+    settings.setValue("attack_bar/weapon_delay", 36)
+    bar.reload_preferences()
+    tools.create_backup(root / "full-preferences.zip", allow_sensitive=True)
+    settings.setValue("attack_bar/weapon_delay", 50)
+    bar.reload_preferences()
+    tools.restore_backup(root / "full-preferences.zip")
+    assert app.overlay.attack_bar is bar
+    assert bar.tracker.weapon_delay == 3.6
+    import time
+    start = time.time() - 9
+    for index in range(4):
+        ts = start + index * 3
+        bar.tracker.observe(parse_line("You crush a rat for 10 points of damage.", ts, "Hero"))
+        hand = bar.tracker.hands(ts)[0]
+        if index == 0:
+            assert hand.delay == 3.6
+    previous = (hand.delay, hand.last, hand.swings)
+    assert hand.delay == 3.0
+    settings.setValue("attack_bar/weapon_delay", 50)
+    bar.reload_preferences()
+    tools.restore_backup(root / "full-preferences.zip")
+    hand = bar.tracker.hands(time.time())[0]
+    assert bar.tracker.weapon_delay == 3.6
+    assert (hand.delay, hand.last, hand.swings) == previous, "Restore must preserve learned swing timing"
     app.show_demo()
     assert not app.window._demo_banner.isHidden()
     assert not app.window.page("live")._csv.isEnabled()

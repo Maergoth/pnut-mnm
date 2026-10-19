@@ -23,7 +23,7 @@ UI_KEYS = {
     "map/visible", "map/fullscreen", "map/download_on_startup", "map/geometry",
     "app/update_on_startup", "overlay/locked", "overlay/click_through", "overlay/view_mode",
     "overlay/opacity", "overlay/font_scale", "overlay/tab", "overlay/sort_key", "overlay/sort_desc",
-    "overlay/geometry", "attack_bar/enabled", "live/list_split",
+    "overlay/geometry", "attack_bar/enabled", "attack_bar/weapon_delay", "live/list_split",
 }
 RECT_KEYS = {"main/rect", "map/geometry", "overlay/geometry"}
 

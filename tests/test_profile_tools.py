@@ -108,6 +108,7 @@ class ProfileToolsTests(unittest.TestCase):
         self.widget.load(self.current)
         self.assertTrue(self.widget.full_backup.isChecked())
         self.settings.setValue("overlay/opacity", .7)
+        self.settings.setValue("attack_bar/weapon_delay", 36)
         self.settings.setValue("triggers/private-editor", "Teammate")
         data_root = Path(self.current.log_dir)
         atomic_json(data_root / "party.json", {"version": 4, "manual_in": ["Teammate"], "manual_out": [], "pet_owners": {}, "seen": {}})
@@ -116,10 +117,13 @@ class ProfileToolsTests(unittest.TestCase):
         self.widget.create_backup(path)
         self.assertEqual(self.engine.flushed, 1)
         with zipfile.ZipFile(path) as archive:
-            self.assertNotIn("triggers/private-editor", json.loads(archive.read("settings.json"))["values"])
+            preferences = json.loads(archive.read("settings.json"))["values"]
+            self.assertNotIn("triggers/private-editor", preferences)
+            self.assertEqual(preferences["attack_bar/weapon_delay"], 36)
         current_dir = str(self.root / "current-logs")
         self.current = dataclasses.replace(self.current, log_dir=current_dir)
         self.settings.setValue("overlay/opacity", .4)
+        self.settings.setValue("attack_bar/weapon_delay", 50)
         refreshed = []
         self.widget.restored.connect(refreshed.append)
         cfg = self.widget.restore_backup(path)
@@ -127,6 +131,7 @@ class ProfileToolsTests(unittest.TestCase):
         self.assertTrue(cfg.casual_mode)
         self.assertFalse(cfg.casual_mode_confirmed)
         self.assertEqual(self.settings.value("overlay/opacity", type=float), .7)
+        self.assertEqual(self.settings.value("attack_bar/weapon_delay", type=int), 36)
         self.assertEqual(json.loads((Path(current_dir) / "party.json").read_text())["manual_in"], ["Teammate"])
         self.assertEqual(refreshed, [cfg])
 

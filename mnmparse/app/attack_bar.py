@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QDialog, QInputDialog, QMenu
 
-from mnmparse.app import probe
+from mnmparse.app import probe, theme
 from mnmparse.app.docked_panel import DOCK_GAP, SNAP_DISTANCE, DockedPanel
-from mnmparse.app.widgets import make_font, qcolor, token
+from mnmparse.app.widgets import make_font, prevent_wheel_value_changes, qcolor, token
+from mnmparse.app.window_identity import window_title
 from mnmparse.swing import HandState, SwingTracker
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 SETTINGS_GROUP = "attack_bar"
 FRAME_MS = 16  #: repaint interval while a bar is moving (about 60 frames a second)
 WAIT_MS = 200  #: repaint interval while every bar waits at full (nothing moves)
+MAX_WEAPON_DELAY = 999  #: input uses tenths of a second; zero selects automatic timing
 
 
 class AttackBar(DockedPanel):
@@ -36,6 +38,7 @@ class AttackBar(DockedPanel):
 
     def __init__(self, owner: "OverlayWindow", settings: QSettings, flags: Qt.WindowType) -> None:
         super().__init__(owner, settings, flags)
+        self._weapon_delay = 0
         self.tracker = SwingTracker(str(getattr(owner._cfg, "player_name", "") or ""))
         self._px = 13.0
         self._font = make_font(self._px * 0.85, weight=QFont.Weight.DemiBold)
@@ -47,9 +50,11 @@ class AttackBar(DockedPanel):
         self.setToolTip(
             "Auto-attack timer, learned from your own swings in the Combat chat.\n"
             "Main hand, off hand and bow get their own bars. Unlock the overlay to drag this off it;\n"
-            "double-click or right-click > Snap to overlay to dock it again."
+            "double-click or right-click > Snap to overlay to dock it again.\n"
+            "Right-click > Weapon Delay to set a starting estimate."
         )
         self._resize_for(1)
+        self.reload_preferences()
 
     # -- public ----------------------------------------------------------------------------
     def observe(self, ev: Any) -> None:
@@ -63,6 +68,21 @@ class AttackBar(DockedPanel):
     def set_player_name(self, name: str) -> None:
         self.tracker.player_name = name or "You"
 
+    def reload_preferences(self) -> None:
+        """Adopt a restored delay preference without clearing the observed swings."""
+        try:
+            delay = int(self._settings.value(f"{SETTINGS_GROUP}/weapon_delay", 0))
+        except (TypeError, ValueError, OverflowError):
+            delay = 0
+        self._weapon_delay = delay if 0 <= delay <= MAX_WEAPON_DELAY else 0
+        self.tracker.set_weapon_delay(self._weapon_delay / 10 if self._weapon_delay else None)
+        self._tick()
+        # A new seed can make an unlearned, idle bar active again. _tick picks the
+        # interval, but a timer stopped while idle needs to be woken explicitly.
+        now = time.time()
+        if self.isVisible() and any(not hand.idle(now) for hand in self._hands):
+            self._timer.start()
+
     def set_font_px(self, px: float) -> None:
         self._px = px
         self._font = make_font(px * 0.85, weight=QFont.Weight.DemiBold)
@@ -74,9 +94,31 @@ class AttackBar(DockedPanel):
             self._timer.start()
 
     def add_menu_entries(self, menu: QMenu, event: Any) -> dict[Any, Any]:
+        delay = menu.addAction("Weapon Delay")
         hide = menu.addAction("Hide auto-attack bar")
         # Settings > Overlay turns it back on
-        return {hide: lambda: self._owner.set_attack_bar_enabled(False)}
+        return {delay: self._edit_weapon_delay, hide: lambda: self._owner.set_attack_bar_enabled(False)}
+
+    def _edit_weapon_delay(self) -> None:
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(window_title("weapon-delay"))
+        dialog.setStyleSheet(theme.main_qss())
+        dialog.setInputMode(QInputDialog.InputMode.IntInput)
+        dialog.setLabelText(
+            "Weapon Delay\n"
+            "36 = 3.6 seconds. Enter 0 for automatic timing.\n"
+            "Used only as a starting estimate; the bar learns from your actual swings."
+        )
+        dialog.setIntRange(0, MAX_WEAPON_DELAY)
+        dialog.setIntValue(self._weapon_delay)
+        prevent_wheel_value_changes(dialog)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            self._settings.setValue(f"{SETTINGS_GROUP}/weapon_delay", dialog.intValue())
+            self.reload_preferences()
+        finally:
+            dialog.deleteLater()
 
     # -- timing ----------------------------------------------------------------------------
     def _tick(self) -> None:
