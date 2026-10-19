@@ -54,7 +54,7 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
                    cancelled: threading.Event, progress: Callable[[str], None]) -> str:
     """Check every variant, downloading changed images and retaining offline maps."""
     zones = tuple(zones)
-    downloaded = unchanged = page_failures = image_failures = 0
+    downloaded = unchanged = page_failures = image_failures = fallback_zones = 0
 
     def load_zone(item: tuple[int, str]) -> list[MapImage]:
         index, zone = item
@@ -64,16 +64,21 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
     page_results = _parallel_map(tuple(enumerate(zones, 1)), cancelled, load_zone)
     if cancelled.is_set():
         return "Map download cancelled."
-    staged: list[tuple[str, list[MapImage]]] = []
+    staged: list[tuple[str, list[MapImage], bool]] = []
     unique_images: dict[str, MapImage] = {}
     for zone, entries in zip(zones, page_results):
+        fresh = True
         if isinstance(entries, Exception):
             log.info("Map update for %s failed: %s", zone, entries)
-            page_failures += 1
-            continue
+            entries = repository.known_maps(zone)
+            if entries is None:
+                page_failures += 1
+                continue
+            fresh = False
+            fallback_zones += 1
         if entries is None:
             continue
-        staged.append((zone, entries))
+        staged.append((zone, entries, fresh))
         for entry in entries:
             unique_images.setdefault(entry.url, entry)
     if cancelled.is_set():
@@ -82,7 +87,7 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
     hashes: dict[str, str] = {}
     if images:
         try:
-            hashes = repository.image_hashes(images)
+            hashes = repository.image_hashes(images, cancelled=cancelled)
         except Exception as exc:
             log.info("Could not check map image versions; refreshing images: %s", exc)
     if cancelled.is_set():
@@ -108,9 +113,13 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
                 downloaded += 1
             else:
                 unchanged += 1
-    for zone, entries in staged:
+    for zone, entries, fresh in staged:
         if cancelled.is_set():
             return "Map download cancelled."
+        if not fresh:
+            # A remembered list can update existing files, but cannot prove that
+            # a map was added/removed. Never replace a manifest with a fallback.
+            continue
         if all(image_results.get(entry.url, False) for entry in entries):
             try:
                 repository.save_maps(zone, entries, strict=True)
@@ -122,6 +131,10 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
     result = f"Downloaded {downloaded} {'map' if downloaded == 1 else 'maps'}."
     if unchanged:
         result += f" {unchanged} {'map' if unchanged == 1 else 'maps'} unchanged."
+    if fallback_zones:
+        result += (f" Checked known map files for {fallback_zones} "
+                   f"{'zone' if fallback_zones == 1 else 'zones'}; "
+                   "new-map discovery is temporarily unavailable.")
     failures = []
     if page_failures:
         failures.append(f"{page_failures} {'zone' if page_failures == 1 else 'zones'}")

@@ -24,12 +24,39 @@ SECOND_MAP = MapImage("Second floor", "https://static.wikitide.net/example/secon
 
 def repository_mock():
     repository = Mock()
+    repository.known_maps.return_value = None
     repository.image_hashes.return_value = {}
     repository.update_image.return_value = True
     return repository
 
 
 class MapRefreshTests(unittest.TestCase):
+    def test_blocked_wiki_still_updates_known_images_without_replacing_manifest(self):
+        repo = repository_mock()
+        repo.maps.side_effect = OSError("wiki unavailable")
+        repo.known_maps.return_value = [MAP, SECOND_MAP]
+        repo.image_hashes.return_value = {MAP.url: "first hash", SECOND_MAP.url: "second hash"}
+        repo.update_image.side_effect = lambda entry, **_: entry == SECOND_MAP
+        result = _download_maps(repo, ["Ancient Crypt"], threading.Event(), lambda _: None)
+        self.assertIn("Downloaded 1 map. 1 map unchanged.", result)
+        self.assertIn("Checked known map files for 1 zone", result)
+        self.assertIn("new-map discovery is temporarily unavailable", result)
+        self.assertNotIn("Could not update", result)
+        repo.known_maps.assert_called_once_with("Ancient Crypt")
+        self.assertEqual(repo.update_image.call_count, 2)
+        repo.save_maps.assert_not_called()
+
+    def test_failed_known_image_keeps_cache_and_reports_image_failure(self):
+        repo = repository_mock()
+        repo.maps.side_effect = OSError("wiki unavailable")
+        repo.known_maps.return_value = [MAP]
+        repo.update_image.side_effect = OSError("CDN unavailable")
+        result = _download_maps(repo, ["Ancient Crypt"], threading.Event(), lambda _: None)
+        self.assertIn("Could not update 1 image", result)
+        self.assertIn("Existing cached maps are still available", result)
+        self.assertIn("new-map discovery", result)
+        repo.save_maps.assert_not_called()
+
     def test_strict_refresh_reports_failure_and_preserves_offline_cache(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = MapRepository(Path(temporary))
@@ -63,7 +90,9 @@ class MapRefreshTests(unittest.TestCase):
         self.assertCountEqual([call.args[0] for call in repo.maps.call_args_list], pages)
         for call in repo.maps.call_args_list:
             self.assertEqual(call.kwargs, {"refresh": True, "strict": True, "persist": False})
-        repo.image_hashes.assert_called_once_with((MAP, SECOND_MAP))
+        repo.image_hashes.assert_called_once()
+        self.assertEqual(repo.image_hashes.call_args.args, ((MAP, SECOND_MAP),))
+        self.assertIsInstance(repo.image_hashes.call_args.kwargs["cancelled"], threading.Event)
         for call in repo.update_image.call_args_list:
             self.assertEqual(call.kwargs, {"sha1": None})
         self.assertCountEqual([call.args[0] for call in repo.update_image.call_args_list], [MAP, SECOND_MAP])
@@ -144,7 +173,7 @@ class MapRefreshTests(unittest.TestCase):
         self.assertCountEqual([call.args[0] for call in repo.update_image.call_args_list], [MAP, SECOND_MAP])
         repo.save_maps.assert_not_called()
 
-    def test_successful_empty_download_discards_previous_manifest(self):
+    def test_successful_empty_download_remembers_authoritative_mapless_zone(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = MapRepository(Path(temporary))
             repo.save_maps("Sungreet Strand", [MAP])
@@ -152,7 +181,7 @@ class MapRefreshTests(unittest.TestCase):
             with patch("mnmparse.maps._download", return_value=payload):
                 result = _download_maps(repo, ["Sungreet Strand"], threading.Event(), lambda _: None)
             self.assertEqual(result, "Downloaded 0 maps.")
-            self.assertFalse(repo._path("Sungreet Strand", ".json").exists())
+            self.assertEqual(repo.known_maps("Sungreet Strand"), [])
 
     def test_cancellation_between_page_and_image_stops_remaining_requests(self):
         cancelled = threading.Event()
@@ -165,6 +194,22 @@ class MapRefreshTests(unittest.TestCase):
                          "Map download cancelled.")
         repo.maps.assert_called_once()
         repo.image_hashes.assert_not_called()
+        repo.update_image.assert_not_called()
+        repo.save_maps.assert_not_called()
+
+    def test_cancellation_during_version_checks_skips_images_and_manifests(self):
+        cancelled = threading.Event()
+        repo = repository_mock()
+        repo.maps.return_value = [MAP]
+
+        def image_hashes(entries, *, cancelled):
+            self.assertEqual(entries, (MAP,))
+            cancelled.set()
+            return {}
+
+        repo.image_hashes.side_effect = image_hashes
+        self.assertEqual(_download_maps(repo, ["First"], cancelled, lambda _: None),
+                         "Map download cancelled.")
         repo.update_image.assert_not_called()
         repo.save_maps.assert_not_called()
 

@@ -98,13 +98,14 @@ class MapVersionTests(unittest.TestCase):
             self.assertEqual(self.repo.image_hashes([external]), {})
         download.assert_not_called()
 
-    def test_api_errors_propagate_for_caller_to_choose_fallback(self):
+    def test_api_payload_errors_propagate_and_transport_failures_leave_hash_unknown(self):
         with patch("mnmparse.maps._download", return_value=b'{"error":{"info":"wiki unavailable"}}'):
             with self.assertRaisesRegex(ValueError, "wiki unavailable"):
                 self.repo.image_hashes([self.entry])
-        with patch("mnmparse.maps._download", side_effect=OSError("offline")):
-            with self.assertRaisesRegex(OSError, "offline"):
-                self.repo.image_hashes([self.entry])
+        with patch("mnmparse.maps._download", side_effect=OSError("offline")), \
+             patch("mnmparse.maps._head_headers", side_effect=OSError("offline")), \
+             self.assertLogs("mnmparse.maps", level="WARNING"):
+            self.assertEqual(self.repo.image_hashes([self.entry]), {})
 
     def test_legacy_identical_cache_skips_image_download_and_write(self):
         self.cache(b"old map from an earlier app version")

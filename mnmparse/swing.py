@@ -24,6 +24,7 @@ than ``REGIME_CHANGE`` (a haste buff starting or ending, a weapon swap) replace 
 from __future__ import annotations
 
 import bisect
+import math
 import statistics
 from collections import deque
 from dataclasses import dataclass
@@ -73,7 +74,11 @@ class HandState:
 
 def estimate_delay(times: list[float]) -> float | None:
     """Robust swing delay from (sorted) swing times (see module docstring)."""
-    gaps = sorted(b - a for a, b in zip(times, times[1:]) if MIN_GAP_S <= b - a <= MAX_GAP_S)
+    return _estimate_gaps(_clean_gaps(times))
+
+
+def _estimate_gaps(gaps: list[float]) -> float | None:
+    gaps = sorted(gaps)
     if len(gaps) < MIN_GAPS:
         return None
     base = gaps[min(len(gaps) - 1, int(BASE_QUANTILE * len(gaps)))]
@@ -93,15 +98,33 @@ class _Rhythm:
         self.delay: float | None = None
         self.last = float("-inf")  #: last swing taken in
         self.since = float("-inf")  #: when the current delay regime began
+        self._seed: float | None = None
+        self._seed_at: float | None = None  #: actual first swing, for expiring the seed
 
-    def update(self, times: list[float]) -> float | None:
+    def update(self, times: list[float], seed: float | None = None) -> float | None:
         """Take the swings in ``times`` (sorted) newer than the last one seen."""
+        if times and math.isfinite(self.last) and times[0] - self.last > HISTORY_S:
+            self.__init__()  # the previous hand's timing reference has expired
+        if times and self.delay is None and self._seed is None and seed is not None and not _clean_gaps(times):
+            # A weapon's displayed Delay is one initial observation, never a
+            # fabricated swing. Existing real intervals take precedence.
+            self._seed, self._seed_at = seed, times[0]
+            self.delay = seed
         if times and times[-1] > self.last:
             start = bisect.bisect_right(times, self.last)
             for i in range(max(start, 1), len(times)):
                 self.delay = self._next(times[: i + 1])
             self.last = times[-1]
         return self.delay
+
+    def _has_seed(self, times: list[float]) -> bool:
+        return bool(times) and self._seed_at is not None and times[0] <= self._seed_at <= times[-1]
+
+    def _estimate(self, times: list[float]) -> float | None:
+        gaps = _clean_gaps(times)
+        if self._seed is not None and self._has_seed(times):
+            gaps.insert(0, self._seed)
+        return _estimate_gaps(gaps)
 
     def _next(self, times: list[float]) -> float | None:
         current = self.delay
@@ -116,10 +139,11 @@ class _Rhythm:
                 self.since = times[-3]
                 return round(mid, 2)  # haste on or off, a weapon swap: switch now
         regime = [t for t in times[-PERIOD_SWINGS:] if t >= self.since]
-        if current and len(_clean_gaps(regime)) < REGIME_SETTLE_GAPS:
+        seeded_start = self.since == float("-inf") and self._has_seed(regime)
+        if current and not seeded_start and len(_clean_gaps(regime)) < REGIME_SETTLE_GAPS:
             return current  # just switched: two or three gaps are too few to estimate from
-        est = estimate_delay(regime)
-        return est if est is not None else (current or estimate_delay(times[-PERIOD_SWINGS:]))
+        est = self._estimate(regime)
+        return est if est is not None else (current or self._estimate(times[-PERIOD_SWINGS:]))
 
 
 def _hand_key(verb: str, weapon: str | None) -> str:
@@ -134,12 +158,23 @@ def _hand_key(verb: str, weapon: str | None) -> str:
 class SwingTracker:
     """Collects the viewer's auto-attack swings and reports one :class:`HandState` per hand."""
 
-    def __init__(self, player_name: str = "") -> None:
+    def __init__(self, player_name: str = "", weapon_delay: float | None = None) -> None:
         self.player_name = player_name or "You"
+        self.set_weapon_delay(weapon_delay)
         self._swings: deque[tuple[float, str]] = deque(maxlen=240)  #: (ts, hand key), sorted
         self._order: dict[str, int] = {}  #: hand key -> first-seen rank (stable bar order)
         self._split_anchor: float | None = None  #: a swing time of "hand 1" in a rhythm split
         self._rhythms: dict[str, _Rhythm] = {}  #: shown delay per bar label
+
+    def set_weapon_delay(self, delay: float | None) -> None:
+        """Set the initial interval in seconds for hands without timing evidence.
+
+        Changing this setting never resets a bar or replaces a learned rhythm.
+        ``None`` leaves new hands to learn entirely from their observed swings.
+        """
+        if delay is not None and (isinstance(delay, bool) or not math.isfinite(delay) or delay <= 0):
+            raise ValueError("Weapon delay must be positive, finite seconds or None")
+        self.weapon_delay = float(delay) if delay is not None else None
 
     def observe(self, ev: object) -> bool:
         """Record ``ev`` when it is one of the viewer's auto-attack swings."""
@@ -156,6 +191,11 @@ class SwingTracker:
         if self._swings and ts < self._swings[-1][0] - 1.0:
             return False  # far out of order (a re-read line): ignore
         key = _hand_key(verb, getattr(ev, "weapon", None))
+        for previous, hand in reversed(self._swings):
+            if previous < ts - SAME_FRAME_S - 1e-9:
+                break
+            if hand == key and abs(previous - ts) <= SAME_FRAME_S + 1e-9:
+                return False  # Double Attack is one swing, including nearby OCR timestamps
         self._order.setdefault(key, len(self._order))
         # slightly out of order (lines of one frame): keep the list sorted
         items = list(self._swings)
@@ -176,6 +216,8 @@ class SwingTracker:
     def hands(self, now: float) -> list[HandState]:
         recent = [(ts, key) for ts, key in self._swings if now - ts <= HISTORY_S]
         if not recent:
+            self._rhythms.clear()
+            self._split_anchor = None
             return []
         by_key: dict[str, list[float]] = {}
         for ts, key in recent:
@@ -196,7 +238,7 @@ class SwingTracker:
         return [self._hand("hand 1", first), self._hand("hand 2", second)]
 
     def _hand(self, label: str, times: list[float]) -> HandState:
-        delay = self._rhythms.setdefault(label, _Rhythm()).update(times)
+        delay = self._rhythms.setdefault(label, _Rhythm()).update(times, self.weapon_delay)
         return HandState(label, times[-1], delay, len(times))
 
     def _stable_split(self, a: list[float], b: list[float]) -> tuple[list[float], list[float]]:

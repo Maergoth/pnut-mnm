@@ -2161,6 +2161,9 @@ class App(QApplication):
         reload_preferences = getattr(self.engine, "reload_preferences", None)
         if callable(reload_preferences):
             reload_preferences()
+        attack_bar = getattr(self.overlay, "attack_bar", None)
+        if attack_bar is not None:
+            attack_bar.reload_preferences()
         self.revenge._load()
         self.revenge.set_config(cfg)
         if self.triggers is not None:

@@ -28,6 +28,16 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.19": ReleaseNotes(
+        changes=(
+            "Known maps can download and update when the wiki temporarily blocks requests. CDN file hashes avoid downloading unchanged maps again.",
+            "Double Attack hits in the same instant count as one swing for the auto-attack timer; damage totals are unchanged.",
+            "Right-click the auto-attack bar > Weapon Delay to set a starting estimate: 36 means 3.6 seconds; 0 selects automatic timing.",
+            "Weapon Delay contributes one initial timing sample. Actual swings take over, and changing it preserves learned timing.",
+        ),
+        settings_label="Overlay settings",
+        settings_target="attack_bar",
+    ),
     "1.0.18": ReleaseNotes(
         changes=(
             "Ancient Crypt and other large maps now load at full resolution. Image-reading failures preserve cached maps.",

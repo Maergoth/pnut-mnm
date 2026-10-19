@@ -43,6 +43,12 @@ class MapTests(unittest.TestCase):
         html = '<figure class="mw-image-border"><img src="https://example.com/map.png"></figure>'
         self.assertEqual(parse_maps(html, "Void"), [])
 
+    def test_shared_wiki_map_placeholder_is_not_a_zone_map(self):
+        html = '''<figure class="mw-image-border"><a href="/wiki/File:Phformaps.png">
+        <img src="//static.wikitide.net/monstersandmemorieswiki/thumb/8/8b/Phformaps.png/600px-Phformaps.png">
+        </a></figure>'''
+        self.assertEqual(parse_maps(html, "Glinting Hollow"), [])
+
     def test_cache_survives_offline_refresh(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = MapRepository(Path(temp))
@@ -57,7 +63,7 @@ class MapTests(unittest.TestCase):
                 self.assertEqual(repo.maps("Sungreet Strand", refresh=True), entries)
                 self.assertEqual(repo.image(entries[0], refresh=True), b"image")
                 with self.assertRaises(OSError):
-                    repo.maps("Night Harbor")
+                    repo.maps("Uncatalogued Zone")
 
     def test_refresh_updates_same_image_url(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -68,7 +74,7 @@ class MapTests(unittest.TestCase):
                 self.assertEqual(repo.image(entry, refresh=True), b"new")
                 self.assertEqual(repo.image(entry), b"new")
 
-    def test_successful_empty_refresh_discards_old_manifest(self):
+    def test_successful_empty_refresh_replaces_old_manifest_and_is_rechecked(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = MapRepository(Path(temp))
             payloads = [json.dumps({"parse": {"text": {"*": html}}}).encode() for html in (HTML, "", "")]
@@ -77,6 +83,7 @@ class MapTests(unittest.TestCase):
                 self.assertEqual(repo.maps("Sungreet Strand", refresh=True), [])
                 self.assertEqual(repo.maps("Sungreet Strand"), [])
                 self.assertEqual(download.call_count, 3)
+            self.assertEqual(json.loads(repo._path("Sungreet Strand", ".json").read_text()), [])
 
 
 class MapWindowTests(unittest.TestCase):

@@ -439,7 +439,13 @@ damage; **Hit%** shows its hit accuracy.
 
 **Auto-attack bar.** A thin swing timer sits under the overlay (Settings > Overlay > Auto-attack
 bar). It learns your swing delay from the gaps between your own swings ("You crush ...",
-including misses), so it needs a few swings first. The bar fills at that delay and waits at
+including misses), so it normally needs a few swings first. Same-hand hits within the same
+instant, including Double Attack, count as one swing for timing; their damage still counts.
+Right-click the bar and choose **Weapon Delay** to enter a starting estimate in tenths of a
+second: **36 means 3.6 seconds**, and **0** selects automatic timing. The value contributes
+one initial interval sample only when that hand has no timing reference. Real swings replace
+it as the rolling estimate develops; changing the setting never overrides learned timing.
+The bar fills at that delay and waits at
 full until the swing is actually read from the chat; only a read swing resets it, and it then
 starts from the time already gone since the swing (the line reaches the app about a quarter
 second late). A spell you cast holds your swing until the spell lands, which shows as a full bar
@@ -643,8 +649,12 @@ image; a valid remote file hash lets PNUT check for changes before downloading i
 **Settings**, **Download latest maps** updates every known zone's maps in the background;
 check **On startup** to do this automatically at launch (unchecked by default). Updates compare
 the wiki's current file hashes with the cached images and download only missing or changed
-maps. A few requests run at once to speed up checks and downloads. If the wiki cannot provide
-file hashes, the app downloads the images to check for changes. The adjacent **wiki** link opens
+maps. If the wiki temporarily blocks requests, saved map lists or bundled public map links
+still allow downloads, and current file hashes from the image CDN let unchanged files stay
+cached. The update status explains when new-map discovery is unavailable; retry later to
+discover newly added maps. Wiki API requests run one at a time and pause briefly after a
+server error; image downloads can run concurrently. If neither source provides file hashes,
+the app downloads the images to check for changes. The adjacent **wiki** link opens
 the map source. Zones without a map show a clear message. An unavailable map never leaves the previous zone's image on
 screen. Only public zone pages and images are requested; player names and combat logs are
 never sent to the wiki.
