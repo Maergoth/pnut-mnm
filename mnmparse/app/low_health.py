@@ -1,18 +1,21 @@
-"""A brief, passive red border for a confirmed personal low-health alert."""
+"""A passive red edge vignette maintained for a confirmed low-health episode."""
 from __future__ import annotations
 
 import math
 import time
 
-from PySide6.QtCore import QRect, QTimer, Qt
-from PySide6.QtGui import QColor, QPainter, QPaintEvent
+from PySide6.QtCore import QRect, QRectF, QTimer, Qt
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPaintEvent
 from PySide6.QtWidgets import QWidget
 
 from mnmparse.app.window_identity import window_title
 
+EDGE_FRACTION = 0.12
+PULSE_SECONDS = 1.6
+
 
 class LowHealthFlash(QWidget):
-    """Never accepts input or activates the game; only its own border is painted."""
+    """Never accepts input or focus; remains active until recovery calls ``stop``."""
 
     def __init__(self) -> None:
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
@@ -23,6 +26,7 @@ class LowHealthFlash(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._active = False
         self._started = 0.0
         self._reduced_motion = False
         self._timer = QTimer(self)
@@ -30,34 +34,66 @@ class LowHealthFlash(QWidget):
         self._timer.timeout.connect(self._tick)
 
     def flash(self, geometry: QRect, *, reduced_motion: bool = False) -> None:
+        """Show or update the warning without restarting an existing pulse."""
         if geometry.isEmpty():
             return
         self.setGeometry(geometry)
-        self._reduced_motion = reduced_motion
-        self._started = time.monotonic()
-        self.show()
+        self._reduced_motion = bool(reduced_motion)
+        if not self._active:
+            self._active = True
+            self._started = time.monotonic()
+        if not self.isVisible():
+            self.show()
         self.update()
-        self._timer.start()
+        if self._reduced_motion:
+            self._timer.stop()
+        elif not self._timer.isActive():
+            self._timer.start()
+
+    @property
+    def active(self) -> bool:
+        return self._active
 
     def stop(self) -> None:
+        self._active = False
         self._timer.stop()
         self.hide()
 
     def _tick(self) -> None:
-        if time.monotonic() - self._started >= 1.4:
-            self.stop()
-        else:
+        if self._active and not self._reduced_motion:
             self.update()
+        else:
+            self._timer.stop()
+
+    def _strength(self) -> float:
+        if self._reduced_motion:
+            return 0.40
+        age = max(0.0, time.monotonic() - self._started)
+        return 0.30 + 0.15 * (0.5 + 0.5 * math.cos(age * math.tau / PULSE_SECONDS))
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        age = max(0.0, time.monotonic() - self._started)
-        strength = 0.55 if self._reduced_motion else 0.35 + 0.3 * (0.5 + 0.5 * math.cos(age * math.pi * 2))
-        strength *= max(0.0, 1.0 - age / 1.4)
+        if not self._active:
+            return
+        strength = self._strength()
+        depth = max(1, round(min(self.width(), self.height()) * EDGE_FRACTION))
         painter = QPainter(self)
-        width = min(24, max(8, self.width() // 80))
-        # The center remains transparent, including small windowed games.
-        for inset in range(width):
-            color = QColor("#ed3030")
-            color.setAlphaF(strength * (1.0 - inset / width))
-            painter.setPen(color)
-            painter.drawRect(self.rect().adjusted(inset, inset, -inset - 1, -inset - 1))
+        width, height = self.width(), self.height()
+        # Four smooth strips keep the center completely transparent. Their
+        # overlap gives the corners a slightly stronger warning.
+        for rect, start_x, start_y, end_x, end_y in (
+            (QRectF(0, 0, width, depth), 0, 0, 0, depth),
+            (QRectF(0, height - depth, width, depth), 0, height, 0, height - depth),
+            (QRectF(0, 0, depth, height), 0, 0, depth, 0),
+            (QRectF(width - depth, 0, depth, height), width, 0, width - depth, 0),
+        ):
+            gradient = QLinearGradient(start_x, start_y, end_x, end_y)
+            for position, weight in ((0.0, 1.0), (0.18, 0.74), (0.55, 0.28), (1.0, 0.0)):
+                color = QColor("#ed3030")
+                color.setAlphaF(strength * weight)
+                gradient.setColorAt(position, color)
+            painter.fillRect(rect, gradient)
+        painter.end()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.stop()
+        super().closeEvent(event)

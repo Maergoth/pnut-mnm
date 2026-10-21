@@ -309,8 +309,11 @@ order in the OCR result list does not matter.
 An unreadable HP value does not stop a separately recognized XP bar from being tracked.
 The stats region is read at 1.5× size, or your configured OCR scale if higher, for clearer
 HP readings. XP-bar measurements still use the original color pixels.
-Two fresh HP readings below your chosen threshold can sound an alert and briefly flash
-red screen edges. The threshold defaults to **10%**. Choose the threshold, sound, volume
+Two fresh HP readings below your chosen threshold can sound an alert and pulse a red
+glow around the screen edges. The glow scales with screen size and stays until a valid
+HP reading reaches the threshold again; an unreadable value does not count as recovery.
+Reduced motion shows a steady glow. Hiding overlays, pausing or stopping capture also
+hides the warning. The threshold defaults to **10%**. Choose the threshold, sound, volume
 and flash in the same section; **Preview sound** plays the selected tone and volume.
 
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.

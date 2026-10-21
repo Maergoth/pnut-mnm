@@ -100,6 +100,86 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.engine.set_paused(True)
         self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
 
+    def test_confirmed_low_state_survives_unreadable_hp_without_repeating_audio(self):
+        states, alerts = [], []
+        self.engine.low_health_changed.connect(states.append)
+        self.engine.low_health.connect(alerts.append)
+        for now, value in ((100, self.reading()), (100.25, self.reading()),
+                           (115, None), (115.25, self.reading()), (115.5, self.reading())):
+            self.engine._observe_player_status(value, self.cfg, now, (8, 8, 3))
+        self.assertEqual(states, [True])
+        self.assertEqual(alerts, [8.0])
+        self.assertTrue(self.engine._low_health_active)
+        self.engine._observe_player_status(self.reading(hp=10), self.cfg, 116, (8, 8, 3))
+        self.assertEqual(states, [True, False])
+
+    def test_recovery_and_reentry_visual_state_bypass_audio_cooldown(self):
+        states, alerts = [], []
+        self.engine.low_health_changed.connect(states.append)
+        self.engine.low_health.connect(alerts.append)
+        for now, hp in ((100, 8), (100.25, 8), (101, 10), (101.25, 8), (101.5, 8),
+                        (112, 8), (113, 12), (113.25, 8), (113.5, 8)):
+            self.engine._observe_player_status(self.reading(hp), self.cfg, now, (8, 8, 3))
+        self.assertEqual(states, [True, False, True, False, True])
+        self.assertEqual(alerts, [8.0, 8.0])
+
+    def test_duplicate_timestamp_and_display_rounding_are_not_health_recovery(self):
+        states = []
+        self.engine.low_health_changed.connect(states.append)
+        near_threshold = dataclasses.replace(self.reading(), hp_current=99_999_999, hp_max=1_000_000_000)
+        self.engine._observe_player_status(near_threshold, self.cfg, 100, (8, 8, 3))
+        self.engine._observe_player_status(near_threshold, self.cfg, 100.25, (8, 8, 3))
+        self.assertEqual(states, [True])
+        self.assertEqual(self.engine._telemetry().snapshot()["hp_percent"], 10.0)
+        self.engine._observe_player_status(self.reading(hp=50), self.cfg, 100.25, (8, 8, 3))
+        self.assertEqual(states, [True])
+        self.engine._observe_player_status(None, self.cfg, 100.5, (8, 8, 3))
+        self.engine._observe_player_status(near_threshold, self.cfg, 100.75, (8, 8, 3))
+        self.assertEqual(states, [True])
+        self.engine._observe_player_status(self.reading(hp=10), self.cfg, 101, (8, 8, 3))
+        self.assertEqual(states, [True, False])
+
+    def test_pause_and_capture_source_close_clear_latched_low_state(self):
+        states = []
+        self.engine.low_health_changed.connect(states.append)
+        self.engine._observe_player_status(self.reading(), self.cfg, 100, (8, 8, 3))
+        self.engine._observe_player_status(self.reading(), self.cfg, 100.25, (8, 8, 3))
+        self.engine.set_paused(True)
+        self.assertEqual(states, [True, False])
+        self.engine.set_paused(False)
+        self.engine._observe_player_status(self.reading(), self.cfg, 101, (8, 8, 3))
+        self.assertEqual(states, [True, False])
+        self.engine._observe_player_status(self.reading(), self.cfg, 101.25, (8, 8, 3))
+        self.assertEqual(states, [True, False, True])
+        self.engine._close_source()
+        self.assertEqual(states, [True, False, True, False])
+
+    def test_panel_identity_change_clears_latch_and_requires_fresh_confirmation(self):
+        states = []
+        self.engine.low_health_changed.connect(states.append)
+        self.engine._observe_player_status(self.reading(), self.cfg, 100, (8, 8, 3))
+        self.engine._observe_player_status(self.reading(), self.cfg, 100.25, (8, 8, 3))
+        changed = dataclasses.replace(self.reading(), panel_rect=(20, 0, 28, 8))
+        self.engine._observe_player_status(changed, self.cfg, 101, (8, 30, 3))
+        self.assertEqual(states, [True, False])
+        self.engine._observe_player_status(changed, self.cfg, 101.25, (8, 30, 3))
+        self.assertEqual(states, [True, False, True])
+
+    def test_threshold_or_health_monitor_disable_clear_state_and_require_new_lows(self):
+        for changes in ({"low_health_threshold": 25}, {"low_health_enabled": False},
+                        {"player_status_enabled": False}):
+            with self.subTest(changes=changes):
+                engine = Engine(self.cfg)
+                states = []
+                engine.low_health_changed.connect(states.append)
+                engine._observe_player_status(self.reading(), self.cfg, 100, (8, 8, 3))
+                engine._observe_player_status(self.reading(), self.cfg, 100.25, (8, 8, 3))
+                changed = dataclasses.replace(self.cfg, **changes)
+                engine.update_config(changed)
+                self.assertEqual(states, [True, False])
+                engine._observe_player_status(self.reading(), changed, 101, (8, 8, 3))
+                self.assertEqual(states, [True, False])
+
     def test_invalid_stats_crop_does_not_stop_chat_capture(self):
         self.engine.update_config(dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8)))
         source = SimpleNamespace(full_frame_dimensions=(8, 8), frame_count=1,
@@ -327,8 +407,9 @@ class EnginePlayerStatusTests(unittest.TestCase):
                 self.assertIsNone(summary["xp_points_per_hour"])
 
     def test_unreadable_health_does_not_stop_xp_or_invent_low_health_alerts(self):
-        signals = []
+        signals, states = [], []
         self.engine.low_health.connect(signals.append)
+        self.engine.low_health_changed.connect(states.append)
         for now in range(100, 402):
             value = dataclasses.replace(self.reading(), hp_current=None, hp_max=None,
                                         xp_percent=22.0 if now >= 111 else 20.0)
@@ -337,12 +418,14 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertEqual(snap["xp_observed_seconds"], 300)
         self.assertAlmostEqual(snap["xp_points_per_hour"], 24)
         self.assertEqual(signals, [])
+        self.assertEqual(states, [])
         self.assertIsNone(snap["hp_percent"])
         self.assertFalse(snap["hp_low"])
         self.engine._observe_player_status(self.reading(), self.cfg, 402, (8, 8, 3))
         self.assertEqual(signals, [])
         self.engine._observe_player_status(self.reading(), self.cfg, 403, (8, 8, 3))
         self.assertEqual(signals, [8.0])
+        self.assertEqual(states, [True])
 
     def test_slow_cadence_ocr_miss_tolerates_small_scheduling_jitter(self):
         for fps, ocr_ms in ((1 / 3, 0), (4, 3000)):
@@ -443,8 +526,9 @@ class EnginePlayerStatusTests(unittest.TestCase):
 
         frame = np.zeros((8, 8, 3), np.uint8)
         self.engine._ocr = Mock(read=Mock(return_value=[]))
-        signals = []
+        signals, states = [], []
         self.engine.low_health.connect(signals.append)
+        self.engine.low_health_changed.connect(states.append)
         now = [100.0]
         with patch("mnmparse.player_status.read_player_status", return_value=self.reading()), patch(
                 "mnmparse.app.engine.time.time", side_effect=lambda: now[0]):
@@ -459,13 +543,15 @@ class EnginePlayerStatusTests(unittest.TestCase):
             self.engine._process_frame(frame, self.cfg, cropped=True)
             self.assertIsNot(self.engine._telemetry(), previous)
             self.assertEqual(signals, [8.0])
+            self.assertEqual(states, [True, False])
             self.assertFalse(self.engine._telemetry().snapshot()["hp_low"])
             now[0] = 111.25
             self.engine._process_frame(frame, self.cfg, cropped=True)
         self.assertEqual(signals, [8.0, 8.0])
+        self.assertEqual(states, [True, False, True])
         self.assertFalse(any(key.startswith("hp_") for key in self.engine.session_snapshot().player_status))
 
-    def test_flash_has_transparent_center_ignores_input_and_finishes(self):
+    def test_flash_has_transparent_center_ignores_input_and_persists_until_stopped(self):
         flash = LowHealthFlash()
         self.addCleanup(flash.close)
         flash.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
@@ -479,5 +565,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
         self.assertEqual(flash.focusPolicy(), Qt.FocusPolicy.NoFocus)
         with patch("mnmparse.app.low_health.time.monotonic", return_value=102):
             flash._tick()
+        self.assertFalse(flash.isHidden())
+        flash.stop()
         self.assertTrue(flash.isHidden())
         self.assertFalse(flash._timer.isActive())

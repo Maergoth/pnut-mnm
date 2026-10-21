@@ -1,18 +1,20 @@
 """Map and Revenge popout share overlay settings through application controls."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 import inspect
 import os
 from pathlib import Path
 import tempfile
+import threading
 from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QRect, QSettings, Signal
+from PySide6.QtCore import QObject, QRect, QSettings, Signal, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -68,6 +70,22 @@ class _DownloadController(QObject):
 
     def shutdown(self):
         pass
+
+
+class _HealthRelay(QObject):
+    """A GUI QObject receiver gives worker signals real AutoConnection delivery."""
+
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.values = []
+        self.threads = []
+
+    @Slot(bool)
+    def deliver(self, active):
+        self.values.append(active)
+        self.threads.append(threading.get_ident())
+        self.callback(active)
 
 
 class _AppHarness:
@@ -148,6 +166,54 @@ class MapLockWiringTests(unittest.TestCase):
         self.assertEqual(self.host.map_overlay.appearance, (opacity, font_scale))
         self.assertEqual((self.host.revenge_popout.opacity, self.host.revenge_popout.font_scale),
                          (opacity, font_scale))
+
+    @contextmanager
+    def health_warning(self, **overrides):
+        options = dict(player_status_enabled=True, low_health_enabled=True,
+                       low_health_flash=True, low_health_threshold=30, overlay_enabled=True)
+        options.update(overrides)
+        host = self.bootstrap(Config(**options))
+        host.engine.state = "running"
+        geometry = QRect(10, 20, 1280, 720)
+        screen = SimpleNamespace(geometry=lambda: QRect(geometry))
+        flash = Mock()
+        with patch("mnmparse.app.low_health.LowHealthFlash", return_value=flash) as factory, \
+             patch("mnmparse.capture.find_game_window_info", return_value=SimpleNamespace(rect=(20, 30, 420, 330))), \
+             patch("mnmparse.app.main.QGuiApplication.screenAt", return_value=screen), \
+             patch.object(host, "triggers", Mock()) as triggers:
+            yield host, flash, factory, triggers, geometry
+
+    @contextmanager
+    def real_health_engine(self, host):
+        from mnmparse.app.engine import Engine
+
+        engine = Engine(replace(host.cfg, log_dir=self.temp.name))
+        engine._state = "running"
+        relay = _HealthRelay(host._on_low_health_changed)
+        engine.low_health_changed.connect(relay.deliver)
+        try:
+            with patch.object(host, "engine", engine):
+                yield engine, relay
+        finally:
+            engine.low_health_changed.disconnect(relay.deliver)
+            relay.deleteLater()
+            engine.deleteLater()
+
+    def queue_health_state_from_worker(self, engine, active):
+        errors = []
+
+        def emit():
+            try:
+                with engine._lock:
+                    engine._set_low_health_active(active)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=emit, name="health-state-test", daemon=True)
+        worker.start()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive(), "Health-state worker did not finish")
+        self.assertEqual(errors, [])
 
     def test_fresh_install_opens_map_and_quit_keeps_open_preference(self):
         host = self.bootstrap()
@@ -330,6 +396,146 @@ class MapLockWiringTests(unittest.TestCase):
             flash.assert_not_called()
         finally:
             host.triggers = None
+
+    def test_confirmed_low_health_signal_starts_and_stops_visual_without_audio(self):
+        with self.health_warning(reduced_motion=True) as (host, flash, factory, triggers, geometry):
+            host.engine.low_health_changed.emit(True)
+            factory.assert_called_once_with()
+            flash.flash.assert_called_with(geometry, reduced_motion=True)
+            triggers.fire.assert_not_called()
+            host.engine.low_health_changed.emit(False)
+            flash.stop.assert_called()
+            triggers.fire.assert_not_called()
+            host.engine.low_health_changed.emit(True)
+            self.assertEqual(factory.call_count, 1)
+            self.assertGreaterEqual(flash.flash.call_count, 2)
+
+    def test_audio_low_health_signal_remains_separate_from_persistent_visual_state(self):
+        with self.health_warning() as (host, flash, factory, triggers, geometry):
+            host.engine.low_health.emit(10.0)
+            triggers.fire.assert_called_once()
+            factory.assert_not_called()
+            host.engine.low_health_changed.emit(True)
+            flash.flash.assert_called_with(geometry, reduced_motion=False)
+            self.assertEqual(triggers.fire.call_count, 1)
+
+    def test_confirmed_low_health_survives_global_hide_show_and_hidden_recovery(self):
+        with self.health_warning() as (host, flash, _factory, triggers, geometry):
+            host.engine.low_health_changed.emit(True)
+            host.set_overlay_visible(False)
+            flash.stop.assert_called()
+            flash.flash.reset_mock()
+            host.engine.low_health_changed.emit(True)
+            flash.flash.assert_not_called()
+            host.set_overlay_visible(True)
+            flash.flash.assert_called_with(geometry, reduced_motion=False)
+
+            host.set_overlay_visible(False)
+            flash.flash.reset_mock()
+            host.engine.low_health_changed.emit(False)
+            host.set_overlay_visible(True)
+            flash.flash.assert_not_called()
+            triggers.fire.assert_not_called()
+
+    def test_flash_preference_off_then_on_retains_the_confirmed_low_health_episode(self):
+        with self.health_warning() as (host, flash, _factory, triggers, geometry):
+            host.engine.low_health_changed.emit(True)
+            host.on_config_changed(replace(host.cfg, low_health_flash=False))
+            flash.stop.assert_called()
+            flash.flash.reset_mock()
+            host._sync_low_health_flash()
+            flash.flash.assert_not_called()
+            host.on_config_changed(replace(host.cfg, low_health_flash=True))
+            flash.flash.assert_called_with(geometry, reduced_motion=False)
+            triggers.fire.assert_not_called()
+
+    def test_changed_low_health_threshold_waits_for_a_new_confirmation(self):
+        with self.health_warning() as (host, flash, _factory, triggers, geometry):
+            host.engine.low_health_changed.emit(True)
+            host.on_config_changed(replace(host.cfg, low_health_threshold=40))
+            flash.stop.assert_called()
+            flash.flash.reset_mock()
+            host._sync_low_health_flash()
+            host.set_overlay_visible(False)
+            host.set_overlay_visible(True)
+            flash.flash.assert_not_called()
+            host.engine.low_health_changed.emit(True)
+            flash.flash.assert_called_with(geometry, reduced_motion=False)
+            triggers.fire.assert_not_called()
+
+    def test_paused_missing_window_and_stopped_clear_visual_until_fresh_confirmation(self):
+        with self.health_warning() as (host, flash, _factory, triggers, geometry):
+            for state in ("paused", "no_window", "stopped"):
+                with self.subTest(state=state):
+                    host.engine.state = "running"
+                    host.engine.low_health_changed.emit(True)
+                    host.engine.state = state
+                    host.engine.state_changed.emit(state)
+                    flash.stop.assert_called()
+                    flash.flash.reset_mock()
+                    host.engine.state = "running"
+                    host.engine.state_changed.emit("running")
+                    flash.flash.assert_not_called()
+                    host.engine.low_health_changed.emit(True)
+                    flash.flash.assert_called_with(geometry, reduced_motion=False)
+            triggers.fire.assert_not_called()
+
+    def test_low_health_signal_queued_during_pause_cannot_restart_visual_on_resume(self):
+        with self.health_warning() as (host, flash, factory, triggers, geometry):
+            host.engine.state = "paused"
+            host.engine.state_changed.emit("paused")
+            host.engine.low_health_changed.emit(True)
+            factory.assert_not_called()
+            host.engine.state = "running"
+            host.engine.state_changed.emit("running")
+            factory.assert_not_called()
+            host.engine.low_health_changed.emit(True)
+            flash.flash.assert_called_with(geometry, reduced_motion=False)
+            triggers.fire.assert_not_called()
+
+    def test_worker_queued_low_health_true_cannot_revive_flash_after_gui_threshold_reset(self):
+        with self.health_warning() as (host, _flash, factory, triggers, _geometry), \
+             self.real_health_engine(host) as (engine, relay):
+            gui_thread = threading.get_ident()
+            self.queue_health_state_from_worker(engine, True)
+            self.assertEqual(relay.values, [], "Worker signal must stay queued until GUI events run")
+            self.assertTrue(engine.low_health_active)
+
+            changed = replace(engine._cfg, low_health_threshold=40)
+            engine.update_config(changed)
+            host.on_config_changed(changed)
+            self.assertFalse(engine.low_health_active)
+            self.assertEqual(relay.values, [False])
+            self.qt_app.processEvents()
+
+            self.assertEqual(relay.values, [False, True])
+            self.assertEqual(relay.threads, [gui_thread, gui_thread])
+            self.assertFalse(host._low_health_active)
+            factory.assert_not_called()
+            triggers.fire.assert_not_called()
+
+    def test_worker_queued_recovery_cannot_clear_a_newer_confirmed_low_health_episode(self):
+        with self.health_warning() as (host, flash, _factory, triggers, geometry), \
+             self.real_health_engine(host) as (engine, relay):
+            gui_thread = threading.get_ident()
+            with engine._lock:
+                engine._set_low_health_active(True)
+            flash.flash.assert_called_with(geometry, reduced_motion=False)
+            self.queue_health_state_from_worker(engine, False)
+            self.assertEqual(relay.values, [True])
+
+            with engine._lock:
+                engine._set_low_health_active(True)
+            self.assertTrue(engine.low_health_active)
+            self.assertEqual(relay.values, [True, True])
+            flash.stop.reset_mock()
+            self.qt_app.processEvents()
+
+            self.assertEqual(relay.values, [True, True, False])
+            self.assertEqual(relay.threads, [gui_thread, gui_thread, gui_thread])
+            self.assertTrue(host._low_health_active)
+            flash.stop.assert_not_called()
+            triggers.fire.assert_not_called()
 
     def test_bootstrap_uses_persisted_effective_lock_and_appearance(self):
         self.settings.setValue("overlay/locked", True)

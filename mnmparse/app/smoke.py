@@ -93,8 +93,11 @@ def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
     windows.append(flash)
     flash.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     flash.flash(QRect(0, 0, 400, 250), reduced_motion=True)
+    flash._started -= 60
+    flash._tick()
     preview = flash.grab().toImage()
     if (preview.pixelColor(200, 125).alpha() != 0 or preview.pixelColor(1, 125).alpha() == 0
+            or preview.pixelColor(20, 125).alpha() == 0 or not flash.active or flash.isHidden()
             or not flash.windowFlags() & Qt.WindowType.WindowTransparentForInput
             or not flash.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)):
         raise RuntimeError("The low-HP flash did not preserve a transparent, passive game view")

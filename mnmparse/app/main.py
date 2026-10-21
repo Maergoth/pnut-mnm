@@ -342,6 +342,8 @@ class _MissingEngine(QObject):
     message = Signal(object, object)
     snapshot = Signal(object)
     encounter_closed = Signal(object)
+    low_health = Signal(float)
+    low_health_changed = Signal(bool)
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -1306,6 +1308,7 @@ class App(QApplication):
         self.app_updates: Any | None = None
         self.triggers: Any | None = None
         self._low_health_flash: Any | None = None
+        self._low_health_active = False
         self._overlay_group_visible = True
         self._syncing_map_visibility = False
         self.tray: TrayIcon | None = None
@@ -1506,6 +1509,7 @@ class App(QApplication):
                 overlay.set_trigger_runner(self.triggers)
         self._connect_optional(engine, "session", window.on_session)
         self._connect_optional(engine, "low_health", self._on_low_health)
+        self._connect_optional(engine, "low_health_changed", self._on_low_health_changed)
         from mnmparse.app.revenge import RevengePrompts, RevengeList
         self.revenge.pop_out_requested.connect(self.show_revenge_popout)
         self.revenge.alert_requested.connect(self._on_revenge_alert)
@@ -1720,10 +1724,9 @@ class App(QApplication):
         _call_first(self.engine, ("reset_encounter",))
 
     def _on_engine_state(self, state: str) -> None:
-        if state not in RUNNING_STATES:
-            flash = self.__dict__.get("_low_health_flash")
-            if flash is not None:
-                flash.stop()
+        if state != "running":
+            self._low_health_active = False
+            self._sync_low_health_flash()
         if self.tray is not None:
             self.tray.set_capture_running(state in RUNNING_STATES)
             self.tray.set_status_text(STATE_TEXT.get(state, state))
@@ -1767,24 +1770,44 @@ class App(QApplication):
                               volume=self.cfg.low_health_volume, timer=False,
                               timer_label=f"Low HP: {percent:.1f}%", timer_color=theme.DANGER)
             self.triggers.fire(Match(trigger, "", "", {}, notification_seconds=3.0))
-        if self.cfg.low_health_flash and self.__dict__.get("_overlay_group_visible", True):
-            from mnmparse.app.low_health import LowHealthFlash
-            from mnmparse.capture import find_game_window_info
-            screen = None
-            try:
-                game = find_game_window_info(self.cfg.window_title)
-                if game is not None:
-                    from PySide6.QtCore import QPoint
-                    left, top, right, bottom = game.rect
-                    screen = QGuiApplication.screenAt(QPoint((left + right) // 2, (top + bottom) // 2))
-            except Exception:
-                log.debug("Low HP alert screen lookup failed", exc_info=True)
-            if screen is None:
-                screen = self.overlay.screen() if self.overlay is not None else QGuiApplication.primaryScreen()
-            if screen is not None:
-                if self.__dict__.get("_low_health_flash") is None:
-                    self._low_health_flash = LowHealthFlash()
-                self._low_health_flash.flash(screen.geometry(), reduced_motion=self.cfg.reduced_motion)
+
+    def _on_low_health_changed(self, active: bool) -> None:
+        """Track the confirmed episode separately from its one-shot sound."""
+        # A queued worker notification can predate a GUI-side threshold/reset
+        # change. Read the latest latch so either stale True or False is harmless.
+        active = getattr(self.engine, "low_health_active", active)
+        self._low_health_active = bool(active) and getattr(self.engine, "state", "") == "running"
+        self._sync_low_health_flash()
+
+    def _sync_low_health_flash(self) -> None:
+        """Keep the warning visible until recovery, respecting shared visibility."""
+        wanted = (self.__dict__.get("_low_health_active", False)
+                  and self.cfg.player_status_enabled and self.cfg.low_health_enabled
+                  and self.cfg.low_health_flash and self.__dict__.get("_overlay_group_visible", True)
+                  and getattr(self.engine, "state", "") == "running"
+                  and not (self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)))
+        flash = self.__dict__.get("_low_health_flash")
+        if not wanted:
+            if flash is not None:
+                flash.stop()
+            return
+        from mnmparse.app.low_health import LowHealthFlash
+        from mnmparse.capture import find_game_window_info
+        screen = None
+        try:
+            game = find_game_window_info(self.cfg.window_title)
+            if game is not None:
+                from PySide6.QtCore import QPoint
+                left, top, right, bottom = game.rect
+                screen = QGuiApplication.screenAt(QPoint((left + right) // 2, (top + bottom) // 2))
+        except Exception:
+            log.debug("Low HP alert screen lookup failed", exc_info=True)
+        if screen is None:
+            screen = self.overlay.screen() if self.overlay is not None else QGuiApplication.primaryScreen()
+        if screen is not None:
+            if flash is None:
+                flash = self._low_health_flash = LowHealthFlash()
+            flash.flash(screen.geometry(), reduced_motion=self.cfg.reduced_motion)
 
     def _on_message_for_triggers(self, msg: Any, ev: Any) -> None:
         text = getattr(msg, "text", "") or ""
@@ -2107,9 +2130,7 @@ class App(QApplication):
         popout = self.__dict__.get("revenge_popout")
         if popout is not None:
             popout.set_overlay_visible(visible)
-        flash = self.__dict__.get("_low_health_flash")
-        if not visible and flash is not None:
-            flash.stop()
+        self._sync_low_health_flash()
         if self.window is not None:
             self.window.set_overlay_state(visible)
         if self.tray is not None:
@@ -2148,10 +2169,13 @@ class App(QApplication):
         """The Settings page saved ``cfg``: adopt it in the shell and the overlay."""
         previous = self.cfg
         self.cfg = cfg
-        flash = self.__dict__.get("_low_health_flash")
-        if flash is not None and (previous.low_health_threshold != cfg.low_health_threshold
-                                 or not (cfg.player_status_enabled and cfg.low_health_enabled and cfg.low_health_flash)):
-            flash.stop()
+        if (previous.low_health_threshold != cfg.low_health_threshold
+                or previous.low_health_enabled != cfg.low_health_enabled
+                or any(getattr(previous, key) != getattr(cfg, key) for key in
+                       ("crop", "player_status_crop", "player_status_separate", "player_status_enabled",
+                        "player_status_xp", "player_name"))):
+            self._low_health_active = False
+        self._sync_low_health_flash()
         revenge = self.__dict__.get("revenge")
         if revenge is not None:
             revenge.set_config(cfg)

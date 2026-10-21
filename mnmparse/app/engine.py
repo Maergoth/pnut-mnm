@@ -295,6 +295,7 @@ class Engine(QObject):
     encounter_updated = Signal(object)
     session = Signal(object)  #: SessionSnapshot (loot, coin, kills, deaths, CC) for the whole run
     low_health = Signal(float)  #: confirmed own HP below the threshold; one alert per low-health episode
+    low_health_changed = Signal(bool)  #: latched low HP; false means valid recovery or an explicit monitoring reset
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -351,6 +352,7 @@ class Engine(QObject):
         self._player_crop_warned = False
         self._player_reader_warned = False
         self._low_health_alert_at = float("-inf")
+        self._low_health_active = False
         self._recent_kinds: deque[str] = deque(maxlen=GARBLE_WINDOW)
         self._diagnostic_messages: deque[dict[str, Any]] = deque(maxlen=DIAG_MESSAGE_LIMIT)
         self._diagnostic_frames: deque[dict[str, Any]] = deque(maxlen=DIAG_FRAME_LIMIT)
@@ -414,6 +416,11 @@ class Engine(QObject):
     def state(self) -> str:
         """The current state string (see :data:`STATES`)."""
         return self._state
+
+    @property
+    def low_health_active(self) -> bool:
+        """Current confirmed episode, including changes newer than queued signals."""
+        return self._low_health_active
 
     @property
     def is_running(self) -> bool:
@@ -543,6 +550,7 @@ class Engine(QObject):
             if (previous.low_health_threshold != cfg.low_health_threshold
                     or previous.low_health_enabled != cfg.low_health_enabled):
                 self._telemetry().set_health_threshold(cfg.low_health_threshold)
+                self._set_low_health_active(False)
                 self._low_health_alert_at = float("-inf")
             self._crop_warned = False
             self._row_frames = 0
@@ -1639,6 +1647,7 @@ class Engine(QObject):
         """Live baselines belong to one session; restored totals need fresh observations."""
         if self._player_telemetry_owner is not self._session_stats:
             from mnmparse.player_telemetry import PlayerTelemetry
+            self._set_low_health_active(False)
             self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}),
                                                      low_health_threshold=self._cfg.low_health_threshold)
             self._player_telemetry_owner = self._session_stats
@@ -1653,9 +1662,17 @@ class Engine(QObject):
                 self._session_dirty = True
 
     def _pause_player_status(self) -> None:
+        self._set_low_health_active(False)
         if self._player_telemetry is not None:
             self._telemetry().pause()
             self._save_player_status()
+
+    def _set_low_health_active(self, active: bool) -> None:
+        """Keep one visual/audio episode through unreadable HP samples."""
+        active = bool(active)
+        if active != self._low_health_active:
+            self._low_health_active = active
+            self.low_health_changed.emit(active)
 
     def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any, *, ocr_ms: float = 0.0) -> None:
         telemetry = self._telemetry()
@@ -1683,8 +1700,9 @@ class Engine(QObject):
                 key = prior
         if key != self._player_panel_key:
             telemetry.pause()
+            self._set_low_health_active(False)
             self._player_panel_key = key
-        previous = telemetry.snapshot().get("hp_below10_episodes") or 0
+        previous_sample = telemetry.snapshot().get("last_seen")
         measurement = {}
         if reading is not None:
             measurement = {"hp_current": reading.hp_current, "hp_max": reading.hp_max,
@@ -1699,10 +1717,25 @@ class Engine(QObject):
         max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * cadence + .25))
         telemetry.update(measurement, now, max_gap=max_gap)
         summary = telemetry.snapshot()
-        if (cfg.low_health_enabled and (summary.get("hp_below10_episodes") or 0) > previous
-                and now - self._low_health_alert_at >= 10.0):
-            self._low_health_alert_at = now
-            self.low_health.emit(float(summary["hp_percent"]))
+        if not (cfg.player_status_enabled and cfg.low_health_enabled):
+            self._set_low_health_active(False)
+        elif (summary.get("hp_percent") is not None
+              and (previous_sample is None or now > previous_sample)):
+            # The summary rounds HP for display. Use the validated measurement
+            # so a value just below the threshold cannot round into recovery.
+            percent = 100.0 * float(measurement["hp_current"]) / float(measurement["hp_max"])
+            if percent >= cfg.low_health_threshold:
+                self._set_low_health_active(False)
+            elif summary.get("hp_low") and not self._low_health_active:
+                self._set_low_health_active(True)
+                # Visual state must follow every confirmed episode, including
+                # recoveries/reentries inside the existing audio cooldown.
+                if now - self._low_health_alert_at >= 10.0:
+                    self._low_health_alert_at = now
+                    reported = float(summary["hp_percent"])
+                    self.low_health.emit(percent if reported >= cfg.low_health_threshold else reported)
+        # hp_percent=None means unavailable, never proof of recovery. Telemetry
+        # still resets its confirmation counter, while this episode stays live.
         self._save_player_status()
 
     def _note_player_event(self, ev: Any, cfg: Config) -> None:
