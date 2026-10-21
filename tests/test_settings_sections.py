@@ -50,7 +50,7 @@ class SettingsSectionsTests(unittest.TestCase):
         panels = self.panels()
         self.assertIs(panels[2], self.page.morality)
         expected = (
-            "App updates", "Map updates", "General", "Overlay", "Revenge List",
+            "App updates", "Map updates", "General", "Overlay", "Considered NPC", "Revenge List",
             "Combat & session", "Mini stat window", "Clipboard", "Capture", "OCR", "Crop", "Logs & feed", "Status",
         )
         headings = []
@@ -69,6 +69,8 @@ class SettingsSectionsTests(unittest.TestCase):
             "General": (self.page.player_name, self.page.start_on_launch, self.page.minimize_to_tray,
                         self.page.reduced_motion),
             "Overlay": (self.page.overlay_enabled, self.page.overlay_locked, self.page.overlay_opacity),
+            "Considered NPC": (self.page.npc_enabled, self.page.npc_level, self.page.npc_common_drops,
+                               self.page.npc_unique_drops, self.page.npc_quests, self.page.npc_reputation),
             "Revenge List": (self.page.revenge_enabled, self.page.revenge_alert_sound,
                              self.page.revenge_alert_volume, self.page.revenge_days, self.page.revenge_entries),
             "Combat & session": (self.page.show_other_groups, self.page.include_personal,
