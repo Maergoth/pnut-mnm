@@ -10,14 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QFont, QFontMetricsF, QHideEvent, QMouseEvent, QPainter, QPainterPath,
+    QCursor, QFont, QFontMetricsF, QHideEvent, QMouseEvent, QPainter, QPainterPath,
     QPaintEvent, QPen, QResizeEvent, QWheelEvent,
 )
 from PySide6.QtWidgets import QLabel, QMenu, QScrollBar, QVBoxLayout, QWidget
 
-from mnmparse.app.docked_panel import DockedPanel
+from mnmparse.app.docked_panel import DOCK_GAP, DockedPanel
+from mnmparse.app.npc_panel_lifetime import NpcPanelLifetime
 from mnmparse.app.widgets import make_font, qcolor, token
 
 if TYPE_CHECKING:
@@ -119,6 +120,16 @@ class NpcPanel(DockedPanel):
         self._row_rects: list[tuple[QRectF, _Row]] = []
         self._body = QRectF()
         self._laying_out = False
+        self._following = False
+        self._column_count = 1
+        self._resize_edge = ""
+        self._resize_changed = False
+        self._resize_origin: tuple[QPointF, QRect] | None = None
+        try:
+            saved_width = int(settings.value("npc_panel/width", 0))
+        except (TypeError, ValueError):
+            saved_width = 0
+        self._preferred_width: int | None = max(180, saved_width) if saved_width > 0 else None
         self._hovered_item = ""
         self._tooltip_position = QPoint()
         self._items: dict[str, "ItemDetails"] = {}
@@ -128,6 +139,8 @@ class NpcPanel(DockedPanel):
         self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._scroll.setAccessibleName("NPC information")
         self._scroll.valueChanged.connect(self._scrolled)
+        self._lifetime = NpcPanelLifetime(self)
+        self._scroll.installEventFilter(self)
         self._scroll.hide()
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setMinimumWidth(180)
@@ -139,6 +152,8 @@ class NpcPanel(DockedPanel):
     def show_npc(self, name: str) -> None:
         """Select a new NPC immediately, clearing the previous NPC's details."""
         name = str(name or "").strip()
+        if name:
+            self._lifetime.present()
         if name != self._name:
             self._name = name
             self._details = None
@@ -199,16 +214,82 @@ class NpcPanel(DockedPanel):
             self._present_item()
 
     def wants_visible(self) -> bool:
-        return bool(self._name) and any(self._fields.values())
+        return bool(self._name) and any(self._fields.values()) and not self._lifetime.expired
 
     @property
     def options(self) -> dict[str, bool]:
         return {"enabled": bool(self.enabled), **self._fields}
 
     def sync(self) -> None:
+        if self._owner.locked or self._owner.click_through:
+            self._finish_gesture()
         if self._owner.click_through or not self.enabled or not self._owner.isVisible():
             self._clear_hover()
+        if self._owner.click_through:
+            self._lifetime.set_hovered(False)
+        self._lifetime.sync()
         super().sync()
+
+    def _available_area(self) -> QRect:
+        screen = (self._owner.screen() or self.screen()) if self._docked else (self.screen() or self._owner.screen())
+        return screen.availableGeometry() if screen is not None else QRect(0, 0, 1920, 1080)
+
+    def set_panel_width(self, width: int) -> None:
+        """Remember an independent width without changing the docking choice."""
+        area = self._available_area()
+        self._preferred_width = max(self.minimumWidth(), min(int(width), area.width()))
+        self._settings.setValue("npc_panel/width", self._preferred_width)
+        if not self._docked:
+            self._free_geometry = QRect(self.geometry())
+            self._free_geometry.setWidth(self._preferred_width)
+        self.follow()
+        self._layout_rows()
+        self._save_free_geometry()
+
+    def _save_free_geometry(self) -> None:
+        if not self._docked:
+            self._free_geometry = QRect(self.geometry())
+            self._settings.setValue("npc_panel/docked", False)
+            self._settings.setValue("npc_panel/geometry", self._free_geometry)
+
+    def follow(self) -> None:
+        if self._following or self._press is not None or self._resize_origin is not None:
+            return
+        self._following = True
+        try:
+            area = self._available_area()
+            anchor = self._owner.dock_anchor(self)
+            if self._docked:
+                width = self._preferred_width or anchor.width()
+                left = anchor.left()
+            else:
+                saved = self._free_geometry or self.geometry()
+                width = self._preferred_width or saved.width()
+                left = saved.left()
+            width = min(area.width(), max(self.minimumWidth(), width))
+            left = max(area.left(), min(left, area.right() - width + 1))
+            self.setGeometry(left, self.y(), width, self.height())
+            self._layout_rows()
+            if self._docked:
+                below = anchor.bottom() + 1 + DOCK_GAP
+                above = anchor.top() - DOCK_GAP - self.height()
+                top = below if below + self.height() <= area.bottom() + 1 else above
+            else:
+                top = (self._free_geometry or self.geometry()).top()
+            top = max(area.top(), min(top, area.bottom() - self.height() + 1))
+            self.move(left, top)
+        finally:
+            self._following = False
+
+    def update_cursor(self) -> None:
+        if ((self._owner.locked or self._owner.click_through)
+                and (self._resize_origin is not None or self._press is not None)):
+            self._finish_gesture()
+            return
+        if self._resize_origin is not None:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        else:
+            super().update_cursor()
 
     def add_menu_entries(self, menu: QMenu, event: Any) -> dict[Any, Any]:
         self._clear_hover()
@@ -270,35 +351,88 @@ class NpcPanel(DockedPanel):
             margin = 10
             title_h = int(QFontMetricsF(self._title_font).height()) + 13
             note_h = int(QFontMetricsF(self._note_font).height()) + 8 if self._status else 0
-            max_body_h = int(280 * self._px / 13)
-            screen = self.screen()
-            if screen is not None:
-                max_body_h = min(max_body_h, max(60, screen.availableGeometry().height() - title_h - note_h - 32))
+            area = self._available_area()
+            available_h = area.height()
+            if self._docked:
+                anchor = self._owner.dock_anchor(self)
+                available_h = max(area.bottom() - anchor.bottom() - DOCK_GAP,
+                                  anchor.top() - area.top() - DOCK_GAP)
+            max_body_h = max(24, min(int(280 * self._px / 13), available_h - title_h - note_h - 8))
             # Reserve the gutter even for short data, avoiding reflow when the scroll bar appears.
             width = max(40, self.width() - 2 * margin - 12)
-            y = 0.0
-            rects = []
-            for row in self._rows:
-                font = self._heading_font if row.kind == "heading" else self._font
-                fm = QFontMetricsF(font)
-                h = fm.boundingRect(QRectF(0, 0, width, 100000),
-                                    int(Qt.TextFlag.TextWordWrap), row.text).height()
-                if row.kind == "heading":
-                    y += 5
-                h = max(fm.height(), h) + 5
-                rects.append((QRectF(margin, y, width, h), row))
-                y += h
-            body_h = max(24, min(max_body_h, int(y)))
+            gap = 12
+            minimum_column = max(150, int(170 * self._px / 13))
+            maximum_columns = max(1, min(8, int((width + gap) / (minimum_column + gap))))
+            rects, content_h = [], 0.0
+            for columns in range(1, maximum_columns + 1):
+                column_width = (width - (columns - 1) * gap) / columns
+                measured = [(row, self._row_height(row, column_width)) for row in self._rows]
+                rects, needed, content_h = self._pack_rows(measured, column_width, gap, max_body_h)
+                if needed <= columns:
+                    self._column_count = needed
+                    break
+                if columns == maximum_columns:
+                    # Balance overflowing lists across all available columns,
+                    # retaining vertical scrolling for arbitrarily long data.
+                    low = float(max_body_h)
+                    high = sum(h for _, h in measured) + 10 * len(measured) + 1
+                    for _ in range(14):
+                        target = (low + high) / 2
+                        _, used, _ = self._pack_rows(measured, column_width, gap, target)
+                        if used <= columns:
+                            high = target
+                        else:
+                            low = target
+                    rects, needed, content_h = self._pack_rows(measured, column_width, gap, high)
+                    self._column_count = needed
+            body_h = max(24, min(max_body_h, int(content_h + 0.999)))
             self._body = QRectF(margin, title_h, width, body_h)
             self._row_rects = rects
             self._scroll.setPageStep(body_h)
             self._scroll.setSingleStep(max(12, int(self._px * 2)))
-            self._scroll.setRange(0, max(0, int(y) - body_h))
+            self._scroll.setRange(0, max(0, int(content_h + 0.999) - body_h))
             self._scroll.setVisible(self._scroll.maximum() > 0)
             self._scroll.setGeometry(self.width() - margin - 7, title_h, 7, body_h)
             self.set_rows_height(title_h + body_h + note_h + 8)
         finally:
             self._laying_out = False
+
+    def _text_flags(self, row: _Row, width: float) -> int:
+        font = self._heading_font if row.kind == "heading" else self._font
+        fm = QFontMetricsF(font)
+        long_word = any(fm.horizontalAdvance(word) > width for word in row.text.split())
+        wrap = Qt.TextFlag.TextWrapAnywhere if long_word else Qt.TextFlag.TextWordWrap
+        return int(wrap | Qt.AlignmentFlag.AlignTop)
+
+    def _row_height(self, row: _Row, width: float) -> float:
+        font = self._heading_font if row.kind == "heading" else self._font
+        fm = QFontMetricsF(font)
+        height = fm.boundingRect(QRectF(0, 0, width, 100000), self._text_flags(row, width), row.text).height()
+        return max(fm.height(), height) + (10 if row.kind == "heading" else 5)
+
+    @staticmethod
+    def _pack_rows(measured: list[tuple[_Row, float]], width: float, gap: int,
+                   target_height: float) -> tuple[list[tuple[QRectF, _Row]], int, float]:
+        rects: list[tuple[QRectF, _Row]] = []
+        column, y, tallest = 0, 0.0, 0.0
+        heading: tuple[_Row, float] | None = None
+        for index, (row, height) in enumerate(measured):
+            required = height
+            if row.kind == "heading" and index + 1 < len(measured):
+                required += measured[index + 1][1]
+            if y and y + required > target_height:
+                tallest = max(tallest, y)
+                column += 1
+                y = 0.0
+                if row.kind != "heading" and heading is not None:
+                    label, label_h = heading
+                    rects.append((QRectF(10 + column * (width + gap), y, width, label_h), label))
+                    y += label_h
+            if row.kind == "heading":
+                heading = (row, height)
+            rects.append((QRectF(10 + column * (width + gap), y, width, height), row))
+            y += height
+        return rects, column + 1, max(tallest, y)
 
     def _scrolled(self) -> None:
         self._clear_hover()
@@ -344,31 +478,170 @@ class NpcPanel(DockedPanel):
         self._tooltip.hide()
 
     def event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.UngrabMouse and hasattr(self, "_resize_origin"):
+            self._finish_gesture()
         if event.type() == QEvent.Type.ToolTip:
             # Reuse the same tooltip for repeated help events and async cache updates.
             self._hover_item(self._item_at(event.pos()), event.globalPos())
             return True
         return super().event(event)
 
+    def _check_mouse_presence(self) -> None:
+        inside = (self.isVisible() and not self._owner.click_through
+                  and self.rect().contains(self.mapFromGlobal(QCursor.pos())))
+        self._lifetime.set_hovered(inside)
+
+    def enterEvent(self, event: QEvent) -> None:  # noqa: N802
+        self._lifetime.set_hovered(not self._owner.click_through)
+        super().enterEvent(event)
+
+    def eventFilter(self, watched: Any, event: QEvent) -> bool:  # noqa: N802
+        if watched is self._scroll:
+            if event.type() in (QEvent.Type.Enter, QEvent.Type.MouseMove):
+                self._lifetime.set_hovered(not self._owner.click_through)
+            elif event.type() == QEvent.Type.Leave:
+                QTimer.singleShot(0, self, self._check_mouse_presence)
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                self._lifetime.set_interacting(True)
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self._lifetime.set_interacting(False)
+            elif event.type() in (QEvent.Type.UngrabMouse, QEvent.Type.Hide):
+                self._lifetime.set_interacting(False)
+                QTimer.singleShot(0, self, self._check_mouse_presence)
+        return super().eventFilter(watched, event)
+
+    def contextMenuEvent(self, event: Any) -> None:  # noqa: N802
+        self._lifetime.set_interacting(True)
+        try:
+            super().contextMenuEvent(event)
+        finally:
+            self._lifetime.set_interacting(False)
+            self._check_mouse_presence()
+
+    def _edge_at(self, x: float) -> str:
+        if self._owner.locked or self._owner.click_through:
+            return ""
+        return "left" if x < 6 else "right" if x >= self.width() - 6 else ""
+
+    def _finish_gesture(self) -> None:
+        """Persist an interrupted resize/drag and release its lifetime hold."""
+        resizing = self._resize_origin is not None
+        changed = self._resize_changed
+        dragged = self._dragged
+        if not resizing and self._press is None:
+            return
+        self._resize_origin = None
+        self._resize_edge = ""
+        self._resize_changed = False
+        self._press = None
+        self._drag_offset = None
+        self._dragged = False
+        if changed:
+            self._settings.setValue("npc_panel/width", self._preferred_width)
+        if changed or dragged:
+            self._save_free_geometry()
+            self.follow()
+            self._owner.panels_changed()
+        self._lifetime.set_interacting(False)
+        self.update_cursor()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._owner.click_through:
+            event.ignore()
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._lifetime.set_interacting(True)
+            edge = self._edge_at(event.position().x())
+            if edge:
+                self._resize_edge = edge
+                self._resize_origin = (event.globalPosition(), QRect(self.geometry()))
+                self._resize_changed = False
+                self._clear_hover()
+                self.update_cursor()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._press is not None and (self._owner.locked or self._owner.click_through
+                                       or not event.buttons() & Qt.MouseButton.LeftButton):
+            self._finish_gesture()
+        if self._resize_origin is not None:
+            if (self._owner.locked or self._owner.click_through
+                    or not event.buttons() & Qt.MouseButton.LeftButton):
+                self._finish_gesture()
+                return
+            start, original = self._resize_origin
+            delta = round(event.globalPosition().x() - start.x())
+            if delta or self._resize_changed:
+                area = self._available_area()
+                minimum = min(self.minimumWidth(), area.width())
+                if self._resize_edge == "left":
+                    right = min(original.right(), area.right())
+                    left = max(area.left(), min(original.left() + delta, right - minimum + 1))
+                    width = right - left + 1
+                    if self._docked:
+                        self._docked = False
+                        self._owner.panels_changed()
+                else:
+                    left = max(area.left(), min(original.left(), area.right() - minimum + 1))
+                    width = max(minimum, min(original.width() + delta, area.right() - left + 1))
+                self._preferred_width = width
+                self._resize_changed = True
+                self.setGeometry(left, original.top(), width, self.height())
+                self.move(left, max(area.top(), min(self.y(), area.bottom() - self.height() + 1)))
+            event.accept()
+            return
         super().mouseMoveEvent(event)
         if not event.buttons() and not self._owner.click_through:
+            self._lifetime.set_hovered(True)
             self._hover_item(self._item_at(event.position().toPoint()), event.globalPosition().toPoint())
+            self.setCursor(Qt.CursorShape.SizeHorCursor if self._edge_at(event.position().x())
+                           else Qt.CursorShape.ArrowCursor if self._owner.locked else Qt.CursorShape.SizeAllCursor)
         else:
             self._clear_hover()
 
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._resize_origin is not None and event.button() == Qt.MouseButton.LeftButton:
+            changed = self._resize_changed
+            self._resize_origin = None
+            self._resize_edge = ""
+            self._resize_changed = False
+            if changed:
+                self._settings.setValue("npc_panel/width", self._preferred_width)
+                self.follow()
+                self._save_free_geometry()
+                self._owner.panels_changed()
+            self._lifetime.set_interacting(False)
+            self._check_mouse_presence()
+            self.update_cursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._lifetime.set_interacting(False)
+            self._check_mouse_presence()
+
     def leaveEvent(self, event: QEvent) -> None:  # noqa: N802
         self._clear_hover()
+        self._check_mouse_presence()
         super().leaveEvent(event)
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
         self._clear_hover()
+        self._finish_gesture()
+        self._lifetime.hidden()
         super().hideEvent(event)
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802
+        self._lifetime.stop()
+        super().closeEvent(event)
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         if hasattr(self, "_rows"):
             self._layout_rows()
+            self._clear_hover()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
         if self._scroll.maximum() > 0:
@@ -401,7 +674,7 @@ class NpcPanel(DockedPanel):
             if row.item and row.item == self._hovered_item:
                 color = "ACCENT"
             painter.setPen(qcolor(token(color)))
-            painter.drawText(rect, int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop), row.text)
+            painter.drawText(rect, self._text_flags(row, rect.width()), row.text)
         painter.restore()
         if self._status:
             painter.setFont(self._note_font)

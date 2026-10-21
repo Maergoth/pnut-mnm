@@ -31,6 +31,14 @@ capture the game, contact the wiki or write to your installed app.
 - Unlock the overlay; drag the NPC panel away, then double-click its header or
   choose Snap to overlay. Locking prevents dragging. Global hide/show and mouse
   click-through affect the NPC panel alongside the other docked panels.
+- Drag either horizontal edge while unlocked. The right edge preserves docking;
+  the left edge detaches while keeping the opposite edge fixed. Restart and confirm
+  the width persists. With long lists or limited vertical space, widen the card to
+  reveal additional columns; verify item hover in every column and scroll overflow.
+- Consider a target and keep the cursor outside: the card fades and hides by five
+  seconds. Hover before it disappears to keep it open, then leave and confirm a
+  fresh five-second countdown. Resizing, scrolling and its context menu keep it
+  open during interaction. Background wiki results must not reopen an expired card.
 - On the map, select a zone and open the monster icon. Selecting a notable NPC
   should show the same card as considering that NPC, with the same field toggles.
 - Hover an item. Cached statistics appear immediately in a passive item frame;

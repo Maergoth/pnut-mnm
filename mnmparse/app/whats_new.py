@@ -28,6 +28,16 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.21": ReleaseNotes(
+        changes=(
+            "Resize the NPC card horizontally while unlocked. Width is remembered, and long lists flow into extra columns when space allows.",
+            "NPC cards fade after five seconds. Hover to keep one open; leaving starts a fresh countdown.",
+            "Low-health warnings now cover wider, screen-scaled edges and pulse until a valid HP reading reaches your threshold again.",
+            "Unreadable HP keeps an active warning visible. Reduced motion uses a steady glow; audio keeps its existing cooldown.",
+        ),
+        settings_label="Mini stat settings",
+        settings_target="low_health_threshold",
+    ),
     "1.0.20": ReleaseNotes(
         changes=(
             "Consider a mob to show a detachable NPC card. Level and unique drops are on by default.",

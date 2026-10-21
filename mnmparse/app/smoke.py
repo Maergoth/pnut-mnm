@@ -24,7 +24,7 @@ APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
     "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "legal_dialog",
     "map_overlay", "map_downloads", "app_updates", "main",
-    "profile_tools", "setup_wizard", "low_health", "npc_panel", "npc_details",
+    "profile_tools", "setup_wizard", "low_health", "npc_panel", "npc_panel_lifetime", "npc_details",
 )
 NATIVE_MODULES = ("numpy", "cv2", "regex", "regex._regex")
 WINDOWS_MODULES = (
@@ -93,8 +93,11 @@ def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
     windows.append(flash)
     flash.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     flash.flash(QRect(0, 0, 400, 250), reduced_motion=True)
+    flash._started -= 60
+    flash._tick()
     preview = flash.grab().toImage()
     if (preview.pixelColor(200, 125).alpha() != 0 or preview.pixelColor(1, 125).alpha() == 0
+            or preview.pixelColor(20, 125).alpha() == 0 or not flash.active or flash.isHidden()
             or not flash.windowFlags() & Qt.WindowType.WindowTransparentForInput
             or not flash.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)):
         raise RuntimeError("The low-HP flash did not preserve a transparent, passive game view")
@@ -321,6 +324,40 @@ def _exercise(report: dict[str, Any]) -> None:
                 controller.shutdown()
             report["npc_reference"] = {"disk_cache": True, "consider": True, "map_menu": True,
                                        "item_tooltip": True, "offline": True}
+            report["stage"] = "exercise NPC columns and timed dismissal"
+            from mnmparse.npc_wiki import NpcDetails
+
+            panel = overlay.npc_panel
+            clock = [100.0]
+            original_clock = panel._lifetime._clock
+            panel._lifetime._clock = lambda: clock[0]
+            try:
+                overlay.show()
+                overlay.set_click_through(False)
+                panel.configure(enabled=True)
+                panel.set_panel_width(700)
+                panel.show_npc("Smoke columns")
+                panel.set_details(NpcDetails("Smoke columns", unique_drops=tuple(f"Drop {i}" for i in range(40))))
+                if panel._column_count < 2 or not panel.isVisible():
+                    raise RuntimeError("Packaged NPC panel did not flow into additional columns")
+                panel._lifetime.set_hovered(True)
+                clock[0] += 20
+                panel.sync()
+                if not panel.isVisible():
+                    raise RuntimeError("Packaged NPC panel expired during hover")
+                panel._lifetime.set_hovered(False)
+                clock[0] += 5
+                panel.sync()
+                panel.set_status("Background result")
+                if not panel._lifetime.expired or panel.isVisible():
+                    raise RuntimeError("Packaged NPC panel revived after its five-second dismissal")
+                panel.show_npc("Smoke columns")
+                if not panel.isVisible():
+                    raise RuntimeError("Packaged NPC panel did not reopen for another consider")
+            finally:
+                panel._lifetime._clock = original_clock
+                panel._lifetime.stop()
+            report["npc_reference"].update(columns=True, custom_width=True, hover_pause=True, timed_dismissal=True)
             app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
             if engine.is_running or engine._source is not None:
                 raise RuntimeError("Startup check unexpectedly started capture")

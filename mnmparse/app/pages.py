@@ -3023,6 +3023,9 @@ class SettingsPage(QWidget):
         self.low_health_threshold.setAccessibleName("Low-health threshold")
         self._row(form, "Alert below", self.low_health_threshold)
         self.low_health_flash = ToggleSwitch()
+        self.low_health_flash.setToolTip(
+            "Keep a red glow around the screen until health reaches the threshold again. "
+            "Reduced motion keeps the glow steady.")
         self._row(form, "Flash screen edges red", self.low_health_flash)
         self.low_health_sound = self._combo(["None", *BUILTIN_SOUNDS], 160)
         self.low_health_preview = QPushButton("Preview sound")
