@@ -52,5 +52,7 @@ not combat messages, statistics or logs. Records live in `npc_cache/` beside the
 candidate app and persist across runs. Successful requests are rechecked at most
 once per five minutes per record; failed requests retry after a minute.
 
-The draft PR does not publish a release. Do not merge or deploy until local
-acceptance is complete; main's versioned release workflow can publish releases.
+Local UI acceptance was completed on October 21, 2026 while wiki requests were
+unavailable, and the user authorized publishing version 1.0.20. Live first-time
+lookups remain unverified until the wiki recovers. The existing PR and main
+release gates validate the versioned package before publication.

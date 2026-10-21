@@ -28,6 +28,16 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.20": ReleaseNotes(
+        changes=(
+            "Consider a mob to show a detachable NPC card. Level and unique drops are on by default.",
+            "Choose level, common drops, unique drops, quest requirements and reputation in Settings > Considered NPC.",
+            "Use the map header's monster icon to select a notable NPC. Hover item names for available stats.",
+            "Cached wiki data appears first and survives outages. First-time lookups need the wiki to respond.",
+        ),
+        settings_label="NPC settings",
+        settings_target="npc_enabled",
+    ),
     "1.0.19": ReleaseNotes(
         changes=(
             "Known maps can download and update when the wiki temporarily blocks requests. CDN file hashes avoid downloading unchanged maps again.",
