@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
 
 from mnmparse.app.attack_bar import AttackBar
 from mnmparse.app.timer_panel import TimerPanel
+from mnmparse.app.npc_panel import NpcPanel
 from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, MAX_RESPAWN_SECONDS, RespawnTimerDialog
 from mnmparse.app.window_identity import window_title
 from mnmparse.app.session_view import SessionView
@@ -872,6 +873,7 @@ class OverlayWindow(QWidget):
     visibility_changed = Signal(bool)
     appearance_changed = Signal(float, float)  #: (opacity, font scale) changed
     attack_bar_changed = Signal(bool)  #: the auto-attack bar was switched on or off
+    npc_panel_changed = Signal(bool)
     tab_changed = Signal(str)
     #: Copy the shown fight to the clipboard (the header's copy glyph or the right-click menu):
     #: the EncounterSnapshot; the app formats it (mnmparse.export) and calls flash_copied().
@@ -972,6 +974,8 @@ class OverlayWindow(QWidget):
             child.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self._timer_panel = TimerPanel(self, settings, OVERLAY_FLAGS)  # docked first: under the overlay
         self._attack_bar = AttackBar(self, settings, OVERLAY_FLAGS)  # then under the timer panel
+        self._npc_panel = NpcPanel(self, settings, OVERLAY_FLAGS)
+        self._configure_npc_panel(cfg)
         self._attack_bar.enabled = bool(
             settings.value("attack_bar/enabled", bool(getattr(cfg, "attack_bar", True)), type=bool)
         )
@@ -1433,6 +1437,23 @@ class OverlayWindow(QWidget):
     def timer_panel(self) -> TimerPanel:
         return self._timer_panel
 
+    @property
+    def npc_panel(self) -> NpcPanel:
+        return self._npc_panel
+
+    def _configure_npc_panel(self, cfg: Any) -> None:
+        defaults = {"enabled": True, "level": True, "common_drops": False,
+                    "unique_drops": True, "quests": False, "reputation": False}
+        self._npc_panel.configure(**{
+            key: self._settings.value(f"npc/{key}", getattr(cfg, f"npc_{key}", default), type=bool)
+            for key, default in defaults.items()
+        })
+
+    def set_npc_panel_enabled(self, enabled: bool) -> None:
+        self._settings.setValue("npc/enabled", bool(enabled))
+        self._npc_panel.configure(enabled=bool(enabled))
+        self.npc_panel_changed.emit(bool(enabled))
+
     def set_trigger_runner(self, runner: Any) -> None:
         """Show the trigger timers of ``runner`` (``triggers_runtime.TriggerRunner``)."""
         self._timer_panel.set_runner(runner)
@@ -1441,6 +1462,11 @@ class OverlayWindow(QWidget):
         """What ``panel`` docks under: the overlay, or for the auto-attack bar the timer
         panel when that is docked and showing."""
         timers = self._timer_panel
+        if panel is self._npc_panel:
+            if self._attack_bar.docked and self._attack_bar.isVisible():
+                return self._attack_bar.frameGeometry()
+            if timers.docked and timers.isVisible():
+                return timers.frameGeometry()
         if panel is self._attack_bar and timers.docked and timers.isVisible():
             return timers.frameGeometry()
         return self.frameGeometry()
@@ -1449,6 +1475,9 @@ class OverlayWindow(QWidget):
         """A panel appeared, vanished, changed height or (un)docked: re-stack the ones below."""
         if self._attack_bar.isVisible():
             self._attack_bar.follow()
+        npc = getattr(self, "_npc_panel", None)
+        if npc is not None and npc.isVisible():
+            npc.follow()
 
     def observe_event(self, ev: Any) -> None:
         """Every parsed event (the auto-attack bar learns from your own swings)."""
@@ -1475,6 +1504,7 @@ class OverlayWindow(QWidget):
         self._refresh_filtered_selection()
         self._attack_bar.set_player_name(str(getattr(cfg, "player_name", "") or ""))
         self.set_attack_bar_enabled(bool(getattr(cfg, "attack_bar", True)))
+        self._configure_npc_panel(cfg)
 
     def set_attack_bar_enabled(self, enabled: bool) -> None:
         """Show or hide the auto-attack bar (remembered between runs, like the other overlay state)."""
@@ -1513,6 +1543,7 @@ class OverlayWindow(QWidget):
         self._header.update_cursor()
         self._attack_bar.update_cursor()
         self._timer_panel.update_cursor()
+        self._npc_panel.update_cursor()
         self._settings.setValue(f"{SETTINGS_GROUP}/locked", locked)
         log.info("overlay %s", "locked" if locked else "unlocked")
         self.locked_changed.emit(locked)
@@ -1529,6 +1560,7 @@ class OverlayWindow(QWidget):
         self.update()
         self._attack_bar.update()
         self._timer_panel.update()
+        self._npc_panel.refresh_style()
         self.appearance_changed.emit(self._opacity, self._font_scale)
 
     def set_font_scale(self, scale: float) -> None:
@@ -1562,6 +1594,7 @@ class OverlayWindow(QWidget):
         self.persist_geometry()
         self._timer_panel.dock()  # panels dragged off-screen come back with the overlay
         self._attack_bar.dock()
+        self._npc_panel.dock()
 
     # ------------------------------------------------------------------ settings
     def _load_settings(self) -> None:
@@ -1653,6 +1686,7 @@ class OverlayWindow(QWidget):
         self._warning.set_font_px(px)
         self._timer_panel.set_font_px(px)
         self._attack_bar.set_font_px(px)
+        self._npc_panel.set_font_px(px)
         self._table.set_font_scale(self._font_scale)
         self._feed.set_font_scale(self._font_scale)
         self._session.set_font_scale(self._font_scale)
@@ -1690,6 +1724,7 @@ class OverlayWindow(QWidget):
                 self.show()
             self._timer_panel.sync()
             self._attack_bar.sync()
+            self._npc_panel.sync()
         finally:
             self._suppress_visibility = False
         self._update_chrome()
@@ -1799,6 +1834,7 @@ class OverlayWindow(QWidget):
             self._geometry_timer.start()
             self._timer_panel.follow()
             self._attack_bar.follow()
+            self._npc_panel.follow()
 
     def moveEvent(self, event: Any) -> None:  # noqa: N802
         super().moveEvent(event)
@@ -1806,6 +1842,7 @@ class OverlayWindow(QWidget):
             self._geometry_timer.start()
             self._timer_panel.follow()
             self._attack_bar.follow()
+            self._npc_panel.follow()
 
     def enterEvent(self, event: QEvent) -> None:  # noqa: N802
         self._hovering = True
@@ -1824,6 +1861,7 @@ class OverlayWindow(QWidget):
         self._position_chrome()
         self._timer_panel.sync()
         self._attack_bar.sync()
+        self._npc_panel.sync()
         if not self._suppress_visibility:
             self.visibility_changed.emit(True)
 
@@ -1834,6 +1872,7 @@ class OverlayWindow(QWidget):
             self._toolbar.hide()
             self._attack_bar.hide()
             self._timer_panel.hide()
+            self._npc_panel.hide()
             self.visibility_changed.emit(False)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
@@ -1848,6 +1887,7 @@ class OverlayWindow(QWidget):
         self._suppress_visibility = True
         self._attack_bar.close()
         self._timer_panel.close()
+        self._npc_panel.close()
         super().closeEvent(event)
 
     # test / debugging hook: force the hover chrome (used by the visual check script)

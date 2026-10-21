@@ -624,6 +624,25 @@ under **Settings > Revenge List**. By default, notifications last four seconds a
 must be absent from the log for 30 seconds before alerting again. Display limits do not
 exclude names from alerts. Trigger master volume and mute also apply.
 
+**Considered NPC overlay.** Considering a named target displays a detachable wiki reference
+card below the timer and attack panels. Level (or level range) and unique drops are on by
+default. In **Settings > Considered NPC**, toggle common drops, unique drops, level,
+quests requiring the NPC and reputation gained/lost independently. Unlock the overlay
+to drag the card away; double-click its header or choose **Snap to overlay** to dock it.
+The card follows overlay visibility, opacity, font scale, lock and click-through settings.
+Hover drop names for a passive item frame with slots, flags, stats, effects, weight,
+size, class and race where the wiki supplies them. Missing information stays explicit.
+
+The map header's **monster icon** opens notable NPCs for its selected zone. Choosing
+one displays the same card and respects the same field settings as considering it.
+NPC records, notable lists and item stats are saved in `npc_cache/` beside the app.
+Cached records display immediately, then a background check compares wiki revisions
+and template modification timestamps before fetching changed content. Successful
+lookups are rechecked at most every five minutes; failed requests retry after a minute.
+The app warms tooltip data for displayed loot. An unavailable wiki preserves cached
+records; a first lookup without a cache needs the wiki to recover. Public page-title
+requests can include the considered target's name; see the [Privacy Policy](legal/privacy.md).
+
 **Map overlay.** The separate always-on-top map opens unlocked at the top-left of the
 primary screen's available area on a fresh install. After
 that, PNUT remembers whether you left it open or closed. Click **Map** in the top bar to
@@ -656,8 +675,7 @@ discover newly added maps. Wiki API requests run one at a time and pause briefly
 server error; image downloads can run concurrently. If neither source provides file hashes,
 the app downloads the images to check for changes. The adjacent **wiki** link opens
 the map source. Zones without a map show a clear message. An unavailable map never leaves the previous zone's image on
-screen. Only public zone pages and images are requested; player names and combat logs are
-never sent to the wiki.
+screen. Map downloads request public zone pages and images; they do not send combat logs.
 To save space, place the map over the chat PNUT is logging. The default window capture (WGC)
 reads the game underneath the map; desktop capture (mss) needs the chat to remain uncovered.
 

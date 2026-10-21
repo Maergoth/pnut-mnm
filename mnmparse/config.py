@@ -130,6 +130,12 @@ class Config:
     show_other_groups: bool = False  #: show nearby outsider rows and fights without group participation
     dummy_fix: bool = False  #: unreadable hit / heal numbers count as the zone's average (estimates)
     attack_bar: bool = True  #: show the auto-attack timer bar under the overlay
+    npc_enabled: bool = True  #: considered NPC details, detachable under the overlay
+    npc_level: bool = True
+    npc_common_drops: bool = False
+    npc_unique_drops: bool = True
+    npc_quests: bool = False
+    npc_reputation: bool = False
     log_break_minutes: float = 60.0  #: start a new log file after this long without messages
     log_max_mb: float = 5.0  #: start a new log file when the raw log reaches this size
     overlay_click_through: bool = False  #: overlay ignores the mouse entirely (no tabs, no tooltips)

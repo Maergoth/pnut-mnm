@@ -87,6 +87,7 @@ mnmparse/            library + CLI
   ocr.py             Windows.Media.Ocr wrapper (sync), RapidOCR fallback, preprocess() (max-channel, scale)
   tracker.py         scrolling-text de-duplication, occlusion guard, wrapped-line joining -> Message; saved state
   maps.py            community wiki map discovery, aliases and disk cache
+  npc_wiki.py        public NPC, item and notable-list parsing; revision-aware offline cache
   trigger_presets.py bundled starter triggers, seeded without overwriting user edits
   grammar.py         Event dataclass, KINDS, the ordered regex RULES for every message shape
   parser.py          OCR-noise repair (normalize_ocr) + parse_line(text) -> Event
@@ -115,6 +116,8 @@ mnmparse/            library + CLI
     models.py        ActorRow / EncounterSnapshot / build_snapshot (CC crediting lives here)
     docked_panel.py  DockedPanel: base for windows that dock under the overlay (drag off, snap back)
     map_overlay.py  resizable/fullscreen map viewer, asynchronous requests and zone switching
+    npc_details.py  cache-first lookup controller, bounded daemon workers and hover prefetch
+    npc_panel.py    detachable NPC details and passive item-stat tooltips
     map_downloads.py  background map updates for Settings and the optional startup download
     app_updates.py  verified GitHub downloads and deferred Windows application replacement
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)

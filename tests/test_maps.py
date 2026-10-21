@@ -128,6 +128,7 @@ class MapWindowTests(unittest.TestCase):
 
     def test_frameless_header_has_equal_selectors_and_does_not_resize_map(self):
         from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtGui import QCursor
         self.assertFalse(self.window.locked)
         self.window.resize(720, 480)
         self.window.show()
@@ -141,25 +142,38 @@ class MapWindowTests(unittest.TestCase):
         self.assertEqual(self.window.zone.y(), self.window.variants.y())
         self.assertEqual(self.window.fullscreen.text(), "")
         self.assertFalse(self.window.fullscreen.icon().isNull())
-        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+        cursor = QCursor.pos()
+        try:
+            QCursor.setPos(self.window.mapToGlobal(QPoint(200, 200)))
             self.window._hide_header()
-        self.assertFalse(self.window.header.isVisible())
+            self.assertFalse(self.window.header.isVisible())
+        finally:
+            QCursor.setPos(cursor)
         self.assertEqual(self.window.view.viewport().size(), viewport)
 
     def test_hover_reveals_header_and_popup_keeps_it_open(self):
         from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QCursor
         from PySide6.QtTest import QTest
-        self.window.show()
-        QTest.mouseMove(self.window.view.viewport(), QPoint(150, 15))
-        self.app.processEvents()
-        self.assertTrue(self.window.header.isVisible())
-        self.window.zone.showPopup()
-        with patch("mnmparse.app.map_overlay.QCursor.pos", return_value=QPoint(-1000, -1000)):
+        cursor = QCursor.pos()
+        try:
+            self.window.show()
+            QTest.mouseMove(self.window.view.viewport(), QPoint(150, 15))
+            self.app.processEvents()
+            self.assertTrue(self.window.header.isVisible())
+            self.window.zone.showPopup()
+            # Move the actual offscreen cursor. Mocking only QCursor.pos leaves
+            # it over the header, where hiding generates Enter events that
+            # correctly reveal the controls again when the popup closes.
+            QCursor.setPos(self.window.mapToGlobal(QPoint(200, 200)))
             self.window._hide_header()
             self.assertTrue(self.window.header.isVisible())
             self.window.zone.hidePopup()
+            self.app.processEvents()
             self.window._hide_header()
-        self.assertFalse(self.window.header.isVisible())
+            self.assertFalse(self.window.header.isVisible())
+        finally:
+            QCursor.setPos(cursor)
 
     def test_edges_resize_only_when_unlocked(self):
         from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
