@@ -1,6 +1,6 @@
 # PNUT M&M Privacy Policy
 
-Effective date: October 10, 2026
+Effective date: October 21, 2026
 
 PNUT M&M processes captured game text on your computer. PNUT has no built-in telemetry or automatic upload of screenshots, combat logs, settings, or diagnostic reports to the project maintainers. Some features download maps or updates from external services, as described below.
 
@@ -31,6 +31,8 @@ Preference backups are available in either mode. The default backup contains con
 ## External connections
 
 Map features request zone pages and map images from the Monsters & Memories Wiki at `monstersandmemories.miraheze.org` and its image hosts, `static.wikitide.net` and `static.miraheze.org`. Showing a map or following a zone change can download a missing map automatically. Refreshes and the optional startup download also make requests. These requests identify the requested zone or image.
+
+NPC reference features request public page titles from the same wiki: a considered target's name, the selected map zone, and item names in its displayed drops. Named NPCs and players cannot always be distinguished from the captured text, so considering a player can also request that name. Disable Show NPC details in Settings to stop automatic considered-target lookups. Opening a map still checks that zone's notable-NPC list. Details are cached locally in `npc_cache/`; cached records appear before background revision checks, and unchanged records do not download their content again. These requests do not include combat messages, logs, screenshots, or performance results.
 
 Update checks and downloads contact GitHub and its release-file hosts for the `Maergoth/pnut-mnm` repository. The request includes the PNUT version in its User-Agent. Startup checks run when that option is enabled.
 

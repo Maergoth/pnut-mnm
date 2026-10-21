@@ -24,8 +24,10 @@ UI_KEYS = {
     "app/update_on_startup", "overlay/locked", "overlay/click_through", "overlay/view_mode",
     "overlay/opacity", "overlay/font_scale", "overlay/tab", "overlay/sort_key", "overlay/sort_desc",
     "overlay/geometry", "attack_bar/enabled", "attack_bar/weapon_delay", "live/list_split",
+    "npc/enabled", "npc/level", "npc/common_drops", "npc/unique_drops", "npc/quests", "npc/reputation",
+    "npc_panel/docked", "npc_panel/geometry",
 }
-RECT_KEYS = {"main/rect", "map/geometry", "overlay/geometry"}
+RECT_KEYS = {"main/rect", "map/geometry", "overlay/geometry", "npc_panel/geometry"}
 
 
 def _primitive(value):

@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Sequence
 from io import BytesIO
 from typing import Any
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMenu,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -78,6 +79,28 @@ def _wiki_icon() -> QIcon:
     painter.drawLine(18, 22, 32, 8)
     painter.drawLine(22, 8, 32, 8)
     painter.drawLine(32, 8, 32, 18)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+def _monster_icon() -> QIcon:
+    """A small horned face, drawn crisply at the same scale as the header icons."""
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(theme.qcolor(theme.MUTED), 2.6, Qt.PenStyle.SolidLine,
+                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    face = QPainterPath()
+    face.moveTo(10, 15)
+    for x, y in ((8, 6), (16, 12), (24, 12), (32, 6), (30, 15),
+                 (32, 21), (28, 31), (20, 35), (12, 31), (8, 21), (10, 15)):
+        face.lineTo(x, y)
+    painter.drawPath(face)
+    painter.drawLine(13, 20, 17, 22)
+    painter.drawLine(23, 22, 27, 20)
+    painter.drawLine(16, 28, 24, 28)
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return QIcon(pixmap)
@@ -238,6 +261,8 @@ class MapView(QGraphicsView):
 
 class MapOverlay(QWidget):
     visibility_changed = Signal(bool)
+    npc_selected = Signal(str)
+    npc_zone_requested = Signal(str)
 
     def __init__(self, settings: QSettings, repository: MapRepository | None = None) -> None:
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint |
@@ -265,6 +290,7 @@ class MapOverlay(QWidget):
         self._normal_geometry = QRect()
         self._closing = False
         self._current_zone = str(settings.value("map/zone", "") or "")
+        self._notable_npcs: dict[str, tuple[tuple[str, ...], str]] = {}
         self._saved_view = self._read_view_state(settings.value("map/view", {}))
         self._restore_view = self._saved_view
         self.setMinimumSize(360, 240)
@@ -285,6 +311,19 @@ class MapOverlay(QWidget):
         self.wiki_link.clicked.connect(self._open_zone_wiki)
         self._update_wiki_link()
         top.addWidget(self.wiki_link)
+        self.notable_npcs = QToolButton()
+        self.notable_npcs.setIcon(_monster_icon())
+        self.notable_npcs.setIconSize(QSize(20, 20))
+        self.notable_npcs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.notable_npcs.setAccessibleName("Notable NPCs")
+        self.notable_npcs.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.notable_npcs_menu = QMenu(self.notable_npcs)
+        self.notable_npcs_menu.setAccessibleName("Notable NPCs in the selected zone")
+        self.notable_npcs_menu.aboutToShow.connect(self._open_notable_npcs)
+        self.notable_npcs_menu.aboutToHide.connect(self._header_hide_after_menu)
+        self.notable_npcs.setMenu(self.notable_npcs_menu)
+        self._update_notable_npcs()
+        top.addWidget(self.notable_npcs)
         self.drag_handle = _DragHandle(self.header)
         top.addWidget(self.drag_handle)
         self.zone = _MapCombo()
@@ -327,7 +366,7 @@ class MapOverlay(QWidget):
         self._header_hide.timeout.connect(self._hide_header)
         for widget in (self, self.view.viewport(), self.header, self.zone,
                        self.zone.lineEdit(), self.variants, self.fullscreen, self.drag_handle,
-                       self.wiki_link):
+                       self.wiki_link, self.notable_npcs):
             widget.setMouseTracking(True)
             widget.installEventFilter(self)
         self.header.hide()
@@ -395,10 +434,19 @@ class MapOverlay(QWidget):
                 selection-background-color: {theme.BG2}; selection-color: {theme.ACCENT}; }}
             QComboBox QLineEdit {{ background: transparent; border: none; padding: 0; }}
             QToolButton {{ border: none; padding: 0; }}
+            QToolButton::menu-indicator {{ image: none; }}
+            QMenu {{ background: {theme.BG1}; color: {theme.TEXT};
+                border: 1px solid {theme.LINE}; padding: 4px; }}
+            QMenu::item {{ padding: 6px 12px; border-radius: 4px; }}
+            QMenu::item:selected {{ background: {theme.BG2}; color: {theme.ACCENT}; }}
+            QMenu::item:disabled {{ color: {theme.MUTED}; }}
             QGraphicsView {{ border: none; }}
         """)
         size = max(30, round(px * 2.3))
         self.wiki_link.setFixedSize(size, size)
+        self.notable_npcs.setFixedSize(size, size)
+        icon_size = max(20, round(px * 1.54))
+        self.notable_npcs.setIconSize(QSize(icon_size, icon_size))
         self.drag_handle.setFixedSize(max(24, round(px * 1.85)), size)
         self.fullscreen.setFixedSize(size, size)
         self._position_chrome()
@@ -426,6 +474,7 @@ class MapOverlay(QWidget):
             self._restore_view = None
         self._current_zone = title
         self._update_wiki_link()
+        self._update_notable_npcs()
         self.settings.setValue("map/zone", title)
         self.zone.setCurrentText(title)
         self.setWindowTitle(window_title("map"))
@@ -439,7 +488,60 @@ class MapOverlay(QWidget):
         self.view.set_image(QImage())
         self._set_status(f"{title} — open the map to load it.")
         if self.isVisible():
+            self.npc_zone_requested.emit(title)
             self.load()
+
+    def set_notable_npcs(self, zone: str, names: Sequence[str], status: str = "") -> None:
+        """Accept cached or refreshed names without replacing another zone's menu.
+
+        An empty status with no names means a successfully loaded empty list.
+        Supply an explicit loading/unavailable status when the answer is unknown.
+        Cached names remain selectable alongside a refresh or failure status.
+        """
+        title = zone_title(zone)
+        if not title:
+            return
+        unique: dict[str, str] = {}
+        for name in names:
+            name = str(name).strip()
+            if name:
+                unique.setdefault(name.casefold(), name)
+        rows = tuple(sorted(unique.values(), key=str.casefold))
+        value = (rows, str(status).strip())
+        if self._notable_npcs.get(title) == value:
+            return
+        self._notable_npcs[title] = value
+        if title == self._current_zone:
+            self._update_notable_npcs()
+
+    def _update_notable_npcs(self) -> None:
+        zone = self._current_zone
+        self.notable_npcs.setEnabled(bool(zone))
+        self.notable_npcs.setToolTip(f"Notable NPCs in {zone}" if zone else "Select a zone to browse notable NPCs")
+        self.notable_npcs_menu.clear()
+        names, status = self._notable_npcs.get(zone, ((), "Loading notable NPCs…"))
+        for name in names:
+            # Ampersands are NPC name text, not keyboard mnemonic markers.
+            action = self.notable_npcs_menu.addAction(name.replace("&", "&&"))
+            action.setData(name)
+            action.triggered.connect(lambda _checked=False, name=name, zone=zone: self._select_npc(zone, name))
+        if status or not names:
+            if names:
+                self.notable_npcs_menu.addSeparator()
+            action = self.notable_npcs_menu.addAction((status or "No notable NPCs listed").replace("&", "&&"))
+            action.setEnabled(False)
+
+    def _select_npc(self, zone: str, name: str) -> None:
+        if zone == self._current_zone and not self._closing:
+            self.npc_selected.emit(name)
+
+    def _open_notable_npcs(self) -> None:
+        self._show_header()
+        if self._current_zone and not self._closing:
+            self.npc_zone_requested.emit(self._current_zone)
+
+    def _header_hide_after_menu(self) -> None:
+        self._header_hide.start()
 
     def load(self, *, refresh: bool = False, entry: MapImage | None = None,
              preserve_view: bool = False) -> None:
@@ -568,7 +670,9 @@ class MapOverlay(QWidget):
 
     def _hide_header(self) -> None:
         # A popup extends beyond the header; keep its controls until it closes.
-        if self._drag_offset is not None or self._editing_zone or any(combo.view().isVisible() for combo in (self.zone, self.variants)):
+        if (self._drag_offset is not None or self._editing_zone
+                or self.notable_npcs_menu.isVisible()
+                or any(combo.view().isVisible() for combo in (self.zone, self.variants))):
             self._header_hide.start()
         elif self.header.geometry().contains(self.mapFromGlobal(QCursor.pos())):
             return
@@ -640,7 +744,7 @@ class MapOverlay(QWidget):
                     watched.setCursor(Qt.CursorShape.SizeBDiagCursor)
                 elif watched is self.drag_handle or (watched is self.header and not self._locked and not self.isFullScreen()):
                     watched.setCursor(Qt.CursorShape.SizeAllCursor)
-                elif watched is self.wiki_link:
+                elif watched in (self.wiki_link, self.notable_npcs):
                     watched.setCursor(Qt.CursorShape.PointingHandCursor)
                 else:
                     watched.unsetCursor()
@@ -716,11 +820,14 @@ class MapOverlay(QWidget):
     def showEvent(self, event: Any) -> None:  # noqa: N802
         super().showEvent(event)
         self.visibility_changed.emit(True)
+        if self.isVisible() and self._current_zone and not self._closing:
+            self.npc_zone_requested.emit(self._current_zone)
         if self._loaded_zone != self._current_zone and self._token not in self._loads:
             self.load()
 
     def hideEvent(self, event: Any) -> None:  # noqa: N802
         self._end_drag()
+        self.notable_npcs_menu.hide()
         if not self._closing:
             self.save_state()
         super().hideEvent(event)
@@ -745,6 +852,7 @@ class MapOverlay(QWidget):
 
     def shutdown(self) -> None:
         self._closing = True
+        self.notable_npcs_menu.hide()
         self._header_hide.stop()
         self._token += 1
         self._cancel_loads()

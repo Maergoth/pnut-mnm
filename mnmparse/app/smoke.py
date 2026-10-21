@@ -24,7 +24,7 @@ APP_MODULES = (
     "engine", "overlay", "widgets", "pages", "crop_picker", "models",
     "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "legal_dialog",
     "map_overlay", "map_downloads", "app_updates", "main",
-    "profile_tools", "setup_wizard", "low_health",
+    "profile_tools", "setup_wizard", "low_health", "npc_panel", "npc_details",
 )
 NATIVE_MODULES = ("numpy", "cv2", "regex", "regex._regex")
 WINDOWS_MODULES = (
@@ -277,6 +277,50 @@ def _exercise(report: dict[str, Any]) -> None:
                                  "casual_available": True, "disabled_hidden": True}
             map_window = MapOverlay(settings, MapRepository(Path(temporary) / "map_cache"))
             windows.append(map_window)
+            report["stage"] = "exercise cached NPC reference and item tooltip"
+            from mnmparse.app.npc_details import NpcDetailsController
+            from mnmparse.npc_wiki import WikiRepository, parse_npc, parse_item, parse_notables
+            from mnmparse.parser import parse_line
+
+            # A real disk round-trip with synthetic records; no wiki or game access.
+            class CachedReference(WikiRepository):
+                refresh_npc = WikiRepository.cached_npc
+                refresh_item = WikiRepository.cached_item
+                refresh_notables = WikiRepository.cached_notables
+
+            reference = CachedReference(Path(temporary) / "npc_cache")
+            npc = parse_npc('<p>Level: 12–15</p><h2>Unique drops</h2>'
+                            '<ul><li><a href="/wiki/Smoke_Staff">Smoke Staff</a></li></ul>', "Smoke Keeper")
+            item = parse_item('<p>MAGIC<br>Slot: PRIMARY SECONDARY<br>INT: +6<br>Race: ALL</p>', "Smoke Staff")
+            notable = parse_notables('<h2>Notable NPCs</h2><ul><li><a href="/wiki/Smoke_Keeper">'
+                                     'Smoke Keeper</a></li></ul>', "Night Harbor")
+            for kind, record, title in (("npc", npc, npc.name), ("item", item, item.name),
+                                        ("notables", notable, notable.zone)):
+                reference._save(kind, title, title, "42:", record)
+            reference = CachedReference(reference.cache_dir)
+            controller = NpcDetailsController(reference, overlay.npc_panel, map_window, window)
+            try:
+                controller.on_message(None, parse_line("Smoke Keeper seems indifferent to your presence.", 0))
+                if overlay.npc_panel._details != npc or not overlay.npc_panel.options["unique_drops"]:
+                    raise RuntimeError("Cached NPC details did not display immediately")
+                map_window.set_zone("Night Harbor")
+                controller.show_notables("Night Harbor")
+                actions = [a for a in map_window.notable_npcs_menu.actions() if a.isEnabled()]
+                if not actions or actions[0].data() != "Smoke Keeper":
+                    raise RuntimeError("Cached notable NPCs did not populate the monster menu")
+                actions[0].trigger()
+                controller.show_item("Smoke Staff")
+                if overlay.npc_panel._items.get("smoke staff") != item:
+                    raise RuntimeError("Cached item statistics did not reach the tooltip")
+                deadline = time.monotonic() + 2
+                while controller._pending and time.monotonic() < deadline:
+                    app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+                if controller._pending:
+                    raise RuntimeError("Cached NPC worker results did not reach the GUI")
+            finally:
+                controller.shutdown()
+            report["npc_reference"] = {"disk_cache": True, "consider": True, "map_menu": True,
+                                       "item_tooltip": True, "offline": True}
             app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
             if engine.is_running or engine._source is not None:
                 raise RuntimeError("Startup check unexpectedly started capture")
@@ -471,7 +515,8 @@ def _exercise(report: dict[str, Any]) -> None:
             _exercise_player_status(report, windows)
             if engine.is_running or engine._source is not None:
                 raise RuntimeError("Mini-stat startup check unexpectedly started capture")
-            report["window_titles"] = [item.windowTitle() for item in [*windows, overlay.timer_panel, overlay.attack_bar]]
+            report["window_titles"] = [item.windowTitle() for item in [*windows, overlay.timer_panel, overlay.attack_bar,
+                                                                      overlay.npc_panel]]
             if not all(re.fullmatch(r"[0-9a-f]{24}", title) for title in report["window_titles"]):
                 raise RuntimeError("An application window is missing its randomized session title")
         finally:

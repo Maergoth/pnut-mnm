@@ -2885,6 +2885,21 @@ class SettingsPage(QWidget):
         self._row(form, "Auto-attack bar", self.attack_bar,
                   "Swing timer under the overlay, learned from your own swings; unlock the overlay to drag it off")
         self._row(form, "Position", reset)
+        npc_form = self._section(
+            "Considered NPC",
+            "Consider a mob or select a notable NPC from the map's monster icon. "
+            "Unlock the overlay to drag this panel off; double-click its header to dock it again. "
+            "Cached wiki details appear first and stay available while the wiki is offline. "
+            "Wiki lookups use target, zone and item names.",
+        )
+        for key, label in (("enabled", "Show NPC details"), ("level", "Level / level range"),
+                           ("common_drops", "Common drops"), ("unique_drops", "Unique drops"),
+                           ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
+            control = ToggleSwitch()
+            setattr(self, f"npc_{key}", control)
+            self._row(npc_form, label, control)
+            control.toggled.connect(self._on_form_changed)
+            control.toggled.connect(lambda value, k=key: self._emit_overlay_setting(f"npc_{k}", bool(value)))
         live = (
             (self.overlay_enabled.toggled, "visible", lambda v: bool(v)),
             (self.overlay_locked.toggled, "locked", lambda v: bool(v)),
@@ -2906,6 +2921,8 @@ class SettingsPage(QWidget):
         "font_scale": "overlay_font_scale",
         "tab": "overlay_tab",
         "attack_bar": "attack_bar",
+        **{f"npc_{key}": f"npc_{key}" for key in
+           ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
     }
 
     def _emit_overlay_setting(self, key: str, value: Any) -> None:
@@ -3247,6 +3264,8 @@ class SettingsPage(QWidget):
             self.show_other_groups.setChecked(bool(_cfg_get(cfg, "show_other_groups", False)))
             self.dummy_fix.setChecked(bool(_cfg_get(cfg, "dummy_fix", False)))
             self.attack_bar.setChecked(bool(_cfg_get(cfg, "attack_bar", True)))
+            for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation"):
+                getattr(self, f"npc_{key}").setChecked(bool(getattr(cfg, f"npc_{key}")))
             self.feed_max_lines.setValue(int(_cfg_get(cfg, "feed_max_lines", 500)))
             self.log_break.setValue(float(_cfg_get(cfg, "log_break_minutes", 60.0)))
             self.log_max.setValue(float(_cfg_get(cfg, "log_max_mb", 5.0)))
@@ -3312,6 +3331,8 @@ class SettingsPage(QWidget):
             "show_other_groups": self.show_other_groups.isChecked(),
             "dummy_fix": self.dummy_fix.isChecked(),
             "attack_bar": self.attack_bar.isChecked(),
+            **{f"npc_{key}": getattr(self, f"npc_{key}").isChecked() for key in
+               ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
             "feed_max_lines": int(self.feed_max_lines.value()),
             "log_break_minutes": float(self.log_break.value()),
             "log_max_mb": float(self.log_max.value()),

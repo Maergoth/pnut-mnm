@@ -1302,6 +1302,7 @@ class App(QApplication):
         self.overlay: Any | None = None
         self.map_overlay: Any | None = None
         self.map_downloads: Any | None = None
+        self.npc_details: Any | None = None
         self.app_updates: Any | None = None
         self.triggers: Any | None = None
         self._low_health_flash: Any | None = None
@@ -1341,6 +1342,12 @@ class App(QApplication):
         from mnmparse.app.map_downloads import MapDownloadController
         from mnmparse.app.app_updates import AppUpdateController
         self.map_overlay = MapOverlay(self.settings)
+        if self.overlay is not None and hasattr(self.overlay, "npc_panel"):
+            from mnmparse.app.npc_details import NpcDetailsController
+            from mnmparse.npc_wiki import WikiRepository
+            self.npc_details = NpcDetailsController(
+                WikiRepository(project_path("npc_cache")), self.overlay.npc_panel, self.map_overlay,
+                self if isinstance(self, QObject) else None)
         self.map_downloads = MapDownloadController(self.map_overlay.repo, self)
         self.app_updates = AppUpdateController(self)
         self.triggers = self._make_trigger_runner()
@@ -1526,6 +1533,9 @@ class App(QApplication):
             if hasattr(overlay, "set_status"):
                 engine.status.connect(overlay.set_status)
             engine.message.connect(self._on_message_for_overlay)
+            npc_details = self.__dict__.get("npc_details")
+            if npc_details is not None:
+                engine.message.connect(npc_details.on_message)
             self._connect_optional(overlay, "copy_requested", self.copy_snapshot)
             self._connect_optional(overlay, "group_override_requested", self.set_group_override)
             self._connect_optional(overlay, "pet_owner_requested", self.set_pet_owner)
@@ -1584,7 +1594,7 @@ class App(QApplication):
                 self.map_downloads.finished.connect(self._on_map_download_finished)
             if overlay is not None:
                 for name in ("locked_changed", "click_through_changed", "tab_changed", "visibility_changed",
-                             "appearance_changed", "attack_bar_changed"):
+                             "appearance_changed", "attack_bar_changed", "npc_panel_changed"):
                     self._connect_optional(overlay, name, lambda *_: self._sync_overlay_settings())
         if overlay is not None and callable(getattr(overlay, "set_history", None)):
             try:
@@ -2009,6 +2019,18 @@ class App(QApplication):
     def _on_overlay_setting(self, key: str, value: Any) -> None:
         """A Settings > Overlay control changed: apply it to the overlay right away."""
         overlay = self.overlay
+        if key in {f"npc_{part}" for part in
+                   ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")}:
+            self.settings.setValue("npc/" + key[4:], bool(value))
+            if overlay is not None and hasattr(overlay, "npc_panel"):
+                options = dict(overlay.npc_panel.options)
+                options[key[4:]] = bool(value)
+                overlay.npc_panel.configure(**options)
+                controller = self.__dict__.get("npc_details")
+                if controller is not None:
+                    controller.refresh_selection()
+            self._sync_overlay_settings()
+            return
         if key == "locked":
             self.set_overlay_locked(bool(value))
             return
@@ -2044,7 +2066,9 @@ class App(QApplication):
         if overlay is None:
             sync(locked=self._current_overlay_lock(),
                  opacity=self.settings.value("overlay/opacity", self.cfg.overlay_opacity, type=float),
-                 font_scale=self.settings.value("overlay/font_scale", self.cfg.overlay_font_scale, type=float))
+                 font_scale=self.settings.value("overlay/font_scale", self.cfg.overlay_font_scale, type=float),
+                 **{f"npc_{key}": self.settings.value(f"npc/{key}", getattr(self.cfg, f"npc_{key}"), type=bool)
+                    for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")})
             return
         try:
             sync(
@@ -2055,6 +2079,8 @@ class App(QApplication):
                 font_scale=overlay.font_scale,
                 tab=overlay.tab,
                 attack_bar=overlay.attack_bar.enabled,
+                **{f"npc_{key}": value for key, value in overlay.npc_panel.options.items()}
+                if hasattr(overlay, "npc_panel") else {},
             )
         except Exception:  # noqa: BLE001
             log.debug("settings sync failed", exc_info=True)
@@ -2359,6 +2385,9 @@ class App(QApplication):
             self.app_updates.shutdown()
         if self.map_downloads is not None:
             self.map_downloads.shutdown()
+        npc_details = self.__dict__.get("npc_details")
+        if npc_details is not None:
+            npc_details.shutdown()
         if self.map_overlay is not None:
             self.map_overlay.shutdown()
         if self.overlay is not None:

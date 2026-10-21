@@ -24,6 +24,8 @@ from mnmparse.config import Config
 
 class _MapWindow(QWidget):
     visibility_changed = Signal(bool)
+    npc_selected = Signal(str)
+    npc_zone_requested = Signal(str)
 
     def __init__(self, settings):
         super().__init__()
@@ -38,6 +40,9 @@ class _MapWindow(QWidget):
         self.appearance = (opacity, font_scale)
 
     def on_message(self, *_args):
+        pass
+
+    def set_notable_npcs(self, *_args):
         pass
 
     def showEvent(self, event):
