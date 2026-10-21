@@ -1462,7 +1462,7 @@ class OverlayWindow(QWidget):
         """What ``panel`` docks under: the overlay, or for the auto-attack bar the timer
         panel when that is docked and showing."""
         timers = self._timer_panel
-        if panel is self._npc_panel:
+        if panel is getattr(self, "_npc_panel", None):
             if self._attack_bar.docked and self._attack_bar.isVisible():
                 return self._attack_bar.frameGeometry()
             if timers.docked and timers.isVisible():

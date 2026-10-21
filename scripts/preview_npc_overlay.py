@@ -33,7 +33,8 @@ from mnmparse.config import Config
 from mnmparse.npc_wiki import ItemDetails, NpcDetails
 
 
-SAMPLE_NAMES = ("Sample NPC · preview data", "Second sample NPC · preview data")
+SAMPLE_NAMES = ("Sample NPC · preview data", "Second sample NPC · preview data",
+                "Long list sample NPC · preview data")
 SAMPLES = {
     SAMPLE_NAMES[0]: NpcDetails(
         name=SAMPLE_NAMES[0], level="23–25 (sample)",
@@ -48,6 +49,13 @@ SAMPLES = {
         unique_drops=("Sample unavailable item",),
         quests=("Sample quest: Harbor Supplies",),
         reputation=("Sample Harbor Guard: +5", "Sample Raiders: −10"),
+    ),
+    SAMPLE_NAMES[2]: NpcDetails(
+        name=SAMPLE_NAMES[2], level="30–32 (sample)",
+        common_drops=tuple(f"Sample common drop {index}" for index in range(1, 21)),
+        unique_drops=("Staff of Sigils",) + tuple(f"Sample unique drop {index}" for index in range(1, 21)),
+        quests=("Sample quest: A Long List",),
+        reputation=("Sample allies: +5", "Sample rivals: −10"),
     ),
 }
 STAFF = ItemDetails(name="Staff of Sigils", lines=(
@@ -173,8 +181,10 @@ class PreviewWindow(QWidget):
         visibility.addWidget(dock)
         layout.addLayout(visibility)
         help_text = QLabel(
-            "Hover over Staff of Sigils for its tooltip. Unlock to drag the NPC panel off; "
-            "double-click it to dock again. Ignore the mouse disables item hovers. "
+            "Hover over Staff of Sigils for its tooltip. Unlock to drag or resize either side. "
+            "Use the long list sample and widen it to test columns. Double-click to dock again. "
+            "The card hides within five seconds; hover to keep it open, then leave to restart "
+            "the countdown. Ignore the mouse disables item hovers. "
             "Close this control window to quit the entire preview."
         )
         help_text.setWordWrap(True)

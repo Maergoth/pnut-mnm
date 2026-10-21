@@ -111,6 +111,8 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertTrue(report["setup"]["crop_checkbox_removed"])
             self.assertTrue(report["setup"]["common_options"])
             self.assertTrue(all(report["revenge"].values()))
+            for key in ("columns", "custom_width", "hover_pause", "timed_dismissal"):
+                self.assertTrue(report["npc_reference"][key], key)
             self.assertEqual(report["elitist_badge"], "flames")
             self.assertTrue(all(max(rgb) < 70 for rgb in report["setup"]["background_rgb"]))
             for title in report["window_titles"]:

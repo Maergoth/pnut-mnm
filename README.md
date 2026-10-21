@@ -628,8 +628,13 @@ exclude names from alerts. Trigger master volume and mute also apply.
 card below the timer and attack panels. Level (or level range) and unique drops are on by
 default. In **Settings > Considered NPC**, toggle common drops, unique drops, level,
 quests requiring the NPC and reputation gained/lost independently. Unlock the overlay
-to drag the card away; double-click its header or choose **Snap to overlay** to dock it.
+to drag the card away or resize it horizontally from either side. The right edge
+keeps a docked card attached; the left edge detaches it. Its width is remembered.
+Long lists flow into additional columns when space allows, with scrolling for overflow.
+Double-click its header or choose **Snap to overlay** to dock it.
 The card follows overlay visibility, opacity, font scale, lock and click-through settings.
+It fades away within five seconds. Hovering keeps it visible; moving the mouse away
+starts a fresh five-second countdown. Considering the same NPC again reopens it.
 Hover drop names for a passive item frame with slots, flags, stats, effects, weight,
 size, class and race where the wiki supplies them. Missing information stays explicit.
 
