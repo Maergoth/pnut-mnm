@@ -18,6 +18,9 @@ npc_cache/
 config.json
 triggers.json
 revenge.json
+leaderboard-state.bin
+leaderboard-cache.bin
+leaderboard-*.bin.*.tmp
 vocabulary.json
 *-test-results.txt
 

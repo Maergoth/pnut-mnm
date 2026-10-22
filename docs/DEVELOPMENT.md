@@ -11,18 +11,17 @@ clearing the swing tracker. Typed values commit once on Enter or focus loss.
 
 ### Anonymous leaderboard
 
-`leaderboard.py` whitelists and validates Ed25519-signed public JSONL snapshots.
-`protected_stats.py` stores identity keys, live personal counters and cached history in
-Windows-user DPAPI envelopes with no plaintext temporary files. The engine accepts
+`leaderboard.py` defines the public JSONL snapshot format. `protected_stats.py` owns
+the local identity and cumulative personal history. The engine accepts
 leaderboard counter/stat evidence only from its actual fresh WGC source; it never seeds
 from session totals, imports, demo data or alternate capture. Local Copy separately
 uses the fresh stat reader from either backend without producing a submission.
 
 `app/leaderboard_client.py` uses one bounded plain-Python daemon worker, a queue and a
-GUI-owned active-only polling timer. Opening the page reads the encrypted disk cache;
+GUI-owned active-only polling timer. Opening the page reads the local cache;
 only explicit Refresh or Submit accesses the network. ACKs are delivered to the ledger
 before public rows. Timed-out submissions remain pending in the cache, and retries use
-fresh signed evidence with the same identity/UTC-day idempotency key. Shutdown discards
+fresh readings with the same identity/UTC-day submission ID. Shutdown discards
 late completions without a worker-owned QObject. The public cache is stored beside the
 selected config in `leaderboard-cache.bin`; local counters use `leaderboard-state.bin`.
 
