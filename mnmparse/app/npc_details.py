@@ -25,6 +25,8 @@ MAX_QUEUED = 64
 class NpcDetailsController(QObject):
     _ready = Signal(str, str, object, str)
     notables_updated = Signal(str, object)
+    npc_updated = Signal(str, object, str)
+    item_updated = Signal(str, object, str)
 
     def __init__(self, repository: Any, panel: Any, map_overlay: Any, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -104,6 +106,18 @@ class NpcDetailsController(QObject):
         self._selected = name
         self.panel.show_npc(name)
         self.refresh_selection()
+
+    def request_npc(self, name: str) -> None:
+        """Present/fetch an NPC for a browser without selecting the overlay."""
+        name = self._key(name)
+        if name and not self._closed:
+            self._request("npc", name)
+
+    def request_item(self, name: str) -> None:
+        """Present/fetch a lazy browser tooltip even when overlays are disabled."""
+        name = self._key(name)
+        if name and not self._closed:
+            self._request("item", name)
 
     def refresh_selection(self) -> None:
         name = self._selected
@@ -203,6 +217,14 @@ class NpcDetailsController(QObject):
             item = replace(item, name=requested)
         self.panel.set_item_details(item)
 
+    def _announce_reference(self, kind: str, requested: str, details: Any, status: str) -> None:
+        if kind == "npc":
+            self.npc_updated.emit(requested, details, status)
+        elif kind == "item":
+            if isinstance(details, ItemDetails):
+                details = replace(details, name=requested)
+            self.item_updated.emit(requested, details, status)
+
     def _status(self, kind: str, name: str, cached: Any) -> str:
         error = self._last_errors.get((kind, name))
         if error == "page_missing":
@@ -232,6 +254,11 @@ class NpcDetailsController(QObject):
 
     def _request(self, kind: str, name: str, *, background: bool = False) -> None:
         key = (kind, name)
+        if self._closed:
+            return
+        if kind in {"npc", "item"}:
+            cached = getattr(self.repo, f"cached_{kind}")(name)
+            self._announce_reference(kind, name, cached, self._status(kind, name, cached))
         if self._closed or time.monotonic() < self._next_check.get(key, 0):
             return
         with self._condition:
@@ -325,6 +352,7 @@ class NpcDetailsController(QObject):
                 self._present_item(name, cached)
             else:
                 self.panel.set_item_status(name, status)
+        self._announce_reference(kind, name, cached, status)
 
     def shutdown(self) -> None:
         with self._condition:

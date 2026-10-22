@@ -33,6 +33,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Hover settings gears now float over overlay content without reserving a separate column or enlarging the panel.",
             "NPC respawn timers created from the right-click menu show the map's monster icon inside their countdown ring, including when an expired timer is restarted.",
             "The notable NPC menu shows levels before names, a sparkled sword for unique loot and a feather for NPCs offering or needed by quests.",
+            "Open Zones in the main app to browse maps and NPC details independently of the live overlay, including when overlays are hidden or disabled.",
         ),
         settings_label="Overlay settings",
         settings_target="overlay_enabled",

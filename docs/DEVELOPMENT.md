@@ -115,8 +115,9 @@ mnmparse/            library + CLI
     engine.py        Engine(QObject): worker thread running the pipeline, Qt signals
     models.py        ActorRow / EncounterSnapshot / build_snapshot (CC crediting lives here)
     docked_panel.py  DockedPanel: base for windows that dock under the overlay (drag off, snap back)
-    map_overlay.py  resizable/fullscreen map viewer, asynchronous requests and zone switching
-    npc_details.py  cache-first lookup controller, bounded daemon workers and hover prefetch
+    map_overlay.py  shared asynchronous map viewer: floating overlay or embedded normal widget
+    zones_page.py   independent main-window map browser and cache-backed NPC detail/item view
+    npc_details.py  cache-first lookup controller, shared attached map views, browser signals and bounded workers
     npc_panel.py    detachable NPC details and passive item-stat tooltips
     map_downloads.py  background map updates for Settings and the optional startup download
     app_updates.py  verified GitHub downloads and deferred Windows application replacement

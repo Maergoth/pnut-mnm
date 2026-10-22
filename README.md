@@ -44,6 +44,15 @@ runs at **4× speed**; timer colors and warning thresholds are customizable.
 **Map overlay.** A compact header provides zone and map selectors, a drag grip when unlocked,
 and fullscreen. The map follows zone changes and remembers its last state.
 
+**Zones in the main app.** Open **Zones** to browse the same maps and notable-NPC
+menu in a normal window. Its selected zone, map floor and zoom are saved separately
+from the live map. The first known game zone fills an empty browser once; later game
+zone changes leave your browsing choice alone. Selecting a notable NPC shows its
+details beside the map, including cached item hover tooltips and wiki links, even
+when overlays are hidden or the NPC overlay is disabled. The detail pane uses your
+**Settings > Considered NPC** field choices. Cached maps and NPC details appear first;
+new information loads in the background. Map updates in Settings refresh both views.
+
 ![PNUT map overlay with its compact header expanded](docs/images/map-overlay.png)
 
 Map artwork: [Shaded Dunes Map, Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/File:Shaded_Dunes_Map.jpg).
