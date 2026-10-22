@@ -26,6 +26,7 @@ USER_AGENT = "PNUT-MnM/1.0 (NPC reference; +https://github.com/Maergoth/pnut-mnm
 REQUEST_TIMEOUT = 8
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 CACHE_SCHEMA = 1
+PARSER_VERSION = 1
 log = logging.getLogger(__name__)
 
 
@@ -56,6 +57,10 @@ class NotableNpcs:
 
 class WikiDataError(ValueError):
     """The wiki did not supply a recognizable, authoritative record."""
+
+
+class WikiPageMissing(WikiDataError):
+    """MediaWiki explicitly confirmed that the requested page is unpublished."""
 
 
 def _title(value: str) -> str:
@@ -198,7 +203,7 @@ def _field(label: str, parent: str = "") -> str:
             return "common_drops"
         if "unique" in key:
             return "unique_drops"
-    if "quest" in key and key not in {"quest dialogue", "quest dialog", "quest rewards"}:
+    if "quest" in key and not re.search(r"\b(?:dialogue|dialog|rewards?|loot|drops?|items?)\b", key):
         return "quests"
     if re.search(r"\b(?:reputations?|factions?)\b", key):
         return "reputation"
@@ -245,16 +250,21 @@ def _values(node: _Node, *, text: bool = False) -> list[str]:
     return links if anchors else _lines(node)
 
 
-def _blocks(node: _Node) -> Iterator[_Node]:
-    """Yield headings and meaningful blocks in document order, without duplicates."""
+def _blocks(node: _Node, *, boundary_class: str = "") -> Iterator[_Node]:
+    """Yield meaningful blocks, optionally marking entry/exit of page variants."""
     if _skip(node):
         return
+    boundary = bool(boundary_class and boundary_class in node.attrs.get("class", "").split())
+    if boundary:
+        yield node
     if re.fullmatch(r"h[1-6]", node.tag) or node.tag in {"p", "li", "tr", "dd", "dt"}:
         yield node
         return
     for child in node.children:
         if isinstance(child, _Node):
-            yield from _blocks(child)
+            yield from _blocks(child, boundary_class=boundary_class)
+    if boundary:
+        yield node
 
 
 def _row(node: _Node) -> tuple[str, list[_Node]]:
@@ -302,7 +312,12 @@ def parse_npc(html: str, name: str, source: str = "") -> NpcDetails:
     row_tables = _row_tables(root)
     name_columns: dict[int, int] = {}
     recognized = False
-    for node in _blocks(root):
+    for node in _blocks(root, boundary_class="wiki-mob-variant"):
+        if "wiki-mob-variant" in node.attrs.get("class", "").split():
+            # Each zone variant repeats headings. A final reputation heading
+            # must not consume the next variant's stats or later page content.
+            headings.clear()
+            continue
         if re.fullmatch(r"h[1-6]", node.tag):
             depth, label = int(node.tag[1]), _text(node)
             headings = [h for h in headings if h[0] < depth]
@@ -325,7 +340,8 @@ def parse_npc(html: str, name: str, source: str = "") -> NpcDetails:
         # A section table lists records, even if an item is called "Quest
         # Signet" or "Faction Token". Only an actual infobox, or an unheaded
         # label/value row, may replace the section's meaning.
-        infobox = table is not None and "infobox" in table.attrs.get("class", "").casefold()
+        table_classes = table.attrs.get("class", "").casefold().split() if table is not None else []
+        infobox = any("infobox" in value for value in table_classes) or "mob-stats-box" in table_classes
         labelled_row = bool(label_field and not any(n.tag == "a" for n in _walk(row_cells[0])) and (infobox or (row_cells[0].tag == "th" and not active_field)))
         field = label_field if labelled_row else ""
         if field:
@@ -350,6 +366,7 @@ def parse_npc(html: str, name: str, source: str = "") -> NpcDetails:
             else:
                 values = _values(node, text=field in {"level", "reputation"})
         if field == "reputation":
+            values = list(_unique(values))
             direction = "Gained" if re.search(r"gain|increase|positive", active_label, re.I) else "Lost" if re.search(r"lost|loss|decrease|negative", active_label, re.I) else ""
             if direction:
                 values = [direction + ": " + value for value in values]
@@ -363,7 +380,7 @@ def parse_npc(html: str, name: str, source: str = "") -> NpcDetails:
     if not recognized:
         raise WikiDataError("NPC page format is not recognized; keeping the cached record")
     levels = _unique(result["level"])
-    return NpcDetails(_title(name), levels[0] if levels else "", **{
+    return NpcDetails(_title(name), " / ".join(levels), **{
         key: _unique(result[key]) for key in ("common_drops", "unique_drops", "quests", "reputation")
     }, source=source or wiki_url(name))
 
@@ -410,6 +427,33 @@ def parse_notables(html: str, zone: str, source: str = "") -> NotableNpcs:
     active_depth = 0
     recognized = False
     name_column = 0
+    row_tables = _row_tables(root)
+    notable_columns: dict[int, int] = {}
+    # Zone pages also use a labelled row inside nested layout/infobox tables.
+    # Visit every row, since _blocks deliberately stops at an enclosing row.
+    for node in _walk(root):
+        if node.tag != "tr":
+            continue
+        row_cells = [n for n in node.children if isinstance(n, _Node) and n.tag in {"td", "th"}]
+        table_id = id(row_tables.get(id(node)))
+        if row_cells and all(cell.tag == "th" for cell in row_cells):
+            column = next((i for i, cell in enumerate(row_cells) if _notable_heading(_text(cell))), None)
+            if column is not None:
+                notable_columns[table_id] = column
+                recognized = True
+            else:
+                notable_columns.pop(table_id, None)
+            continue
+        if table_id in notable_columns:
+            column = notable_columns[table_id]
+            if column < len(row_cells):
+                names.extend(_values(row_cells[column]))
+            continue
+        label, cells = _row(node)
+        first = row_cells[0] if row_cells else None
+        if cells and first is not None and not any(n.tag == "table" for n in _walk(first)) and _notable_heading(label):
+            recognized = True
+            names.extend(value for cell in cells for value in _values(cell))
     for node in _blocks(root):
         if re.fullmatch(r"h[1-6]", node.tag):
             depth = int(node.tag[1])
@@ -425,9 +469,12 @@ def parse_notables(html: str, zone: str, source: str = "") -> NotableNpcs:
             cells = [n for n in node.children if isinstance(n, _Node) and n.tag in {"td", "th"}]
             headers = [_key(_text(cell)) for cell in cells]
             if cells and all(cell.tag == "th" for cell in cells):
-                name_column = next((i for i, value in enumerate(headers) if value in {"name", "npc", "npc name", "monster", "mob"}), 0)
+                if any(re.fullmatch(r"common (?:npcs?|mobs?|monsters?|creatures?|enemies)", value) for value in headers):
+                    name_column = -1
+                else:
+                    name_column = next((i for i, value in enumerate(headers) if _notable_heading(value) or value in {"name", "npc", "npc name", "monster", "mob"}), 0)
                 continue
-            if cells and name_column < len(cells):
+            if cells and 0 <= name_column < len(cells):
                 names.extend(_values(cells[name_column]))
         elif node.tag == "li":
             # A notable-NPC bullet can also mention its location or loot.
@@ -484,7 +531,7 @@ class WikiRepository:
             return None
 
     def _save(self, kind: str, requested: str, title: str, revision: str, details: Any) -> None:
-        data = json.dumps({"schema": CACHE_SCHEMA, "kind": kind, "title": title, "revision": revision, "data": asdict(details)}, ensure_ascii=False).encode("utf-8")
+        data = json.dumps({"schema": CACHE_SCHEMA, "parser_version": PARSER_VERSION, "kind": kind, "title": title, "revision": revision, "data": asdict(details)}, ensure_ascii=False).encode("utf-8")
         for key in dict.fromkeys((requested, title)):
             temporary = None
             try:
@@ -525,14 +572,20 @@ class WikiRepository:
             for alias in query.get(key, []):
                 if isinstance(alias, dict) and isinstance(alias.get("from"), str) and isinstance(alias.get("to"), str):
                     aliases[alias["from"].casefold()] = alias["to"]
+        missing = 0
         for candidate in candidates:
             seen: set[str] = set()
             while candidate.casefold() in aliases and candidate.casefold() not in seen:
                 seen.add(candidate.casefold())
                 candidate = aliases[candidate.casefold()]
-            page = next((p for p in pages if isinstance(p, dict) and isinstance(p.get("title"), str) and p["title"].casefold() == candidate.casefold() and "missing" not in p and "invalid" not in p), None)
+            page = next((p for p in pages if isinstance(p, dict) and isinstance(p.get("title"), str) and p["title"].casefold() == candidate.casefold()), None)
             if page is None:
                 continue
+            if "missing" in page:
+                missing += 1
+                continue
+            if "invalid" in page:
+                raise WikiDataError("The wiki could not resolve this page title")
             revisions = page.get("revisions", [])
             revision = revisions[0].get("revid") if isinstance(revisions, list) and revisions and isinstance(revisions[0], dict) else None
             if page.get("ns", 0) != 0 or isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
@@ -542,18 +595,23 @@ class WikiRepository:
             if not isinstance(touched, str) or len(touched) > 64:
                 raise WikiDataError("Wiki revision metadata is malformed")
             return _title(page["title"]), revision, str(revision) + ":" + touched
-        raise WikiDataError("This NPC, item or zone is not published on the wiki")
+        if missing == len(candidates):
+            raise WikiPageMissing("This NPC, item or zone is not published on the wiki")
+        raise WikiDataError("Wiki revision metadata did not identify the requested page")
 
     def _refresh(self, kind: str, requested: str) -> Any:
         requested = _title(requested)
         title, revision, fingerprint = self._revision(requested, kind)
         requested_cache = self._cached(kind, requested)
         cached = requested_cache or self._cached(kind, title)
-        if cached and cached[1]["title"] == title and cached[1]["revision"] == fingerprint:
+        if cached and cached[1]["title"] == title and cached[1]["revision"] == fingerprint and cached[1].get("parser_version", 0) == PARSER_VERSION:
             if requested_cache is None:
                 self._save(kind, requested, title, fingerprint, cached[0])
             return cached[0]
-        data = _api({"action": "parse", "oldid": revision, "prop": "text", "disableeditsection": 1})
+        # The current-page route is available even when the wiki challenges
+        # oldid requests. Ask for revid explicitly and reject any edit racing
+        # the metadata lookup rather than caching it under the wrong revision.
+        data = _api({"action": "parse", "page": title, "prop": "text|revid", "disableeditsection": 1})
         parsed = data.get("parse", {})
         if not isinstance(parsed, dict) or parsed.get("revid") != revision or parsed.get("title") != title:
             raise WikiDataError("Wiki page changed during loading; keeping the cached record")
@@ -588,4 +646,4 @@ class WikiRepository:
         return self._refresh("notables", zone)
 
 
-__all__ = ["NpcDetails", "ItemDetails", "NotableNpcs", "WikiRepository", "WikiDataError", "parse_npc", "parse_item", "parse_notables", "wiki_url"]
+__all__ = ["NpcDetails", "ItemDetails", "NotableNpcs", "WikiRepository", "WikiDataError", "WikiPageMissing", "parse_npc", "parse_item", "parse_notables", "wiki_url"]

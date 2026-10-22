@@ -28,6 +28,15 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.22": ReleaseNotes(
+        changes=(
+            "NPC wiki lookups work with the restored site's API and current page layouts, including levels, drops and notable NPC lists.",
+            "Named NPC kindness reactions open the NPC card even when difficulty text follows. Player considers stay out of the card.",
+            "More pet, effect and system messages are recognized. Spell expiration notices no longer receive fresh action credit, and manual coin splits do not inflate loot.",
+        ),
+        settings_label="NPC settings",
+        settings_target="npc_enabled",
+    ),
     "1.0.21": ReleaseNotes(
         changes=(
             "Resize the NPC card horizontally while unlocked. Width is remembered, and long lists flow into extra columns when space allows.",
