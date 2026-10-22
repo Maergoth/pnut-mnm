@@ -350,6 +350,7 @@ class MapDownloadControllerTests(unittest.TestCase):
             return [MAP]
         repo.maps.side_effect = maps
         controller = MapDownloadController(repo)
+        self.assertFalse(controller._poll_timer.isActive())
         started, progress, finished = [], [], []
         controller.started.connect(lambda: started.append(threading.get_ident()))
         controller.progress.connect(lambda text: progress.append((text, threading.get_ident())))
@@ -360,10 +361,12 @@ class MapDownloadControllerTests(unittest.TestCase):
                 self.assertTrue(controller.start())
                 self.assertTrue(entered.wait(1))
                 self.assertTrue(controller.is_running)
+                self.assertTrue(controller._poll_timer.isActive())
                 self.assertFalse(controller.start())
                 release.set()
                 self.wait_until(lambda: bool(finished))
                 self.assertFalse(controller.is_running)
+                self.assertFalse(controller._poll_timer.isActive())
                 self.assertEqual(started, [main_thread])
                 self.assertEqual(progress[0][1], main_thread)
                 self.assertEqual(finished, [("Downloaded 1 map.", main_thread)])
@@ -393,6 +396,7 @@ class MapDownloadControllerTests(unittest.TestCase):
                 worker = controller._worker
                 controller.shutdown()
                 self.assertFalse(controller.is_running)
+                self.assertFalse(controller._poll_timer.isActive())
                 self.assertFalse(controller.start())
                 self.assertTrue(worker.cancelled.is_set())
                 release.set()
@@ -403,6 +407,96 @@ class MapDownloadControllerTests(unittest.TestCase):
         finally:
             release.set()
             controller.shutdown()
+
+    def test_progress_shutdown_discards_queued_completion_without_more_gui_callbacks(self):
+        controller = MapDownloadController(repository_mock())
+        self.addCleanup(controller.shutdown)
+        progress, finished = [], []
+
+        def stop_on_progress(message):
+            progress.append(message)
+            controller.shutdown()
+
+        controller.progress.connect(stop_on_progress)
+        controller.finished.connect(finished.append)
+        with patch("mnmparse.app.map_downloads.threading.Thread"):
+            self.assertTrue(controller.start())
+        worker = controller._worker
+        worker.messages.put(("progress", "First progress"))
+        worker.messages.put(("progress", "Late progress"))
+        worker.messages.put(("finished", "Late completion"))
+        controller._drain()
+        controller._drain()  # A queued timer callback must also remain harmless.
+        self.assertEqual(progress, ["First progress"])
+        self.assertEqual(finished, [])
+        self.assertTrue(worker.cancelled.is_set())
+        self.assertFalse(controller._poll_timer.isActive())
+
+    def test_finished_handler_can_start_next_download_without_old_queue_interference(self):
+        controller = MapDownloadController(repository_mock())
+        self.addCleanup(controller.shutdown)
+        finished = []
+
+        def restart(message):
+            finished.append(message)
+            self.assertFalse(controller.is_running)
+            self.assertFalse(controller._poll_timer.isActive())
+            if len(finished) == 1:
+                self.assertTrue(controller.start())
+
+        controller.finished.connect(restart)
+        with patch("mnmparse.app.map_downloads.threading.Thread"):
+            self.assertTrue(controller.start())
+            old = controller._worker
+            old.messages.put(("finished", "First complete"))
+            old.messages.put(("finished", "Stale complete"))
+            controller._drain()
+            self.assertIsNot(controller._worker, old)
+            self.assertTrue(controller._poll_timer.isActive())
+            controller._worker.messages.put(("finished", "Second complete"))
+            controller._drain()
+        self.assertEqual(finished, ["First complete", "Second complete"])
+        self.assertFalse(controller.is_running)
+        self.assertFalse(controller._poll_timer.isActive())
+
+    def test_controller_can_be_deleted_while_canceled_request_is_still_finishing(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from shiboken6 import isValid
+
+        entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+        repo = repository_mock()
+
+        def maps(*_args, **_kwargs):
+            entered.set()
+            release.wait(2)
+            returned.set()
+            return [MAP]
+
+        repo.maps.side_effect = maps
+        controller = MapDownloadController(repo)
+        finished = []
+        controller.finished.connect(finished.append)
+        try:
+            with patch("mnmparse.app.map_downloads.ZONES", ("Sungreet Strand",)):
+                self.assertTrue(controller.start())
+                self.assertTrue(entered.wait(1))
+                worker = controller._worker
+                controller.shutdown()
+                controller.deleteLater()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                self.assertFalse(isValid(controller))
+                release.set()
+                self.assertTrue(returned.wait(1))
+                # Worker publication after deletion is only queue access.
+                worker._post("progress", "Late progress")
+                worker._post("finished", "Late completion")
+                self.app.processEvents()
+                self.assertEqual(finished, [])
+                repo.update_image.assert_not_called()
+        finally:
+            release.set()
+            if isValid(controller):
+                controller.shutdown()
 
 
 if __name__ == "__main__":

@@ -28,6 +28,18 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.23": ReleaseNotes(
+        changes=(
+            "Downloaded updates install automatically after a 10-second countdown. Choose Later to postpone; restart from Settings or the tray.",
+            "NPC cards resize while unlocked, with a corner grip and more columns at wider sizes.",
+            "Click mob or drop names to open their wiki pages. Item hover tooltips remain available.",
+            "Drops listed as common and unique appear only under common. Empty wiki fields are hidden.",
+            "Hover an overlay to reveal its top-left settings gear.",
+            "Click the live Session footer to confirm starting a new session, in the main app or overlay.",
+        ),
+        settings_label="App updates",
+        settings_target="app_update_button",
+    ),
     "1.0.22": ReleaseNotes(
         changes=(
             "NPC wiki lookups work with the restored site's API and current page layouts, including levels, drops and notable NPC lists.",

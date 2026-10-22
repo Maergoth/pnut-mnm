@@ -54,6 +54,15 @@ class MapSettingsTests(unittest.TestCase):
             reopened.close()
             reopened.deleteLater()
 
+    def test_update_restart_can_distinguish_saved_settings_from_a_draft(self):
+        self.assertFalse(self.page.has_unsaved_changes())
+        original = self.page.player_name.text()
+        self.page.player_name.setText("FictionalHero")
+        self.assertTrue(self.page.has_unsaved_changes())
+        self.page.player_name.setText(original)
+        self.assertFalse(self.page.has_unsaved_changes())
+        self.assertIn("restart automatically", self.page.app_update_on_startup.toolTip())
+
     def test_download_request_is_disabled_until_completion(self):
         requests = []
         self.page.map_download_requested.connect(lambda: requests.append(True))

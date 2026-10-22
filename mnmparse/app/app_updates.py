@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from pathlib import Path, PurePosixPath
+from queue import Empty, SimpleQueue
 import re
 import stat
 import subprocess
@@ -25,7 +26,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 import zipfile
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from mnmparse.app import APP_VERSION
 from mnmparse.app.launch_identity import EXECUTABLE, _guard_name, is_session_executable
@@ -232,12 +233,28 @@ def verify_package_version(package: Path, version: str) -> dict:
 
 
 def download_update(cancelled: threading.Event, progress: Callable[[str], None],
-                    installation: Path | None = None) -> tuple[str, Path] | None:
+                    installation: Path | None = None, *, retained_version: str = "") -> tuple[str, Path] | None:
     progress("Checking GitHub for application updates…")
     payload = json.loads(_fetch(LATEST_URL, 1024 * 1024, cancelled))
     release = select_release(payload)
     if release is None:
         return None
+    if retained_version:
+        # A deferred download remains available for a deliberate retry while we
+        # check for a newer release. Do not download its large archive again or
+        # replace it with an older release if the deferred release was withdrawn.
+        if version_tuple(release.version) < version_tuple(retained_version):
+            return None
+        if release.version == retained_version:
+            pending = _pending_record(installation) if installation is not None else None
+            if pending is None or pending[0]["version"] != retained_version:
+                raise UpdateError("The saved update is unavailable. Download it again.")
+            record, stage = pending
+            progress("Verifying the saved application update…")
+            verify_archive(stage / record["archive"], (stage / "release.sha256").read_bytes(), record["archive"])
+            if cancelled.is_set():
+                raise _Cancelled("Update cancelled.")
+            return retained_version, stage / "package"
     root = _stage_root()
     root.mkdir(parents=True, exist_ok=True)
     prune_owned(root, "update-stage", keep=3, max_age_days=7)
@@ -372,7 +389,11 @@ def prepare_pending_update(arguments: list[str] | None = None) -> tuple[bool, st
     messages: list[str] = []
     controller.finished.connect(messages.append)
     try:
-        prepared = controller.restore_pending() and controller.prepare_restart(arguments)
+        restored = controller.restore_pending()
+        if restored and not controller.automatic_restart_allowed(controller.ready_version):
+            return False, (f"PNUT {controller.ready_version} is downloaded. Automatic retry is paused "
+                           "after an earlier update or restoration; open Settings > App updates to retry.")
+        prepared = restored and controller.prepare_restart(arguments)
         return bool(prepared), messages[-1] if messages else ""
     finally:
         controller.shutdown()
@@ -760,33 +781,35 @@ def _prune_receipts(install: Path, protected_token: str) -> None:
             continue
 
 
-class _Signals(QObject):
-    progress = Signal(str)
-    completed = Signal(object, str)
-
-
 class _Worker:
-    def __init__(self, installation: Path | None = None) -> None:
+    def __init__(self, installation: Path | None = None, retained: tuple[str, Path] | None = None) -> None:
         self.installation = installation
+        self.retained = retained
         self.cancelled = threading.Event()
-        self.signals = _Signals()
+        self.messages: SimpleQueue[tuple[str, tuple]] = SimpleQueue()
 
-    def _emit(self, signal, *args) -> None:
+    def _post(self, kind: str, *args) -> None:
         if not self.cancelled.is_set():
-            try:
-                signal.emit(*args)
-            except RuntimeError:
-                pass
+            self.messages.put((kind, args))
 
     def run(self) -> None:
         try:
-            result = download_update(self.cancelled, lambda message: self._emit(self.signals.progress, message),
-                                     installation=self.installation)
-            message = f"PNUT {result[0]} is ready. Restart now or quit and reopen to install." if result else f"PNUT {APP_VERSION} is up to date."
-            self._emit(self.signals.completed, result, message)
+            result = download_update(self.cancelled, lambda message: self._post("progress", message),
+                                     installation=self.installation,
+                                     retained_version=self.retained[0] if self.retained else "")
+            if result is None and self.retained is not None:
+                result = self.retained
+                message = (f"No newer application update is available. PNUT {result[0]} remains downloaded; "
+                           "automatic retry is paused.")
+            elif self.retained is not None and result is not None and result[0] == self.retained[0]:
+                message = (f"PNUT {result[0]} remains downloaded. Automatic retry is paused; "
+                           "restart from Settings or the tray to retry.")
+            else:
+                message = f"PNUT {result[0]} is ready. Restart now or quit and reopen to install." if result else f"PNUT {APP_VERSION} is up to date."
+            self._post("completed", result, message)
         except Exception as exc:
             log.warning("Application update failed: %s", exc)
-            self._emit(self.signals.completed, None, f"Could not update PNUT: {exc}")
+            self._post("completed", None, f"Could not update PNUT: {exc}")
 
 
 class AppUpdateController(QObject):
@@ -802,6 +825,11 @@ class AppUpdateController(QObject):
         self._ready_package: Path | None = None
         self._ready_version = ""
         self._restart_prepared = False
+        # Daemon workers own only Python objects. Creating/emitting or deleting
+        # their Qt signal wrappers during GUI shutdown can race native teardown.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(20)
+        self._poll_timer.timeout.connect(self._drain)
 
     @property
     def is_running(self) -> bool:
@@ -810,6 +838,31 @@ class AppUpdateController(QObject):
     @property
     def ready_package(self) -> Path | None:
         return self._ready_package
+
+    @property
+    def ready_version(self) -> str:
+        return self._ready_version
+
+    def automatic_restart_allowed(self, version: str) -> bool:
+        """Avoid failed-release retries or undoing a restoration without an explicit retry."""
+        try:
+            target = version_tuple(version)
+            record = _receipt(installed_directory())
+        except (OSError, UpdateError):
+            return False
+        if record is None:
+            return True
+        try:
+            recorded = version_tuple(record.get("version"))
+            if record["status"] in {"rolled_back", "failed"}:
+                return recorded != target
+            if record["status"] in {"healthy", "pending"}:
+                previous = version_tuple(record.get("previous_version"))
+                if recorded < previous and target == previous:
+                    return False  # Do not immediately undo a deliberate downgrade.
+            return True
+        except UpdateError:
+            return True  # Malformed versions do not establish a prior recovery.
 
     def restore_pending(self) -> bool:
         """Recover readiness without contacting GitHub or executing the package."""
@@ -848,16 +901,34 @@ class AppUpdateController(QObject):
             return False
         if self._ready_package is None:
             self.restore_pending()
-        if self._ready_package is not None:
+        if self._ready_package is not None and self.automatic_restart_allowed(self._ready_version):
             self.finished.emit(f"PNUT {self._ready_version} is ready. Restart now or quit and reopen to install.")
-            self.ready.emit(self._ready_version)
+            if not self._closed:
+                self.ready.emit(self._ready_version)
             return False
-        self._worker = worker = _Worker(install)
-        worker.signals.progress.connect(self._on_progress)
-        worker.signals.completed.connect(self._on_completed)
+        retained = (self._ready_version, self._ready_package) if self._ready_package is not None else None
+        self._worker = worker = _Worker(install, retained)
+        self._poll_timer.start()
         self.started.emit()
         threading.Thread(target=worker.run, name="app-update", daemon=True).start()
         return True
+
+    @Slot()
+    def _drain(self) -> None:
+        worker = self._worker
+        if self._closed or worker is None:
+            self._poll_timer.stop()
+            return
+        while not self._closed and self._worker is worker:
+            try:
+                kind, args = worker.messages.get_nowait()
+            except Empty:
+                return
+            if kind == "progress":
+                self._on_progress(*args)
+            elif kind == "completed":
+                self._on_completed(*args)
+                return  # A finished callback may have started a new worker.
 
     @Slot(str)
     def _on_progress(self, message: str) -> None:
@@ -866,17 +937,21 @@ class AppUpdateController(QObject):
 
     @Slot(object, str)
     def _on_completed(self, result, message: str) -> None:
+        self._poll_timer.stop()
         self._worker = None
         if self._closed:
             return
         if result is not None:
             self._ready_version, self._ready_package = result
         self.finished.emit(message)
-        if result is not None:
+        if result is not None and not self._closed:
             self.ready.emit(self._ready_version)
 
     def prepare_restart(self, arguments: list[str] | None = None) -> bool:
         if self._closed or self._ready_package is None or self._restart_prepared:
+            return False
+        if self.is_running:
+            self.finished.emit("An application update check is still running. Wait for it to finish before restarting.")
             return False
         claimed: tuple[dict, Path] | None = None
         try:
@@ -998,6 +1073,7 @@ class AppUpdateController(QObject):
 
     def shutdown(self) -> None:
         self._closed = True
+        self._poll_timer.stop()
         if self._worker:
             self._worker.cancelled.set()
             self._worker = None

@@ -12,8 +12,8 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
 
-from PySide6.QtCore import QPoint, QRect, QSettings, Qt
-from PySide6.QtGui import QFontMetricsF
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSettings, Qt
+from PySide6.QtGui import QDesktopServices, QFontMetricsF, QMouseEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from mnmparse.app.npc_panel import NpcPanel
@@ -61,20 +61,179 @@ class NpcPanelTests(unittest.TestCase):
     def row_text(self) -> str:
         return "\n".join(row.text for row in self.panel._rows)
 
-    def test_default_sections_show_level_and_unique_drops_and_unknown_is_explicit(self) -> None:
+    def mouse(self, kind, global_position, *, button=Qt.MouseButton.NoButton, buttons=Qt.MouseButton.NoButton):
+        event = QMouseEvent(kind, QPointF(self.panel.mapFromGlobal(global_position)), QPointF(global_position),
+                            button, buttons, Qt.KeyboardModifier.NoModifier)
+        self.app.sendEvent(self.panel, event)
+
+    def click(self, local, *, button=Qt.MouseButton.LeftButton):
+        position = self.panel.mapToGlobal(local)
+        self.mouse(QEvent.Type.MouseButtonPress, position, button=button, buttons=button)
+        self.mouse(QEvent.Type.MouseButtonRelease, position, button=button)
+
+    def item_point(self):
+        rect, _ = next((rect, row) for rect, row in self.panel._row_rects if row.item)
+        return rect.center().toPoint() + QPoint(0, int(self.panel._body.top()) - self.panel._scroll.value())
+
+    def test_default_fields_wait_for_data_without_empty_headings_or_placeholders(self) -> None:
         self.panel.sync()
         self.assertFalse(self.panel.isVisible())
         self.panel.show_npc("Sample Keeper")
         self.assertTrue(self.panel.isVisible())
         self.assertEqual(self.panel.options, dict(enabled=True, level=True, common_drops=False,
                                                 unique_drops=True, quests=False, reputation=False))
-        self.assertIn("Level: Unknown", self.row_text())
-        self.assertIn("Unique drops", self.row_text())
-        self.assertNotIn("Common drops", self.row_text())
+        self.assertEqual(self.row_text(), "")
+        self.assertEqual(self.panel._status, "Loading NPC information…")
         self.panel.set_details(self.details(unique_drops=()))
-        self.assertIn("Level: 23–25", self.row_text())
-        self.assertIn("Not available in wiki data", self.row_text())
-        self.assertNotIn("None", self.row_text())
+        self.assertEqual(self.row_text(), "Level: 23–25")
+
+    def test_unavailable_fields_are_hidden_while_request_status_remains_visible(self) -> None:
+        self.panel.show_npc("Sample Keeper")
+        self.panel.configure(common_drops=True, quests=True, reputation=True)
+        self.panel.set_details(self.details(level="Unknown", common_drops=(), unique_drops=(),
+            quests=("Not available in wiki data",), reputation=("Lost: None", "Gained: Unknown")),
+            "Wiki unavailable; showing cached information")
+        self.assertEqual(self.row_text(), "")
+        self.assertEqual(self.panel._status, "Wiki unavailable; showing cached information")
+        self.assertTrue(self.panel.isVisible())
+        self.assertEqual(self.panel._scroll.maximum(), 0)
+
+    def test_common_drops_exclude_overlap_from_unique_even_when_common_is_disabled(self) -> None:
+        # Model-less cached objects must obey the same rule as fresh records.
+        details = self.details(common_drops=("Sample_Coin",),
+                               unique_drops=("  sample   COIN ", "Sample sigil staff"))
+        self.panel.show_npc(details.name)
+        self.panel.set_details(details)
+        self.assertEqual([row.item for row in self.panel._rows if row.item], ["Sample sigil staff"])
+        self.panel.configure(common_drops=True)
+        self.assertEqual([row.item for row in self.panel._rows if row.item], ["Sample sigil staff", "Sample_Coin"])
+        self.assertLess(self.row_text().index("Unique drops"), self.row_text().index("Common drops"))
+        self.panel.configure(common_drops=False)
+        self.panel.set_details(self.details(common_drops=("Sample coin",), unique_drops=("SAMPLE_COIN",)))
+        self.assertNotIn("Unique drops", self.row_text())
+        self.assertFalse(any(row.item for row in self.panel._rows))
+
+    def test_refresh_removes_tooltip_for_item_now_only_in_hidden_common_drops(self) -> None:
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details(common_drops=()))
+        self.panel._hover_item("Sample sigil staff", QPoint(300, 300))
+        self.assertTrue(self.panel._tooltip.isVisible())
+        self.panel.set_details(self.details(common_drops=("Sample_sigil_staff",)))
+        self.assertFalse(self.panel._tooltip.isVisible())
+        self.assertEqual(self.panel._hovered_item, "")
+        self.assertNotIn("Unique drops", self.row_text())
+
+    def test_npc_and_item_clicks_open_canonical_wiki_pages_and_keep_hover_tooltips(self):
+        self.panel.show_npc("Sample Keeper")
+        details = self.details(source="https://monstersandmemories.miraheze.org/wiki/Canonical_Keeper")
+        self.panel.set_details(details)
+        self.panel.set_item_details(SimpleNamespace(name="Sample sigil staff", lines=("MAGIC",),
+            source="https://monstersandmemories.miraheze.org/wiki/Canonical_Staff"))
+        self.panel._hover_item("Sample sigil staff", QPoint(300, 300))
+        self.assertTrue(self.panel._tooltip.isVisible())
+        with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
+            self.click(self.panel._name_rect().center().toPoint())
+            self.click(self.item_point())
+        self.assertEqual([call.args[0].toString() for call in opened.call_args_list], [
+            "https://monstersandmemories.miraheze.org/wiki/Canonical_Keeper",
+            "https://monstersandmemories.miraheze.org/wiki/Canonical_Staff"])
+        self.assertIn("Sample sigil staff", self.row_text())
+
+    def test_untrusted_or_absent_sources_fall_back_to_the_exact_wiki_title(self):
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details(source="https://example.invalid/wiki/Wrong"))
+        self.panel.set_item_details(SimpleNamespace(name="Sample sigil staff", lines=("MAGIC",),
+            source="javascript:alert(1)"))
+        with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
+            self.click(self.panel._name_rect().center().toPoint())
+            self.click(self.item_point())
+        self.assertEqual([call.args[0].toString() for call in opened.call_args_list], [
+            "https://monstersandmemories.miraheze.org/wiki/Sample_Keeper",
+            "https://monstersandmemories.miraheze.org/wiki/Sample_sigil_staff"])
+        self.panel.set_details(self.details(source="https://[invalid"))
+        with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
+            self.click(self.panel._name_rect().center().toPoint())
+        self.assertEqual(opened.call_args.args[0].toString(),
+                         "https://monstersandmemories.miraheze.org/wiki/Sample_Keeper")
+
+    def test_drag_resize_right_click_click_through_and_changed_target_never_open_links(self):
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details())
+        title = self.panel.mapToGlobal(self.panel._name_rect().center().toPoint())
+        with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
+            # A locked label still needs click slop, including out-and-back movement.
+            self.mouse(QEvent.Type.MouseButtonPress, title, button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseMove, title + QPoint(30, 0), buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseMove, title, buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseButtonRelease, title, button=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseButtonPress, title, button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseButtonRelease, self.panel.mapToGlobal(self.item_point()), button=Qt.MouseButton.LeftButton)
+            self.click(self.item_point(), button=Qt.MouseButton.RightButton)
+            self.owner.locked = False
+            self.panel.sync()
+            title = self.panel.mapToGlobal(self.panel._name_rect().center().toPoint())
+            self.mouse(QEvent.Type.MouseButtonPress, title, button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseMove, title + QPoint(45, 25), buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseButtonRelease, title + QPoint(45, 25), button=Qt.MouseButton.LeftButton)
+            self.assertFalse(self.panel.docked)
+            corner = self.panel.mapToGlobal(self.panel._grip_rect().center())
+            self.mouse(QEvent.Type.MouseButtonPress, corner, button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseMove, corner + QPoint(45, 25), buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseButtonRelease, corner + QPoint(45, 25), button=Qt.MouseButton.LeftButton)
+            self.owner.click_through = True
+            self.panel.sync()
+            self.click(self.panel._name_rect().center().toPoint())
+            opened.assert_not_called()
+
+    def test_links_use_hand_cursor_but_edges_and_grip_have_resize_priority(self):
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details())
+        title, item = self.panel._name_rect().center().toPoint(), self.item_point()
+        self.assertEqual(self.panel._cursor_at(title), Qt.CursorShape.PointingHandCursor)
+        self.assertEqual(self.panel._cursor_at(item), Qt.CursorShape.PointingHandCursor)
+        self.owner.locked = False
+        self.assertEqual(self.panel._cursor_at(self.panel._grip_rect().center()), Qt.CursorShape.SizeFDiagCursor)
+        self.assertEqual(self.panel._cursor_at(QPoint(self.panel.width() // 2, 1)), Qt.CursorShape.SizeVerCursor)
+        self.assertEqual(self.panel._cursor_at(QPoint(1, 1)), Qt.CursorShape.SizeFDiagCursor)
+        self.assertEqual(self.panel._cursor_at(QPoint(self.panel.width() - 2, 1)), Qt.CursorShape.SizeBDiagCursor)
+        self.owner.click_through = True
+        self.assertEqual(self.panel._cursor_at(title), Qt.CursorShape.ArrowCursor)
+
+    def test_locked_link_click_allows_small_pointer_motion_without_becoming_a_drag(self):
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details())
+        title = self.panel.mapToGlobal(self.panel._name_rect().center().toPoint())
+        with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
+            self.mouse(QEvent.Type.MouseButtonPress, title, button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseMove, title + QPoint(1, 0), buttons=Qt.MouseButton.LeftButton)
+            self.mouse(QEvent.Type.MouseButtonRelease, title + QPoint(1, 0), button=Qt.MouseButton.LeftButton)
+        opened.assert_called_once()
+        self.assertTrue(self.panel.docked)
+
+    def test_settings_gear_reserves_space_in_both_title_painting_and_link_hit_test(self):
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details())
+        self.panel._settings_gear = object()
+        self.panel._settings_gear_changed()
+        self.assertEqual(self.panel._title_rect().left(), 32)
+        self.assertEqual(self.panel._name_rect().left(), 32)
+        self.assertIsNone(self.panel._link_at(QPoint(16, 16)))
+        self.assertEqual(self.panel._link_at(self.panel._name_rect().center().toPoint()), ("npc", "Sample Keeper"))
+
+    def test_small_font_keeps_first_data_row_below_the_settings_gear(self):
+        from mnmparse.app.overlay_settings import OverlaySettingsGear
+
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details())
+        gear = OverlaySettingsGear(self.panel, lambda: None, label="Considered NPC")
+        self.panel._settings_gear = gear
+        self.panel._settings_gear_changed()
+        self.panel.set_font_px(7.8)
+        first_row = self.panel._row_rects[0][0].translated(0, self.panel._body.top())
+        self.assertGreater(first_row.top(), gear.geometry().bottom())
+        self.assertFalse(first_row.intersects(gear.geometry()))
+        self.assertGreater(self.panel._title_rect().left(), gear.geometry().right())
+        self.assertEqual(self.panel._link_at(self.panel._name_rect().center().toPoint()), ("npc", "Sample Keeper"))
 
     def test_preferences_filter_sections_without_discarding_cached_details(self) -> None:
         details = self.details()

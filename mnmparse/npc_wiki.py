@@ -40,6 +40,20 @@ class NpcDetails:
     reputation: tuple[str, ...] = ()
     source: str = ""
 
+    def __post_init__(self) -> None:
+        # Apply this on cache deserialization too, without waiting for a wiki
+        # revision change or requiring a new request while offline.
+        object.__setattr__(self, "unique_drops", unique_drops_excluding_common(self.common_drops, self.unique_drops))
+
+
+def unique_drops_excluding_common(common: tuple[str, ...], unique: tuple[str, ...]) -> tuple[str, ...]:
+    """Common drops take precedence, using MediaWiki's space/underscore titles."""
+    def key(value: str) -> str:
+        return " ".join(value.replace("_", " ").split()).casefold()
+
+    common_names = {key(value) for value in common}
+    return tuple(value for value in unique if key(value) not in common_names)
+
 
 @dataclass(frozen=True)
 class ItemDetails:
@@ -646,4 +660,4 @@ class WikiRepository:
         return self._refresh("notables", zone)
 
 
-__all__ = ["NpcDetails", "ItemDetails", "NotableNpcs", "WikiRepository", "WikiDataError", "WikiPageMissing", "parse_npc", "parse_item", "parse_notables", "wiki_url"]
+__all__ = ["NpcDetails", "ItemDetails", "NotableNpcs", "WikiRepository", "WikiDataError", "WikiPageMissing", "parse_npc", "parse_item", "parse_notables", "wiki_url", "unique_drops_excluding_common"]

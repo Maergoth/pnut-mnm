@@ -259,7 +259,8 @@ class NpcPanelLayoutTests(unittest.TestCase):
         self.app.sendEvent(self.panel, event)
 
     def start_edge_drag(self, edge):
-        local = QPoint(1 if edge == "left" else self.panel.width() - 2, self.panel.height() // 2)
+        local = QPoint(1 if "left" in edge else self.panel.width() - 2 if "right" in edge else self.panel.width() // 2,
+                       1 if "top" in edge else self.panel.height() - 2 if "bottom" in edge else self.panel.height() // 2)
         start = self.panel.mapToGlobal(local)
         self.mouse(QEvent.Type.MouseButtonPress, start,
                    button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton)
@@ -267,9 +268,143 @@ class NpcPanelLayoutTests(unittest.TestCase):
 
     def drag_edge(self, edge, delta):
         start = self.start_edge_drag(edge)
-        self.mouse(QEvent.Type.MouseMove, start + QPoint(delta, 0), buttons=Qt.MouseButton.LeftButton)
-        self.mouse(QEvent.Type.MouseButtonRelease, start + QPoint(delta, 0), button=Qt.MouseButton.LeftButton)
+        offset = delta if isinstance(delta, QPoint) else QPoint(delta, 0)
+        self.mouse(QEvent.Type.MouseMove, start + offset, buttons=Qt.MouseButton.LeftButton)
+        self.mouse(QEvent.Type.MouseButtonRelease, start + offset, button=Qt.MouseButton.LeftButton)
         self.app.processEvents()
+
+    def test_bottom_edge_changes_height_without_moving_or_undocking_owner(self):
+        self.populate(count=24)
+        self.panel.set_panel_width(500)
+        self.panel.set_panel_height(200)
+        owner_geometry, top = self.owner.geometry(), self.panel.y()
+        self.drag_edge("bottom", QPoint(0, 90))
+        self.assertEqual(self.panel.height(), 290)
+        self.assertEqual(self.panel.y(), top)
+        self.assertTrue(self.panel.docked)
+        self.assertEqual(self.owner.geometry(), owner_geometry)
+        self.assertEqual(self.settings.value("npc_panel/height", type=int), 290)
+
+    def test_top_edge_keeps_bottom_fixed_and_persists_detached_height(self):
+        self.populate(count=24)
+        self.owner.move(300, 200)
+        self.panel.set_panel_width(500)
+        self.panel.set_panel_height(200)
+        bottom = self.panel.geometry().bottom()
+        self.drag_edge("top", QPoint(0, -60))
+        self.assertEqual(self.panel.height(), 260)
+        self.assertEqual(self.panel.geometry().bottom(), bottom)
+        self.assertFalse(self.panel.docked)
+        self.assertEqual(self.settings.value("npc_panel/height", type=int), 260)
+        self.assertEqual(self.settings.value("npc_panel/geometry"), self.panel.geometry())
+
+    def test_resizing_existing_or_redocked_free_geometry_does_not_restore_old_position(self):
+        self.populate(count=24)
+        self.panel._docked = False
+        self.panel._free_geometry = QRect(350, 200, 500, 200)
+        self.panel.sync()
+        self.panel.set_panel_width(500)
+        self.panel.set_panel_height(200)
+        right = self.panel.geometry().right()
+        self.drag_edge("left", -70)
+        self.assertEqual(self.panel.geometry().right(), right)
+        self.assertEqual(self.panel.x(), 280)
+        self.assertEqual(self.settings.value("npc_panel/geometry"), self.panel.geometry())
+        self.owner.move(300, 200)
+        self.panel.dock()
+        before = self.panel.geometry()
+        self.drag_edge("top", QPoint(0, -40))
+        self.assertEqual(self.panel.geometry().bottom(), before.bottom())
+        self.assertEqual(self.panel.x(), before.x())
+        self.assertEqual(self.panel.y(), before.y() - 40)
+        self.assertFalse(self.panel.docked)
+
+    def test_all_four_corners_resize_both_axes_and_preserve_opposite_edges(self):
+        self.populate(count=24)
+        self.owner.move(300, 200)
+        for edge in ("rightbottom", "lefttop", "righttop", "leftbottom"):
+            with self.subTest(edge=edge):
+                self.panel.dock()
+                self.panel.set_panel_width(500)
+                self.panel.set_panel_height(180)
+                before = self.panel.geometry()
+                self.drag_edge(edge, QPoint(-60 if "left" in edge else 60, -50 if "top" in edge else 50))
+                self.assertEqual(self.panel.size().width(), 560)
+                self.assertEqual(self.panel.size().height(), 230)
+                after = self.panel.geometry()
+                self.assertEqual(after.right() if "left" in edge else after.left(),
+                                 before.right() if "left" in edge else before.left())
+                self.assertEqual(after.bottom() if "top" in edge else after.top(),
+                                 before.bottom() if "top" in edge else before.top())
+                self.assertEqual(self.panel.docked, edge == "rightbottom")
+                self.assertEqual(self.settings.value("npc_panel/width", type=int), 560)
+                self.assertEqual(self.settings.value("npc_panel/height", type=int), 230)
+
+    def test_height_survives_content_font_docking_and_settings_reload(self):
+        self.populate(count=24)
+        self.panel.set_panel_height(420)
+        self.panel.set_details(self.details(count=2))
+        self.panel.set_status("Cached data")
+        self.panel.set_font_px(20)
+        self.owner.move(70, 70)
+        self.panel.follow()
+        self.panel.dock()
+        self.assertEqual(self.panel.height(), 420)
+        self.settings.sync()
+        reopened = self.make_panel()
+        reopened.set_details(self.details(count=24))
+        self.assertEqual(reopened.height(), 420)
+        self.assertTrue(reopened.docked)
+
+    def test_tall_panel_reduces_scroll_and_still_uses_columns_when_widened(self):
+        details = self.populate(count=24)
+        self.panel.set_panel_width(260)
+        self.panel.set_panel_height(160)
+        previous_scroll = self.panel._scroll.maximum()
+        self.assertGreater(previous_scroll, 0)
+        self.panel.set_panel_height(750)
+        self.assertLess(self.panel._scroll.maximum(), previous_scroll)
+        self.panel.set_panel_width(900)
+        self.assertGreater(self.panel._column_count, 1)
+        self.assertEqual(self.panel.height(), 750)
+        self.assert_items_once(details)
+        self.assert_rows_fit()
+
+    def test_vertical_resize_clamps_to_screen_and_minimum_height(self):
+        self.populate(count=120)
+        self.panel.set_panel_height(200)
+        self.drag_edge("bottom", QPoint(0, 5000))
+        self.assertTrue(self.area.contains(self.panel.geometry()))
+        self.assertGreater(self.panel.height(), 200)
+        self.drag_edge("bottom", QPoint(0, -5000))
+        self.assertEqual(self.panel.height(), self.panel.minimumHeight())
+        self.assertGreater(self.panel._scroll.maximum(), 0)
+        self.assertTrue(self.area.contains(self.panel.geometry()))
+
+    def test_lock_click_through_and_interruption_handle_vertical_and_corner_gestures(self):
+        self.populate(count=24)
+        self.panel.set_panel_width(500)
+        self.panel.set_panel_height(200)
+        for edge in ("bottom", "top", "rightbottom", "lefttop"):
+            for locked, through in ((True, False), (False, True)):
+                with self.subTest(edge=edge, locked=locked, through=through):
+                    self.owner.locked, self.owner.click_through = locked, through
+                    self.panel.sync()
+                    before = self.panel.geometry()
+                    self.drag_edge(edge, QPoint(60, 60))
+                    self.assertEqual(self.panel.geometry(), before)
+        self.owner.locked = self.owner.click_through = False
+        self.panel.sync()
+        start = self.start_edge_drag("rightbottom")
+        self.mouse(QEvent.Type.MouseMove, start + QPoint(60, 60), buttons=Qt.MouseButton.LeftButton)
+        self.panel.hide()
+        self.assertIsNone(self.panel._resize_origin)
+        self.assertFalse(self.panel._lifetime._interacting)
+        self.assertEqual(self.settings.value("npc_panel/height", type=int), 260)
+        self.assertEqual(self.settings.value("npc_panel/width", type=int), 560)
+        before = self.panel.geometry()
+        self.mouse(QEvent.Type.MouseMove, start + QPoint(120, 120))
+        self.assertEqual(self.panel.geometry(), before)
 
     def test_right_edge_drag_changes_width_without_undocking_or_moving_owner(self):
         self.populate(count=10)

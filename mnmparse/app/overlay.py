@@ -874,6 +874,7 @@ class OverlayWindow(QWidget):
     appearance_changed = Signal(float, float)  #: (opacity, font scale) changed
     attack_bar_changed = Signal(bool)  #: the auto-attack bar was switched on or off
     npc_panel_changed = Signal(bool)
+    new_session_requested = Signal()
     tab_changed = Signal(str)
     #: Copy the shown fight to the clipboard (the header's copy glyph or the right-click menu):
     #: the EncounterSnapshot; the app formats it (mnmparse.export) and calls flash_copied().
@@ -909,6 +910,7 @@ class OverlayWindow(QWidget):
         self._ended = False
         self._locked = False
         self._click_through = False
+        self._new_session_enabled = True
         self._view_mode = "group"
         self._opacity = 0.85
         self._font_scale = 1.0
@@ -927,7 +929,8 @@ class OverlayWindow(QWidget):
         self._stack.setAutoFillBackground(False)
         self._table = MeterTable(compact=True, parent=self._stack)
         self._feed = FeedView(max_lines=FEED_LINES, compact=True, parent=self._stack)
-        self._session = SessionView(compact=True, parent=self._stack)
+        self._session = SessionView(compact=True, parent=self._stack, show_new_session=True)
+        self._session.new_session_requested.connect(self._request_new_session)
         self._stack.addWidget(self._table)
         self._stack.addWidget(self._feed)
         self._stack.addWidget(self._session)
@@ -1017,6 +1020,14 @@ class OverlayWindow(QWidget):
         self._settings.setValue(f"{SETTINGS_GROUP}/click_through", enabled)
         log.info("overlay click-through %s", "on" if enabled else "off")
         self.click_through_changed.emit(enabled)
+
+    def set_new_session_enabled(self, enabled: bool) -> None:
+        self._new_session_enabled = bool(enabled)
+        self._session.set_new_session_enabled(self._new_session_enabled and not self._click_through)
+
+    def _request_new_session(self) -> None:
+        if self._new_session_enabled and not self._click_through:
+            self.new_session_requested.emit()
 
     def set_view_mode(self, mode: str) -> None:
         """Switch between the group table and the viewer's own sources."""
@@ -1700,7 +1711,17 @@ class OverlayWindow(QWidget):
         """Narrowest the overlay may get at the current font size."""
         margins = self.layout().contentsMargins() if self.layout() is not None else None
         side = (margins.left() + margins.right()) if margins is not None else 20
-        return max(MIN_SIZE.width(), self._tabs.needed_width() + side, self._table.minimum_width() + side)
+        chrome = self._toolbar.sizeHint().width() + 38 if getattr(self, "_settings_gear", None) is not None else 0
+        return max(MIN_SIZE.width(), self._tabs.needed_width() + side, self._table.minimum_width() + side, chrome)
+
+    def _settings_gear_changed(self) -> None:
+        """Reserve stable room after the app attaches the hover settings button."""
+        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
+        self.layout().setContentsMargins(10 + inset, 4, 10, 8)
+        self.setMinimumWidth(self.needed_min_width())
+        self.layout().activate()
+        self._position_chrome()
+        self.update()
 
     def _apply_stylesheet(self) -> None:
         qss = ""
@@ -1715,6 +1736,7 @@ class OverlayWindow(QWidget):
         self.setStyleSheet(qss)
 
     def _apply_input_flag(self) -> None:
+        self._session.set_new_session_enabled(self._new_session_enabled and not self._click_through)
         was_visible = self.isVisible()
         self._suppress_visibility = True
         try:
@@ -1738,7 +1760,10 @@ class OverlayWindow(QWidget):
 
     def _position_chrome(self) -> None:
         self._toolbar.adjustSize()
-        self._toolbar.move(self.width() - self._toolbar.width() - 8, 4)
+        left = self.width() - self._toolbar.width() - 8
+        if getattr(self, "_settings_gear", None) is not None:
+            left = max(30, left)
+        self._toolbar.move(left, 4)
         self._grip.move(self.width() - self._grip.width() - 2, self.height() - self._grip.height() - 2)
 
     # ------------------------------------------------------------------ data

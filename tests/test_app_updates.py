@@ -9,6 +9,7 @@ from pathlib import Path
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -244,6 +245,42 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("installed Windows build", messages[0])
         download.assert_not_called()
 
+    def test_automatic_restart_suppresses_only_matching_confirmed_failed_release(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        valid = {"schema": 1, "token": "a" * 32, "status": "rolled_back", "version": "9.8.7"}
+        cases = (
+            ("rolled back", valid, False),
+            ("failed", {**valid, "status": "failed"}, False),
+            ("already reported", {**valid, "reported": True}, False),
+            ("v-prefixed receipt", {**valid, "version": "v9.8.7"}, False),
+            ("different failed target", {**valid, "version": "9.8.6"}, True),
+            ("healthy", {**valid, "status": "healthy"}, True),
+            ("pending", {**valid, "status": "pending"}, True),
+            ("invalid schema", {**valid, "schema": 2}, True),
+            ("invalid token", {**valid, "token": "invalid"}, True),
+            ("missing version", {key: value for key, value in valid.items() if key != "version"}, True),
+            ("malformed version", {**valid, "version": "9.8"}, True),
+            ("nontext version", {**valid, "version": 9}, True),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            installation = Path(temp)
+            receipt = installation / ".pnut-update.json"
+            with patch.object(updates, "installed_directory", return_value=installation):
+                self.assertTrue(controller.automatic_restart_allowed("9.8.7"))
+                for label, record, expected in cases:
+                    with self.subTest(case=label):
+                        receipt.write_text(json.dumps(record), encoding="utf-8")
+                        self.assertEqual(controller.automatic_restart_allowed("9.8.7"), expected)
+                receipt.write_text(json.dumps(valid), encoding="utf-8")
+                self.assertFalse(controller.automatic_restart_allowed("v9.8.7"))
+                receipt.write_text("not json", encoding="utf-8")
+                self.assertTrue(controller.automatic_restart_allowed("9.8.7"))
+                for unsupported in ("9.8", "arbitrary", None):
+                    self.assertFalse(controller.automatic_restart_allowed(unsupported))
+            with patch.object(updates, "installed_directory", side_effect=updates.UpdateError("Source build")):
+                self.assertFalse(controller.automatic_restart_allowed("9.8.7"))
+
     def test_concurrent_starts_and_late_shutdown_results_are_ignored(self):
         controller = updates.AppUpdateController()
         ready = []
@@ -260,6 +297,164 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(thread.call_count, 1)
         self.assertEqual(ready, [])
         self.assertIsNone(controller.ready_package)
+
+    def test_worker_results_are_delivered_on_gui_thread_and_polling_stops_when_idle(self):
+        from PySide6.QtCore import QThread
+        from PySide6.QtTest import QTest
+
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        events, download_threads = [], []
+        controller.progress.connect(lambda message: events.append(("progress", QThread.currentThread())))
+        controller.finished.connect(lambda message: events.append(("finished", QThread.currentThread())))
+        controller.ready.connect(lambda version: events.append(("ready", QThread.currentThread())))
+        self.assertFalse(controller._poll_timer.isActive())
+
+        def download(cancelled, progress, **kwargs):
+            download_threads.append(threading.get_ident())
+            progress("Downloading sample update")
+            return "9.8.7", Path("sample-package")
+
+        with patch.object(updates, "installed_directory", return_value=Path.cwd()), \
+             patch.object(controller, "restore_pending", return_value=False), \
+             patch.object(updates, "download_update", side_effect=download):
+            self.assertTrue(controller.start())
+            self.assertTrue(controller._poll_timer.isActive())
+            deadline = time.monotonic() + 2
+            while controller.is_running and time.monotonic() < deadline:
+                QTest.qWait(5)
+        self.assertFalse(controller.is_running)
+        self.assertFalse(controller._poll_timer.isActive())
+        self.assertEqual([kind for kind, _ in events], ["progress", "finished", "ready"])
+        self.assertTrue(all(thread == self.app.thread() for _, thread in events))
+        self.assertNotEqual(download_threads, [threading.get_ident()])
+        self.assertEqual(controller.ready_version, "9.8.7")
+
+    def test_shutdown_and_qt_deletion_during_download_suppress_queued_and_late_results(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtTest import QTest
+
+        controller = updates.AppUpdateController()
+        started, released = threading.Event(), threading.Event()
+        threads, messages = [], []
+        controller.progress.connect(lambda message: messages.append("progress"))
+        controller.finished.connect(lambda message: messages.append("finished"))
+        controller.ready.connect(lambda version: messages.append("ready"))
+
+        def download(cancelled, progress, **kwargs):
+            threads.append(threading.current_thread())
+            progress("Queued before shutdown")
+            started.set()
+            released.wait(2)
+            progress("Late progress after shutdown")
+            return "9.8.7", Path("sample-package")
+
+        with patch.object(updates, "installed_directory", return_value=Path.cwd()), \
+             patch.object(controller, "restore_pending", return_value=False), \
+             patch.object(updates, "download_update", side_effect=download):
+            try:
+                self.assertTrue(controller.start())
+                self.assertTrue(started.wait(2))
+                worker = controller._worker
+                controller.shutdown()
+                self.assertTrue(worker.cancelled.is_set())
+                self.assertFalse(controller._poll_timer.isActive())
+                self.assertIsNone(controller._worker)
+                controller.deleteLater()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            finally:
+                released.set()
+                for thread in threads:
+                    thread.join(2)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            QTest.qWait(30)
+        self.assertEqual(messages, [])
+
+    def test_completed_callback_can_start_another_check_without_stopping_its_timer(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        messages = []
+        controller.finished.connect(messages.append)
+        with patch.object(updates, "installed_directory", return_value=Path.cwd()), \
+             patch.object(controller, "restore_pending", return_value=False), \
+             patch.object(updates.threading, "Thread"):
+            self.assertTrue(controller.start())
+            first = controller._worker
+            first._post("completed", None, "First check complete")
+            controller.finished.connect(lambda message: controller.start() if message == "First check complete" else None)
+            controller._drain()
+            self.assertIsNot(controller._worker, first)
+            self.assertTrue(controller.is_running)
+            self.assertTrue(controller._poll_timer.isActive())
+            controller._worker._post("completed", None, "Second check complete")
+            controller._drain()
+        self.assertEqual(messages, ["First check complete", "Second check complete"])
+        self.assertFalse(controller.is_running)
+        self.assertFalse(controller._poll_timer.isActive())
+
+    def test_finished_callback_shutdown_suppresses_ready_from_the_same_completion(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        ready = []
+        controller.finished.connect(lambda message: controller.shutdown())
+        controller.ready.connect(ready.append)
+        with patch.object(updates, "installed_directory", return_value=Path.cwd()), \
+             patch.object(controller, "restore_pending", return_value=False), \
+             patch.object(updates.threading, "Thread"):
+            self.assertTrue(controller.start())
+            controller._worker._post("completed", ("9.8.7", Path("sample-package")), "Update ready")
+            controller._drain()
+        self.assertEqual(ready, [])
+        self.assertFalse(controller._poll_timer.isActive())
+
+    def test_progress_callback_shutdown_discards_completion_waiting_in_the_queue(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        messages = []
+        controller.progress.connect(lambda message: controller.shutdown())
+        controller.finished.connect(lambda message: messages.append("finished"))
+        controller.ready.connect(lambda version: messages.append("ready"))
+        with patch.object(updates, "installed_directory", return_value=Path.cwd()), \
+             patch.object(controller, "restore_pending", return_value=False), \
+             patch.object(updates.threading, "Thread"):
+            self.assertTrue(controller.start())
+            controller._worker._post("progress", "Downloading")
+            controller._worker._post("completed", ("9.8.7", Path("sample-package")), "Update ready")
+            controller._drain()
+        self.assertEqual(messages, [])
+        self.assertFalse(controller._poll_timer.isActive())
+
+    def test_already_ready_notification_also_rechecks_shutdown_after_finished(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        controller._on_completed(("9.8.7", Path("sample-package")), "Update ready")
+        ready = []
+        controller.finished.connect(lambda message: controller.shutdown())
+        controller.ready.connect(ready.append)
+        with patch.object(updates, "installed_directory", return_value=Path.cwd()), \
+             patch.object(controller, "automatic_restart_allowed", return_value=True):
+            self.assertFalse(controller.start())
+        self.assertEqual(ready, [])
+
+    def test_deliberate_downgrade_defers_reapplying_the_version_just_replaced(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        with tempfile.TemporaryDirectory() as temp:
+            installation = Path(temp)
+            receipt = installation / ".pnut-update.json"
+            with patch.object(updates, "installed_directory", return_value=installation):
+                for status in ("healthy", "pending"):
+                    with self.subTest(status=status):
+                        # pending covers the short interval after acknowledgement
+                        # before the helper records the restored app as healthy.
+                        receipt.write_text(json.dumps({"schema": 1, "token": "b" * 32, "status": status,
+                            "version": "9.8.6", "previous_version": "9.8.7", "reported": True}))
+                        self.assertFalse(controller.automatic_restart_allowed("9.8.7"))
+                        self.assertFalse(controller.automatic_restart_allowed("v9.8.7"))
+                        self.assertTrue(controller.automatic_restart_allowed("9.8.8"))
+                receipt.write_text(json.dumps({"schema": 1, "token": "b" * 32, "status": "healthy",
+                    "version": "9.8.7", "previous_version": "9.8.6"}))
+                self.assertTrue(controller.automatic_restart_allowed("9.8.7"))
 
     def test_helper_is_prepared_without_changing_install_and_starts_once(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -116,15 +116,21 @@ This removes the usual fixed process/window labels; it does not make PNUT undete
 The launcher appears briefly, and its files, icon and other identifying information remain.
 
 **App updates.** At the top of **Settings**, click **Update** to download the latest stable
-Windows release from GitHub. When it is ready, click **Restart to update**, or quit PNUT
-and reopen it to install. Closing to the tray keeps PNUT running; use **Quit** or disable
-**Minimize to tray on close** for a full exit. PNUT verifies the
+Windows release from GitHub. A verified download shows a visible ten-second countdown,
+then PNUT restarts and applies it automatically. Choose **Restart now** to apply it sooner
+or **Later** to postpone. A postponed download remains available through **Restart to update**
+in Settings and the tray, and installs on the next launch. Closing to the tray keeps PNUT
+running; use **Quit** for a full exit. PNUT verifies the
 download, replaces its application files, and keeps your configuration, triggers, logs and
 map cache, session history and Revenge List. The previous application files are retained
 in a backup folder for recovery; **Restore previous app version** is in Settings.
 The main window reopens after the update, keeping its saved size and maximized state.
-**On startup** downloads updates automatically and offers a restart; it is unchecked by
-default. Source checkouts are updated through Git instead. You can also download a newer ZIP
+**On startup** checks, downloads and applies updates automatically with the same countdown;
+it is unchecked by default. Unsaved Settings changes or a failed save pause the restart.
+A failed release that rolled back requires an explicit retry. Restoring an older app also
+pauses automatic reinstallation of the version you just replaced. A later release can still
+update automatically. Source checkouts are updated
+through Git instead. You can also download a newer ZIP
 from Releases, close PNUT, and replace the executable and entire `_internal` folder manually.
 
 Scrolling over settings fields, dropdowns and sliders scrolls the page without changing
@@ -333,9 +339,10 @@ time instead of all being assigned to the final comparison. A detected own level
 confirms a bar wrap; PNUT briefly waits for the bar to catch up when chat arrives first. Log imports
 cannot supply bar measurements. Older archived averages are labeled **XP session**.
 
-Use **New session** at the bottom right of the Session tab, beside the XP rate, to archive
-the current session and start a fresh one. The button is available while viewing your live
-session; archived, imported and demo sessions cannot reset it.
+Click the live Session footer beside the XP rate, in the main app or overlay, or use
+**New session** at the bottom right of the Session tab. Confirm **Start new session?**
+to archive the current session and start a fresh one. Cancel keeps it active.
+Archived, imported and demo session views cannot reset the live session.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring
@@ -631,15 +638,20 @@ exclude names from alerts. Trigger master volume and mute also apply.
 card below the timer and attack panels. Level (or level range) and unique drops are on by
 default. In **Settings > Considered NPC**, toggle common drops, unique drops, level,
 quests requiring the NPC and reputation gained/lost independently. Unlock the overlay
-to drag the card away or resize it horizontally from either side. The right edge
-keeps a docked card attached; the left edge detaches it. Its width is remembered.
-Long lists flow into additional columns when space allows, with scrolling for overflow.
+to drag the card away or resize its edges and bottom-right dotted grip. Its width and
+height are remembered. Wider cards flow into additional columns, with scrolling for overflow.
 Double-click its header or choose **Snap to overlay** to dock it.
 The card follows overlay visibility, opacity, font scale, lock and click-through settings.
 It fades away within five seconds. Hovering keeps it visible; moving the mouse away
 starts a fresh five-second countdown. Considering the same NPC again reopens it.
 Hover drop names for a passive item frame with slots, flags, stats, effects, weight,
-size, class and race where the wiki supplies them. Missing information stays explicit.
+size, class and race where the wiki supplies them. Click the mob or item name to open
+its wiki page. Unique drops are shown before common drops. An item listed as both appears only under common,
+and unavailable fields do not add empty headings.
+
+Hover any persistent overlay panel to reveal its top-left gear. Click it to open
+the main app at that panel's settings; the timer panel opens Triggers. The gear
+respects click-through and hides when the pointer leaves the panel.
 
 The map header's **monster icon** opens notable NPCs for its selected zone. Choosing
 one displays the same card and respects the same field settings as considering it.

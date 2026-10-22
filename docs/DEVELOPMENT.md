@@ -120,6 +120,8 @@ mnmparse/            library + CLI
     npc_panel.py    detachable NPC details and passive item-stat tooltips
     map_downloads.py  background map updates for Settings and the optional startup download
     app_updates.py  verified GitHub downloads and deferred Windows application replacement
+    update_restart.py visible automatic restart countdown, postponement and retry notice
+    overlay_settings.py hover-only overlay shortcuts into the main app's settings
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)
     timer_panel.py   TimerPanel: trigger countdowns with radial rings, docked under the overlay
     triggers_page.py TriggersPage: trigger list and editor, audio settings

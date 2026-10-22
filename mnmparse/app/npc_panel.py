@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QCursor, QFont, QFontMetricsF, QHideEvent, QMouseEvent, QPainter, QPainterPath,
+    QCursor, QDesktopServices, QFont, QFontMetricsF, QHideEvent, QMouseEvent, QPainter, QPainterPath,
     QPaintEvent, QPen, QResizeEvent, QWheelEvent,
 )
 from PySide6.QtWidgets import QLabel, QMenu, QScrollBar, QVBoxLayout, QWidget
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import QLabel, QMenu, QScrollBar, QVBoxLayout, QWidget
 from mnmparse.app.docked_panel import DOCK_GAP, DockedPanel
 from mnmparse.app.npc_panel_lifetime import NpcPanelLifetime
 from mnmparse.app.widgets import make_font, qcolor, token
+from mnmparse.npc_wiki import WIKI, unique_drops_excluding_common, wiki_url
 
 if TYPE_CHECKING:
     from mnmparse.app.overlay import OverlayWindow
@@ -31,6 +33,15 @@ class _Row:
     text: str
     kind: str = "body"
     item: str = ""
+
+
+def _available_text(value: Any) -> str:
+    text = str(value).strip() if value is not None else ""
+    key = " ".join(text.split()).casefold()
+    direction, separator, remainder = key.partition(":")
+    if separator and direction in {"gained", "lost"}:
+        key = remainder.strip()
+    return "" if key in {"", "unknown", "none", "none known", "n/a", "not known", "not yet known", "tbd", "not available in wiki data"} else text
 
 
 class _ItemTooltip(QWidget):
@@ -125,11 +136,19 @@ class NpcPanel(DockedPanel):
         self._resize_edge = ""
         self._resize_changed = False
         self._resize_origin: tuple[QPointF, QRect] | None = None
+        self._link_press: tuple[str, str] | None = None
+        self._link_origin: QPointF | None = None
+        self._link_moved = False
         try:
             saved_width = int(settings.value("npc_panel/width", 0))
         except (TypeError, ValueError):
             saved_width = 0
         self._preferred_width: int | None = max(180, saved_width) if saved_width > 0 else None
+        try:
+            saved_height = int(settings.value("npc_panel/height", 0))
+        except (TypeError, ValueError):
+            saved_height = 0
+        self._preferred_height: int | None = max(64, saved_height) if saved_height > 0 else None
         self._hovered_item = ""
         self._tooltip_position = QPoint()
         self._items: dict[str, "ItemDetails"] = {}
@@ -213,6 +232,10 @@ class NpcPanel(DockedPanel):
         if self._hovered_item:
             self._present_item()
 
+    def _settings_gear_changed(self) -> None:
+        """Reflow the title when the shared settings gear is registered."""
+        self._refresh()
+
     def wants_visible(self) -> bool:
         return bool(self._name) and any(self._fields.values()) and not self._lifetime.expired
 
@@ -245,6 +268,22 @@ class NpcPanel(DockedPanel):
         self.follow()
         self._layout_rows()
         self._save_free_geometry()
+
+    def set_panel_height(self, height: int) -> None:
+        """Remember a height independently of content, width, and docking."""
+        self._preferred_height = max(self.minimumHeight(), min(int(height), self._available_area().height()))
+        self._settings.setValue("npc_panel/height", self._preferred_height)
+        self.follow()
+        self._save_free_geometry()
+
+    def set_rows_height(self, height: int) -> None:
+        # DockedPanel fixes content-driven panel heights. This panel also has a
+        # user-selected height, so keep QWidget's maximum height unrestricted.
+        if height != self.height():
+            self.resize(self.width(), height)
+            if self.isVisible():
+                self.follow()
+                self._owner.panels_changed()
 
     def _save_free_geometry(self) -> None:
         if not self._docked:
@@ -282,14 +321,15 @@ class NpcPanel(DockedPanel):
             self._following = False
 
     def update_cursor(self) -> None:
+        self.update()
         if ((self._owner.locked or self._owner.click_through)
                 and (self._resize_origin is not None or self._press is not None)):
             self._finish_gesture()
             return
         if self._resize_origin is not None:
-            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            self.setCursor(self._edge_cursor(self._resize_edge))
         else:
-            super().update_cursor()
+            self.setCursor(self._cursor_at(self.mapFromGlobal(QCursor.pos())))
 
     def add_menu_entries(self, menu: QMenu, event: Any) -> dict[Any, Any]:
         self._clear_hover()
@@ -320,21 +360,24 @@ class NpcPanel(DockedPanel):
     def _build_rows(self) -> None:
         rows: list[_Row] = []
         if self._fields["level"]:
-            value = str(getattr(self._details, "level", "") or "Unknown")
-            rows.append(_Row(f"Level: {value}"))
-        for key, label in (("common_drops", "Common drops"), ("unique_drops", "Unique drops"),
+            value = _available_text(getattr(self._details, "level", ""))
+            if value:
+                rows.append(_Row(f"Level: {value}"))
+        common = getattr(self._details, "common_drops", ()) or ()
+        unique = unique_drops_excluding_common(common, getattr(self._details, "unique_drops", ()) or ())
+        for key, label in (("unique_drops", "Unique drops"), ("common_drops", "Common drops"),
                            ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
             if not self._fields[key]:
                 continue
+            values = unique if key == "unique_drops" else getattr(self._details, key, ()) or ()
+            available = [text for value in values if (text := _available_text(value))]
+            if not available:
+                continue
             rows.append(_Row(label, "heading"))
-            values = getattr(self._details, key, ()) or ()
-            if values:
-                for value in values:
-                    text = str(value)
-                    rows.append(_Row(f"• {text}", item=text if key.endswith("drops") else ""))
-            else:
-                rows.append(_Row("Not available in wiki data" if self._details is not None else "Unknown", "muted"))
+            rows.extend(_Row(f"• {text}", item=text if key.endswith("drops") else "") for text in available)
         self._rows = rows
+        if self._hovered_item and not any(row.item.casefold() == self._hovered_item.casefold() for row in rows):
+            self._clear_hover()
 
     def _refresh(self) -> None:
         self._build_rows()
@@ -350,6 +393,8 @@ class NpcPanel(DockedPanel):
         try:
             margin = 10
             title_h = int(QFontMetricsF(self._title_font).height()) + 13
+            if getattr(self, "_settings_gear", None) is not None:
+                title_h = max(title_h, 30)
             note_h = int(QFontMetricsF(self._note_font).height()) + 8 if self._status else 0
             area = self._available_area()
             available_h = area.height()
@@ -357,24 +402,29 @@ class NpcPanel(DockedPanel):
                 anchor = self._owner.dock_anchor(self)
                 available_h = max(area.bottom() - anchor.bottom() - DOCK_GAP,
                                   anchor.top() - area.top() - DOCK_GAP)
-            max_body_h = max(24, min(int(280 * self._px / 13), available_h - title_h - note_h - 8))
+            minimum_h = title_h + note_h + 24 + 8
+            self.setMinimumHeight(minimum_h)
+            if self._preferred_height is not None:
+                max_body_h = max(24, min(self._preferred_height, available_h) - title_h - note_h - 8)
+            else:
+                max_body_h = max(24, min(int(280 * self._px / 13), available_h - title_h - note_h - 8))
             # Reserve the gutter even for short data, avoiding reflow when the scroll bar appears.
             width = max(40, self.width() - 2 * margin - 12)
             gap = 12
             minimum_column = max(150, int(170 * self._px / 13))
             maximum_columns = max(1, min(8, int((width + gap) / (minimum_column + gap))))
+            # Wide windows should use their horizontal space even when a tall
+            # preferred height could fit everything in one narrow column.
+            first_columns = min(maximum_columns, max(1, (len(self._rows) + 11) // 12)) if maximum_columns >= 3 else 1
             rects, content_h = [], 0.0
-            for columns in range(1, maximum_columns + 1):
+            for columns in range(first_columns, maximum_columns + 1):
                 column_width = (width - (columns - 1) * gap) / columns
                 measured = [(row, self._row_height(row, column_width)) for row in self._rows]
                 rects, needed, content_h = self._pack_rows(measured, column_width, gap, max_body_h)
-                if needed <= columns:
-                    self._column_count = needed
-                    break
-                if columns == maximum_columns:
-                    # Balance overflowing lists across all available columns,
-                    # retaining vertical scrolling for arbitrarily long data.
-                    low = float(max_body_h)
+                if needed <= columns or columns == maximum_columns:
+                    # Balance lists across the chosen columns, retaining
+                    # vertical scrolling for arbitrarily long data.
+                    low = 0.0
                     high = sum(h for _, h in measured) + 10 * len(measured) + 1
                     for _ in range(14):
                         target = (low + high) / 2
@@ -385,7 +435,8 @@ class NpcPanel(DockedPanel):
                             low = target
                     rects, needed, content_h = self._pack_rows(measured, column_width, gap, high)
                     self._column_count = needed
-            body_h = max(24, min(max_body_h, int(content_h + 0.999)))
+                    break
+            body_h = max_body_h if self._preferred_height is not None else max(24, min(max_body_h, int(content_h + 0.999)))
             self._body = QRectF(margin, title_h, width, body_h)
             self._row_rects = rects
             self._scroll.setPageStep(body_h)
@@ -443,6 +494,45 @@ class NpcPanel(DockedPanel):
             return ""
         point = position - QPoint(0, int(self._body.top()) - self._scroll.value())
         return next((row.item for rect, row in self._row_rects if row.item and rect.contains(point)), "")
+
+    def _title_rect(self) -> QRectF:
+        left = 32 if getattr(self, "_settings_gear", None) is not None else 10
+        return QRectF(left, 5, max(0, self.width() - left - 10), self._body.top() - 7)
+
+    def _name_rect(self) -> QRectF:
+        rect = self._title_rect()
+        metrics = QFontMetricsF(self._title_font)
+        visible = metrics.elidedText(self._name, Qt.TextElideMode.ElideRight, rect.width())
+        rect.setWidth(min(rect.width(), metrics.horizontalAdvance(visible)))
+        return rect
+
+    def _link_at(self, position: QPoint) -> tuple[str, str] | None:
+        if self._owner.click_through:
+            return None
+        if self._name and self._name_rect().contains(position):
+            return "npc", self._name
+        item = self._item_at(position)
+        return ("item", item) if item else None
+
+    def _open_link(self, link: tuple[str, str]) -> None:
+        if self._owner.click_through or not self.enabled or not self.isVisible():
+            return
+        kind, name = link
+        record = self._details if kind == "npc" else self._items.get(name.casefold())
+        source = getattr(record, "source", "")
+        try:
+            parts = urlsplit(source) if isinstance(source, str) else None
+        except ValueError:
+            parts = None
+        canonical = (parts is not None and parts.scheme == "https"
+                     and parts.netloc.casefold() == urlsplit(WIKI).netloc
+                     and parts.path.startswith("/wiki/") and len(parts.path) > 6
+                     and not parts.query and "\\" not in parts.path)
+        try:
+            target = source if canonical else wiki_url(name)
+        except ValueError:
+            return
+        QDesktopServices.openUrl(QUrl(target))
 
     def _hover_item(self, name: str, position: QPoint) -> None:
         if self._owner.click_through or not self.isVisible():
@@ -518,16 +608,42 @@ class NpcPanel(DockedPanel):
             self._lifetime.set_interacting(False)
             self._check_mouse_presence()
 
-    def _edge_at(self, x: float) -> str:
+    def _grip_rect(self) -> QRect:
+        return QRect(self.width() - 18, self.height() - 18, 16, 16)
+
+    def _edge_at(self, x: float, y: float | None = None) -> str:
         if self._owner.locked or self._owner.click_through:
             return ""
-        return "left" if x < 6 else "right" if x >= self.width() - 6 else ""
+        y = self.height() / 2 if y is None else y
+        if self._grip_rect().contains(QPoint(round(x), round(y))):
+            return "rightbottom"
+        edge = "left" if x < 6 else "right" if x >= self.width() - 6 else ""
+        edge += "top" if y < 6 else "bottom" if y >= self.height() - 6 else ""
+        return edge
+
+    @staticmethod
+    def _edge_cursor(edge: str) -> Qt.CursorShape:
+        horizontal = "left" in edge or "right" in edge
+        vertical = "top" in edge or "bottom" in edge
+        if horizontal and vertical:
+            return Qt.CursorShape.SizeFDiagCursor if edge in {"lefttop", "rightbottom"} else Qt.CursorShape.SizeBDiagCursor
+        return Qt.CursorShape.SizeHorCursor if horizontal else Qt.CursorShape.SizeVerCursor
+
+    def _cursor_at(self, point: QPoint) -> Qt.CursorShape:
+        edge = self._edge_at(point.x(), point.y()) if self.rect().contains(point) else ""
+        if edge:
+            return self._edge_cursor(edge)
+        if self._link_at(point):
+            return Qt.CursorShape.PointingHandCursor
+        return Qt.CursorShape.ArrowCursor if self._owner.locked or self._owner.click_through else Qt.CursorShape.SizeAllCursor
 
     def _finish_gesture(self) -> None:
         """Persist an interrupted resize/drag and release its lifetime hold."""
         resizing = self._resize_origin is not None
         changed = self._resize_changed
         dragged = self._dragged
+        self._link_press = self._link_origin = None
+        self._link_moved = False
         if not resizing and self._press is None:
             return
         self._resize_origin = None
@@ -537,7 +653,7 @@ class NpcPanel(DockedPanel):
         self._drag_offset = None
         self._dragged = False
         if changed:
-            self._settings.setValue("npc_panel/width", self._preferred_width)
+            self._save_preferred_size()
         if changed or dragged:
             self._save_free_geometry()
             self.follow()
@@ -545,13 +661,21 @@ class NpcPanel(DockedPanel):
         self._lifetime.set_interacting(False)
         self.update_cursor()
 
+    def _save_preferred_size(self) -> None:
+        if self._preferred_width is not None:
+            self._settings.setValue("npc_panel/width", self._preferred_width)
+        if self._preferred_height is not None:
+            self._settings.setValue("npc_panel/height", self._preferred_height)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        self._link_press = self._link_origin = None
+        self._link_moved = False
         if self._owner.click_through:
             event.ignore()
             return
         if event.button() == Qt.MouseButton.LeftButton:
             self._lifetime.set_interacting(True)
-            edge = self._edge_at(event.position().x())
+            edge = self._edge_at(event.position().x(), event.position().y())
             if edge:
                 self._resize_edge = edge
                 self._resize_origin = (event.globalPosition(), QRect(self.geometry()))
@@ -560,10 +684,14 @@ class NpcPanel(DockedPanel):
                 self.update_cursor()
                 event.accept()
                 return
+            self._link_press = self._link_at(event.position().toPoint())
+            self._link_origin = event.globalPosition()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if self._press is not None and (self._owner.locked or self._owner.click_through
+        if self._link_origin is not None and (event.globalPosition() - self._link_origin).manhattanLength() > 4:
+            self._link_moved = True
+        if self._press is not None and ((self._owner.locked and self._drag_offset is not None) or self._owner.click_through
                                        or not event.buttons() & Qt.MouseButton.LeftButton):
             self._finish_gesture()
         if self._resize_origin is not None:
@@ -572,23 +700,39 @@ class NpcPanel(DockedPanel):
                 self._finish_gesture()
                 return
             start, original = self._resize_origin
-            delta = round(event.globalPosition().x() - start.x())
-            if delta or self._resize_changed:
+            dx = round(event.globalPosition().x() - start.x())
+            dy = round(event.globalPosition().y() - start.y())
+            horizontal = "left" in self._resize_edge or "right" in self._resize_edge
+            vertical = "top" in self._resize_edge or "bottom" in self._resize_edge
+            if (horizontal and dx) or (vertical and dy) or self._resize_changed:
                 area = self._available_area()
                 minimum = min(self.minimumWidth(), area.width())
-                if self._resize_edge == "left":
+                left, width = original.left(), original.width()
+                top, height = original.top(), original.height()
+                if "left" in self._resize_edge:
                     right = min(original.right(), area.right())
-                    left = max(area.left(), min(original.left() + delta, right - minimum + 1))
+                    left = max(area.left(), min(original.left() + dx, right - minimum + 1))
                     width = right - left + 1
-                    if self._docked:
-                        self._docked = False
-                        self._owner.panels_changed()
-                else:
+                elif horizontal:
                     left = max(area.left(), min(original.left(), area.right() - minimum + 1))
-                    width = max(minimum, min(original.width() + delta, area.right() - left + 1))
-                self._preferred_width = width
+                    width = max(minimum, min(original.width() + dx, area.right() - left + 1))
+                minimum_h = min(self.minimumHeight(), area.height())
+                if "top" in self._resize_edge:
+                    bottom = min(original.bottom(), area.bottom())
+                    top = max(area.top(), min(original.top() + dy, bottom - minimum_h + 1))
+                    height = bottom - top + 1
+                elif vertical:
+                    top = max(area.top(), min(original.top(), area.bottom() - minimum_h + 1))
+                    height = max(minimum_h, min(original.height() + dy, area.bottom() - top + 1))
+                if self._docked and ("left" in self._resize_edge or "top" in self._resize_edge):
+                    self._docked = False
+                    self._owner.panels_changed()
+                if horizontal:
+                    self._preferred_width = width
+                if vertical:
+                    self._preferred_height = height
                 self._resize_changed = True
-                self.setGeometry(left, original.top(), width, self.height())
+                self.setGeometry(left, top, width, height)
                 self.move(left, max(area.top(), min(self.y(), area.bottom() - self.height() + 1)))
             event.accept()
             return
@@ -596,8 +740,7 @@ class NpcPanel(DockedPanel):
         if not event.buttons() and not self._owner.click_through:
             self._lifetime.set_hovered(True)
             self._hover_item(self._item_at(event.position().toPoint()), event.globalPosition().toPoint())
-            self.setCursor(Qt.CursorShape.SizeHorCursor if self._edge_at(event.position().x())
-                           else Qt.CursorShape.ArrowCursor if self._owner.locked else Qt.CursorShape.SizeAllCursor)
+            self.setCursor(self._cursor_at(event.position().toPoint()))
         else:
             self._clear_hover()
 
@@ -608,7 +751,8 @@ class NpcPanel(DockedPanel):
             self._resize_edge = ""
             self._resize_changed = False
             if changed:
-                self._settings.setValue("npc_panel/width", self._preferred_width)
+                self._save_preferred_size()
+                self._save_free_geometry()
                 self.follow()
                 self._save_free_geometry()
                 self._owner.panels_changed()
@@ -617,10 +761,17 @@ class NpcPanel(DockedPanel):
             self.update_cursor()
             event.accept()
             return
+        link = self._link_press
+        moved = self._link_moved or self._dragged or (self._link_origin is not None
+                and (event.globalPosition() - self._link_origin).manhattanLength() > 4)
+        self._link_press = self._link_origin = None
+        self._link_moved = False
         super().mouseReleaseEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             self._lifetime.set_interacting(False)
             self._check_mouse_presence()
+            if link is not None and not moved and self._link_at(event.position().toPoint()) == link:
+                self._open_link(link)
 
     def leaveEvent(self, event: QEvent) -> None:  # noqa: N802
         self._clear_hover()
@@ -660,7 +811,7 @@ class NpcPanel(DockedPanel):
         painter.fillPath(path, qcolor(token("BG0"), float(getattr(self._owner, "opacity", 0.85))))
         painter.setPen(QPen(qcolor(token("LINE")), 1))
         painter.drawPath(path)
-        title_rect = QRectF(10, 5, max(0, self.width() - 20), self._body.top() - 7)
+        title_rect = self._title_rect()
         painter.setFont(self._title_font)
         painter.setPen(qcolor(token("ACCENT")))
         painter.drawText(title_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
@@ -681,7 +832,16 @@ class NpcPanel(DockedPanel):
             painter.setPen(qcolor(token("MUTED")))
             note = QRectF(10, self._body.bottom() + 5, max(0, self.width() - 20), self.height() - self._body.bottom() - 7)
             painter.drawText(note, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-                             QFontMetricsF(self._note_font).elidedText(self._status, Qt.TextElideMode.ElideRight, note.width()))
+                             QFontMetricsF(self._note_font).elidedText(self._status, Qt.TextElideMode.ElideRight,
+                                 max(0, note.width() - (16 if not self._owner.locked else 0))))
+        if not self._owner.locked and not self._owner.click_through:
+            # Match OverlaySizeGrip's six-dot handle while keeping all gesture
+            # handling in this passive window rather than a child size grip.
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(qcolor(token("MUTED"), 0.9))
+            grip = self._grip_rect()
+            for dx, dy in ((10, 10), (10, 6), (6, 10), (10, 2), (6, 6), (2, 10)):
+                painter.drawEllipse(QRectF(grip.x() + dx, grip.y() + dy, 2.4, 2.4))
         painter.end()
 
 
