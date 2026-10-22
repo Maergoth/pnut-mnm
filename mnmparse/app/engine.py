@@ -569,13 +569,13 @@ class Engine(QObject):
         finally:
             self._lock.release()
 
-    def leaderboard_submission(self) -> dict[str, Any]:
+    def leaderboard_submission(self, message: str = "") -> dict[str, Any]:
         if not self._lock.acquire(blocking=False):
             raise ValueError("Waiting for the screen reader; try again")
         try:
             if not self.leaderboard_status().get("eligible"):
                 raise ValueError(self.leaderboard_status().get("reason") or "Read current mini stats using Window Capture")
-            return self._protected_ledger.prepare_submission()
+            return self._protected_ledger.prepare_submission(message=message)
         finally:
             self._lock.release()
 
@@ -1944,10 +1944,11 @@ class Engine(QObject):
         if (reading is not None and type(maximum) is int and maximum > 0
                 and (self._weight_sample_at is None or now > self._weight_sample_at)):
             from datetime import datetime, timezone
-            from mnmparse.leaderboard import utc_stamp
+            from mnmparse.leaderboard import reading_stats, utc_stamp
             mana = getattr(reading, "mana_max", None)
             self._stat_snapshot = {"max_health": maximum,
                                    "max_mana": mana if type(mana) is int and mana > 0 else None,
+                                   **reading_stats(reading),
                                    "captured_at": utc_stamp(datetime.fromtimestamp(now, timezone.utc)),
                                    "capture_backend": "window" if self._leaderboard_capture_eligible() else "screen"}
             self._stat_snapshot_valid_until = now + max_gap
@@ -2093,13 +2094,13 @@ class Engine(QObject):
                     "overburdened_active": self.overburdened_active,
                     "measurements": dict(getattr(self._session_stats, "player_status", {})),
                 },
-                "row_count": len(lines),
-                "rows_truncated": len(lines) > DIAG_ROW_LIMIT,
+                "row_count": len(chat_lines),
+                "rows_truncated": len(chat_lines) > DIAG_ROW_LIMIT,
                 "coordinate_space": "unscaled_combat_crop_pixels",
                 "rows": [{"x": int(line.x), "y": int(line.y), "h": int(line.h),
                           "text": line.text[:DIAG_TEXT_LIMIT],
                           "text_truncated": len(line.text) > DIAG_TEXT_LIMIT}
-                         for line in lines[:DIAG_ROW_LIMIT]],
+                         for line in chat_lines[:DIAG_ROW_LIMIT]],
             })
             self._frames += 1
             self._frame_times.append(time.monotonic())

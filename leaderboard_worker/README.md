@@ -6,6 +6,8 @@ The trial is deployed through Sites on Cloudflare Workers at [the service health
 
 This folder contains no credentials, and running its checks never contacts or writes to the public leaderboard. Hosted settings are maintained separately. The desktop release remains a separate review and approval step. The current host is the managed Sites runtime, not a provisioned direct Cloudflare Free account; its limits must be checked independently.
 
+The source adapter accepts original signed snapshots unchanged and version 2 snapshots with nullable character attributes, armor class, individual resists, separate complete-reading stat/resist totals, and an optional public message. Messages are normalized and censored before signing; the service rejects signed text that is not already canonical and retains the first accepted message for that identity/day. Daily IDs and the existing cumulative checks apply across both formats. This format update has **not** been deployed. Version 1.0.24's strict public reader cannot refresh a file containing a version 2 row; retain its cached entries and update the desktop before publishing version 2 entries. Deploying a compatible backend and approving the new desktop release must precede the first production version 2 submission.
+
 Use a current Node.js runtime with built-in WebCrypto. No npm install is needed:
 
 ```text

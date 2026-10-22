@@ -18,8 +18,8 @@ import time
 from typing import Any
 
 from mnmparse.grammar import is_you
-from mnmparse.leaderboard import (COUNTERS, MAX_NUMBER, alias_for_key, make_snapshot,
-                                 parse_stamp, phrase_key, public_key)
+from mnmparse.leaderboard import (COUNTERS, MAX_NUMBER, MAX_STAT, RECORD_FIELDS, alias_for_key, make_snapshot,
+                                 parse_stamp, phrase_key, public_key, reading_stats)
 
 MAGIC = b"PNUT-DPAPI-v1\x00"
 MAX_LOCAL_BYTES = 10 * 1024 * 1024
@@ -121,7 +121,7 @@ class ProtectedLedger:
                 self.file.save({"version": 1, "key": secrets.token_bytes(32).hex(),
                                 "counters": dict.fromkeys(COUNTERS, 0), "sequence": 0,
                                 "stats": None, "submitted_day": "", "history_restored": False,
-                                "history_floor": 0, "prepared_signatures": []})
+                                "history_floor": 0, "prepared_signatures": [], "records": {}})
             self._load()
         except (OSError, ValueError) as exc:
             self.error = str(exc)
@@ -140,12 +140,22 @@ class ProtectedLedger:
             value.setdefault("history_restored", False)
             value.setdefault("history_floor", 0)
             value.setdefault("prepared_signatures", [])
+            value.setdefault("records", {})
             if (type(value["history_restored"]) is not bool
                     or type(value["history_floor"]) is not int or not 0 <= value["history_floor"] <= MAX_NUMBER
                     or not isinstance(value["prepared_signatures"], list) or len(value["prepared_signatures"]) > 64
                     or not all(isinstance(sig, str) and re.fullmatch(r"[0-9a-f]{128}", sig)
                                for sig in value["prepared_signatures"])):
                 raise ValueError
+            if not isinstance(value["records"], dict) or not set(value["records"]) <= set(RECORD_FIELDS):
+                raise ValueError
+            for field, record in value["records"].items():
+                limit = MAX_STAT * (7 if field == "stat_total" else 8 if field == "resist_total" else 1)
+                minimum = 1 if field in {"max_health", "max_mana"} else -limit
+                if (not isinstance(record, dict) or set(record) != {"value", "captured_at"}
+                        or type(record["value"]) is not int or not minimum <= record["value"] <= limit):
+                    raise ValueError
+                parse_stamp(record["captured_at"])
         except (KeyError, TypeError, ValueError):
             raise ProtectionError("Leaderboard history is unavailable") from None
         return value
@@ -158,6 +168,7 @@ class ProtectedLedger:
                 value = self._load()
                 return {"alias": alias_for_key(public_key(bytes.fromhex(value["key"]))),
                         **value["counters"], "submitted_day": value["submitted_day"],
+                        "records": {field: dict(record) for field, record in value["records"].items()},
                         "eligible": self._backend_eligible and time.monotonic() - self._stats_live_at <= 10,
                         "error": ""}
             except (OSError, ValueError) as exc:
@@ -179,7 +190,7 @@ class ProtectedLedger:
                 return
             value.update(key=key.hex(), counters=dict.fromkeys(COUNTERS, 0), sequence=0,
                          submitted_day="", stats=None, history_restored=False, history_floor=0,
-                         prepared_signatures=[])
+                         prepared_signatures=[], records={})
             self.file.save(value)
             self._stats_live_at = float("-inf")
             self._seen.clear()
@@ -202,6 +213,12 @@ class ProtectedLedger:
             parse_stamp(stats["captured_at"])
             value = self._load()
             value["stats"] = {k: stats[k] for k in ("max_health", "max_mana", "captured_at", "capture_backend")}
+            value["stats"].update(reading_stats(stats))
+            for field in RECORD_FIELDS:
+                number = value["stats"][field]
+                previous = value["records"].get(field)
+                if number is not None and (previous is None or number > previous["value"]):
+                    value["records"][field] = {"value": number, "captured_at": stats["captured_at"]}
             value["sequence"] = min(MAX_NUMBER, value["sequence"] + 1)
             self.file.save(value)
             self._stats_live_at = time.monotonic()
@@ -297,7 +314,7 @@ class ProtectedLedger:
             self.file.save(value)
             return True
 
-    def prepare_submission(self) -> dict[str, Any]:
+    def prepare_submission(self, message: str = "") -> dict[str, Any]:
         with self._lock:
             self._check()
             if not self._backend_eligible or time.monotonic() - self._stats_live_at > 10:
@@ -305,7 +322,8 @@ class ProtectedLedger:
             value = self._load()  # Decrypt and validate the protected source immediately before signing.
             if value["stats"] is None:
                 raise ProtectionError("Read current mini stats using Window Capture before submitting")
-            record = make_snapshot(value["stats"], value["counters"], bytes.fromhex(value["key"]), value["sequence"])
+            record = make_snapshot(value["stats"], value["counters"], bytes.fromhex(value["key"]), value["sequence"],
+                                   message=message)
             signatures = value["prepared_signatures"]
             if record["signature"] not in signatures:
                 value["prepared_signatures"] = (signatures + [record["signature"]])[-64:]

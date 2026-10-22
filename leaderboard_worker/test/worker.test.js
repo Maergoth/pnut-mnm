@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { webcrypto } from "node:crypto";
 import { ADJECTIVES, COLORS, ANIMALS } from "../words.js";
 import { API_ROOT, BRANCH, CONTENTS_URL, MAX_FILE_BYTES, MAX_REQUEST_BYTES,
-  canonicalJson, createWorker, parseSnapshotJson, validateSnapshot } from "../worker.js";
+  canonicalJson, createWorker, normalizeMessage, parseSnapshotJson, validateSnapshot } from "../worker.js";
 import { FakeGitHub, history } from "./fake-github.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -61,6 +61,55 @@ test("same UTC-day ID returns original signed row without replacing newer values
 test("new day accepts increasing sequence and unchanged cumulative fields", async () => {
   const { post } = setup([R.previous]);
   assert.equal((await post()).status, 201);
+});
+
+test("v2 readings and legacy history coexist without changing old signed rows or daily caps", async () => {
+  const legacy = setup([R.current]);
+  const duplicate = await legacy.post(R.v2_current);
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual((await duplicate.json()).snapshot, R.current);
+  assert.equal(legacy.github.puts, 0);
+  const upgraded = setup([R.previous, R.other]);
+  assert.equal((await upgraded.post(R.v2_current)).status, 201);
+  assert.deepEqual(upgraded.github.bytes.toString().trim().split("\n").map(JSON.parse),
+    [R.previous, R.other, R.v2_current]);
+  const oldClient = setup([R.v2_previous]);
+  assert.equal((await oldClient.post(R.current)).status, 201);
+});
+
+test("v2 signed totals require one complete group and accept explicit zero or negative values", async () => {
+  for (const record of [R.v2_current, R.v2_partial]) {
+    assert.deepEqual(await validateSnapshot(record), record);
+  }
+  assert.equal(R.v2_current.strength, 0);
+  assert.equal(R.v2_current.resist_cold, -3);
+  assert.equal(R.v2_partial.stat_total, null);
+  assert.equal(R.v2_partial.resist_total, null);
+  for (const changed of [{ strength: true }, { wisdom: null }, { stat_total: 0 },
+    { schema_version: 1 }, { resist_cold: -1_000_000_001 }, { armor_class: 0.5 }]) {
+    const { github, post } = setup();
+    assert.equal((await post({ ...R.v2_current, ...changed })).status, 400);
+    assert.equal(github.puts, 0);
+  }
+  const { post } = setup();
+  assert.equal((await post(R.signed_bad_v2_total)).status, 400);
+});
+
+test("optional public messages match Python normalization and preserve signed Unicode and first daily message", async () => {
+  for (const [input, expected] of fixture.messages) assert.equal(normalizeMessage(input), expected);
+  assert.throws(() => normalizeMessage("🐉".repeat(161)));
+  assert.equal(R.v2_message.message, '<b>****!</b> Café 🐉 & "great"');
+  const { post, github } = setup();
+  assert.equal((await post(R.v2_message)).status, 201);
+  const repeat = await post(R.v2_message_retry);
+  assert.equal(repeat.status, 200);
+  assert.deepEqual((await repeat.json()).snapshot, R.v2_message);
+  assert.equal(github.puts, 1);
+  for (const record of [R.signed_bad_message, R.signed_noncanonical_message]) {
+    const invalid = setup();
+    assert.equal((await invalid.post(record)).status, 400);
+    assert.equal(invalid.github.puts, 0);
+  }
 });
 
 test("new day rejects sequence and all four cumulative rollbacks before writing", async () => {

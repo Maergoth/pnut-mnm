@@ -8,13 +8,19 @@ sys.path.insert(0, str(ROOT.parent))
 from mnmparse import leaderboard
 
 
-def record(key, day=22, sequence=10, **changes):
+def record(key, day=22, sequence=10, *, legacy=True, message="", **changes):
     stats = {"captured_at": f"2026-10-{day:02d}T14:00:00Z", "capture_backend": "window",
              "max_health": 733, "max_mana": 570}
-    stats.update({name: value for name, value in changes.items() if name in stats})
+    stats.update({name: value for name, value in changes.items() if name in stats or name in leaderboard.READING_FIELDS})
     counters = {"personal_kills": 20, "personal_deaths": 2, "high_hit": 300, "coin_looted": 1200}
     counters.update({name: value for name, value in changes.items() if name in counters})
-    return leaderboard.make_snapshot(stats, counters, bytes([key]) * 32, sequence)
+    snapshot = leaderboard.make_snapshot(stats, counters, bytes([key]) * 32, sequence, message=message)
+    if legacy:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        snapshot = {name: value for name, value in snapshot.items() if name in leaderboard.LEGACY_FIELDS}
+        snapshot["signature"] = Ed25519PrivateKey.from_private_bytes(bytes([key]) * 32).sign(
+            leaderboard.signing_bytes(snapshot)).hex()
+    return snapshot
 
 
 words = {name: list(getattr(leaderboard, name)) for name in ("ADJECTIVES", "COLORS", "ANIMALS")}
@@ -29,6 +35,14 @@ records = {
     "large_numbers": record(3, sequence=leaderboard.MAX_NUMBER, max_mana=None,
                             **dict.fromkeys(leaderboard.COUNTERS, leaderboard.MAX_NUMBER)),
 }
+character = {name: index * 5 for index, name in enumerate(leaderboard.READING_FIELDS)}
+character.update(armor_class=-5, resist_cold=-3)
+records.update(v2_current=record(1, legacy=False, **character),
+               v2_other=record(2, legacy=False, **character),
+               v2_previous=record(1, 21, 9, legacy=False, **character),
+               v2_partial=record(1, legacy=False, **{**character, "wisdom": None, "resist_magic": None}),
+               v2_message=record(1, legacy=False, message='<b>SHIT!</b> Café 🐉 & "great"', **character),
+               v2_message_retry=record(1, legacy=False, sequence=11, message="Different public message", **character))
 for field in leaderboard.COUNTERS:
     records["decreased_" + field] = record(1, **{field: records["previous"][field] - 1})
 # These remain correctly signed but must fail policy/field validation.
@@ -41,9 +55,23 @@ for name, changes in {"signed_nonwindow": {"capture_backend": "screen"},
     altered["signature"] = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32).sign(
         leaderboard.signing_bytes(altered)).hex()
     records[name] = altered
+altered = {**records["v2_current"], "stat_total": 99999}
+altered["signature"] = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32).sign(
+    leaderboard.signing_bytes(altered)).hex()
+records["signed_bad_v2_total"] = altered
+for name, message in (("signed_bad_message", "uncensored shit"),
+                      ("signed_noncanonical_message", "  Two\tspaces  ")):
+    altered = {**records["v2_current"], "message": message}
+    altered["signature"] = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32).sign(
+        leaderboard.signing_bytes(altered)).hex()
+    records[name] = altered
+from mnmparse.leaderboard_messages import normalize_message
+messages = ["", '<b>SHIT!</b> Café 🐉 & "great"', "A classic grassland cocktail at Scunthorpe, with a shell.",
+            "  ＳＨＩＴ\t\r\nhello\x00\u202eworld  ", "f\u200buck", "SHİT shıt SHIT", "🐉" * 160,
+            "\u001c\u0085before\ud800after\u200d", "assholes / motherfuckers / bullshit / bitching"]
 fixture = {"now": "2026-10-22T14:00:00Z", "records": records,
            "canonical": {name: leaderboard.signing_bytes(value).decode("ascii") for name, value in records.items()},
-           "words": words}
+           "words": words, "messages": [[message, normalize_message(message)] for message in messages]}
 ROOT.joinpath("test").mkdir(exist_ok=True)
 ROOT.joinpath("test/python-fixtures.json").write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
 print("Generated word lists and signed Python conformance fixtures")
