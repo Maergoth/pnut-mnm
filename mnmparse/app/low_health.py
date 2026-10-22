@@ -1,4 +1,4 @@
-"""A passive red edge vignette maintained for a confirmed low-health episode."""
+"""A passive edge vignette maintained for a confirmed player-stat warning."""
 from __future__ import annotations
 
 import math
@@ -12,6 +12,8 @@ from mnmparse.app.window_identity import window_title
 
 EDGE_FRACTION = 0.12
 PULSE_SECONDS = 1.6
+LOW_HEALTH_COLOR = "#ed3030"
+OVERBURDENED_COLOR = "#a4a4a4"
 
 
 class LowHealthFlash(QWidget):
@@ -29,6 +31,7 @@ class LowHealthFlash(QWidget):
         self._active = False
         self._started = 0.0
         self._reduced_motion = False
+        self._color = QColor(LOW_HEALTH_COLOR)
         self._timer = QTimer(self)
         self._timer.setInterval(40)
         self._timer.timeout.connect(self._tick)
@@ -53,6 +56,11 @@ class LowHealthFlash(QWidget):
     @property
     def active(self) -> bool:
         return self._active
+
+    def set_warning_color(self, color: str) -> None:
+        """Change warning priority without restarting an existing pulse."""
+        self._color = QColor(color)
+        self.update()
 
     def stop(self) -> None:
         self._active = False
@@ -88,7 +96,7 @@ class LowHealthFlash(QWidget):
         ):
             gradient = QLinearGradient(start_x, start_y, end_x, end_y)
             for position, weight in ((0.0, 1.0), (0.18, 0.74), (0.55, 0.28), (1.0, 0.0)):
-                color = QColor("#ed3030")
+                color = QColor(self._color)
                 color.setAlphaF(strength * weight)
                 gradient.setColorAt(position, color)
             painter.fillRect(rect, gradient)

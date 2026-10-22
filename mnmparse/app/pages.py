@@ -2367,7 +2367,7 @@ class SettingsPage(QWidget):
                        self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled,
                        self.reduced_motion, self.revenge_alert_enabled, self.revenge_alert_flash,
                        self.player_status_enabled, self.player_status_separate, self.player_status_xp,
-                       self.low_health_enabled, self.low_health_flash):
+                       self.low_health_enabled, self.low_health_flash, self.overburdened_flash):
             toggle.toggled.connect(self._on_form_changed)
         self.low_health_sound.currentIndexChanged.connect(self._on_form_changed)
         self.low_health_volume.value_changed.connect(self._on_form_changed)
@@ -3028,6 +3028,9 @@ class SettingsPage(QWidget):
         self.player_status_region.hide()
         self.player_status_xp = ToggleSwitch()
         self._row(form, "Track XP", self.player_status_xp)
+        self.overburdened_flash = ToggleSwitch()
+        self._row(form, "Overburdened warning", self.overburdened_flash,
+                  "Pulse gray screen edges while current weight exceeds maximum weight. Reduced motion keeps the glow steady.")
         self.low_health_enabled = ToggleSwitch()
         self._row(form, "Low-health alert", self.low_health_enabled)
         self.low_health_threshold = QSpinBox()
@@ -3067,6 +3070,7 @@ class SettingsPage(QWidget):
         self.player_status_separate.setEnabled(enabled)
         self.player_status_region.setVisible(enabled and self.player_status_separate.isChecked())
         self.player_status_xp.setEnabled(enabled)
+        self.overburdened_flash.setEnabled(enabled)
         self.low_health_enabled.setEnabled(enabled)
         alerts = enabled and self.low_health_enabled.isChecked()
         for control in (self.low_health_threshold, self.low_health_flash, self.low_health_sound, self.low_health_volume):
@@ -3275,6 +3279,7 @@ class SettingsPage(QWidget):
             self.low_health_enabled.setChecked(cfg.low_health_enabled)
             self.low_health_threshold.setValue(cfg.low_health_threshold)
             self.low_health_flash.setChecked(cfg.low_health_flash)
+            self.overburdened_flash.setChecked(cfg.overburdened_flash)
             self._select(self.low_health_sound, cfg.low_health_sound or "None")
             self.low_health_volume.set_value(cfg.low_health_volume)
             self._sync_player_status_controls(cfg.player_status_enabled)
@@ -3345,6 +3350,7 @@ class SettingsPage(QWidget):
             "low_health_enabled": self.low_health_enabled.isChecked(),
             "low_health_threshold": self.low_health_threshold.value(),
             "low_health_flash": self.low_health_flash.isChecked(),
+            "overburdened_flash": self.overburdened_flash.isChecked(),
             "low_health_sound": ("" if self.low_health_sound.currentText() == "None"
                                  else self.low_health_sound.currentText()),
             "low_health_volume": int(self.low_health_volume.value()),

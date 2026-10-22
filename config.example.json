@@ -55,6 +55,7 @@
   "low_health_enabled": true,
   "low_health_threshold": 10,
   "low_health_flash": true,
+  "overburdened_flash": true,
   "low_health_sound": "Alert",
   "low_health_volume": 80,
   "show_other_groups": false,

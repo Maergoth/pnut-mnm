@@ -124,7 +124,8 @@ class Config:
     player_status_xp: bool = True  #: estimate experience from its yellow/blue bar
     low_health_enabled: bool = True  #: alert once when confirmed health falls below the threshold
     low_health_threshold: int = 10  #: health percentage; two fresh readings below it confirm an alert
-    low_health_flash: bool = True  #: briefly color the screen edges red
+    low_health_flash: bool = True  #: color screen edges red while below the threshold
+    overburdened_flash: bool = True  #: color screen edges gray while confirmed over maximum weight
     low_health_sound: str = "Alert"
     low_health_volume: int = 80  #: percent of the trigger master volume
     show_other_groups: bool = False  #: show nearby outsider rows and fights without group participation
@@ -197,7 +198,7 @@ class Config:
         if type(self.revenge_entries) is not int or not 0 <= self.revenge_entries <= 1000:
             issues.append("revenge_entries must be an integer between 0 (all) and 1000")
         for name in ("revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_separate", "player_status_xp",
-                     "low_health_enabled", "low_health_flash"):
+                     "low_health_enabled", "low_health_flash", "overburdened_flash"):
             if type(getattr(self, name)) is not bool:
                 issues.append(f"{name} must be true or false")
         if self.revenge_alert_sound not in ("", *BUILTIN_SOUNDS):
@@ -298,7 +299,7 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
             raise ValueError("expected a built-in sound or empty (silent)")
         return value
     if name in {"revenge_alert_enabled", "revenge_alert_flash", "player_status_enabled", "player_status_separate", "player_status_xp",
-                "low_health_enabled", "low_health_flash"} and not isinstance(value, (bool, str)):
+                "low_health_enabled", "low_health_flash", "overburdened_flash"} and not isinstance(value, (bool, str)):
         if type(value) is not int or value not in (0, 1):
             raise ValueError("expected true or false")
     if name == "crop":

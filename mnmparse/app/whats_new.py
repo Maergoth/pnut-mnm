@@ -30,9 +30,10 @@ class ReleaseNotes:
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.24": ReleaseNotes(
         changes=(
-            "Hover settings gears now float over overlay content without reserving a separate column or enlarging the panel.",
-            "Gear shortcuts highlight their options. Weapon delay is now visible in Settings. The current-fight action is now End Encounter.",
-            "NPC respawn timers created from the right-click menu show the map's monster icon inside their countdown ring, including when an expired timer is restarted.",
+            "Hover gears float over overlay content and highlight the relevant options.",
+            "Weapon delay is now in Settings. Reset encounter is now End Encounter.",
+            "Right-click spawn timers show monster icons, including after expiration and restart.",
+            "Overburdened mini stats pulse gray screen edges. Hover the mini-stat or combat-chat read area to open its settings.",
         ),
         settings_label="Overlay settings",
         settings_target="overlay_enabled",

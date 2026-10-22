@@ -122,6 +122,9 @@ class MapLockWiringTests(unittest.TestCase):
     def tearDown(self):
         if self.host is not None:
             self.host._shut_down = True
+            read_area_gears = self.host.__dict__.get("_read_area_gears")
+            if read_area_gears is not None:
+                read_area_gears.shutdown()
             self.host.window.prepare_quit()
             for widget in (self.host.window, self.host.overlay, self.host.map_overlay, self.host.revenge_popout):
                 if widget is not None:

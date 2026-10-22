@@ -296,6 +296,7 @@ class Engine(QObject):
     session = Signal(object)  #: SessionSnapshot (loot, coin, kills, deaths, CC) for the whole run
     low_health = Signal(float)  #: confirmed own HP below the threshold; one alert per low-health episode
     low_health_changed = Signal(bool)  #: latched low HP; false means valid recovery or an explicit monitoring reset
+    overburdened_changed = Signal(bool)  #: confirmed weight above capacity; no audio
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -349,10 +350,14 @@ class Engine(QObject):
         self._player_telemetry: Any = None
         self._player_telemetry_owner: Any = None
         self._player_panel_key: Any = None
+        self._player_panel_valid_until: float | None = None
         self._player_crop_warned = False
         self._player_reader_warned = False
         self._low_health_alert_at = float("-inf")
         self._low_health_active = False
+        self._overburdened_active = False
+        self._weight_previous: tuple[float, int, int] | None = None
+        self._weight_sample_at: float | None = None
         self._recent_kinds: deque[str] = deque(maxlen=GARBLE_WINDOW)
         self._diagnostic_messages: deque[dict[str, Any]] = deque(maxlen=DIAG_MESSAGE_LIMIT)
         self._diagnostic_frames: deque[dict[str, Any]] = deque(maxlen=DIAG_FRAME_LIMIT)
@@ -423,6 +428,59 @@ class Engine(QObject):
         return self._low_health_active
 
     @property
+    def overburdened_active(self) -> bool:
+        """Latest confirmed weight state, including changes newer than queued signals."""
+        return self._overburdened_active
+
+    def read_area_snapshot(self) -> dict[str, Any]:
+        """Copy only active capture geometry; never grab pixels or run OCR."""
+        if not self._lock.acquire(blocking=False):
+            return {}
+        try:
+            source, cfg = self._source, self._cfg
+            if self._state != "running" or self._paused or source is None or self._stop_event.is_set():
+                return {}
+            hwnd = getattr(source, "hwnd", None)
+            dimensions = getattr(source, "full_frame_dimensions", None) or self._source_dimensions
+            if (type(hwnd) is not int or hwnd <= 0 or not isinstance(dimensions, (tuple, list))
+                    or len(dimensions) != 2 or any(type(value) is not int or value <= 0 for value in dimensions)):
+                return {}
+
+            def valid(rect: Any) -> tuple[int, int, int, int] | None:
+                if (not isinstance(rect, (tuple, list)) or len(rect) != 4
+                        or any(type(value) is not int for value in rect)):
+                    return None
+                left, top, right, bottom = rect
+                return tuple(rect) if 0 <= left < right <= dimensions[0] and 0 <= top < bottom <= dimensions[1] else None
+
+            chat = valid(cfg.crop)
+            if chat is None:
+                return {}
+            stats = None
+            if cfg.player_status_enabled:
+                if cfg.player_status_separate:
+                    stats = valid(cfg.player_status_crop)
+                elif (self._player_panel_key is not None and self._player_panel_key[:2]
+                      == (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop))
+                      and self._player_panel_valid_until is not None and time.time() <= self._player_panel_valid_until):
+                    panel = self._player_panel_key[3]
+                    if panel is not None:
+                        stats = valid((panel[0] + chat[0], panel[1] + chat[1], panel[2] + chat[0], panel[3] + chat[1]))
+            source_rect = getattr(getattr(source, "window", None), "rect", None)
+            if source_rect is None:
+                source_rect = getattr(source, "rect", None) or getattr(source, "_rect", None)
+            if (not isinstance(source_rect, (tuple, list)) or len(source_rect) != 4
+                    or any(type(value) is not int for value in source_rect)
+                    or source_rect[0] >= source_rect[2] or source_rect[1] >= source_rect[3]):
+                source_rect = None
+            backend = {"WgcWindowSource": "wgc", "MssRegionSource": "mss"}.get(type(source).__name__, cfg.capture_backend)
+            return {"hwnd": hwnd, "frame_dimensions": tuple(dimensions), "capture_backend": backend,
+                    "chat_crop": chat, "stats_crop": stats,
+                    "source_rect": tuple(source_rect) if source_rect is not None else None}
+        finally:
+            self._lock.release()
+
+    @property
     def is_running(self) -> bool:
         """True while the worker thread is alive."""
         thread = self._thread
@@ -475,6 +533,7 @@ class Engine(QObject):
 
     def stop(self) -> None:
         """Request cleanup without blocking the GUI or relinquishing a live worker."""
+        self._reset_overburdened()
         thread = self._thread
         if thread is None:
             self._set_state("stopped")
@@ -542,7 +601,8 @@ class Engine(QObject):
             previous = self._cfg
             self._cfg = dataclasses.replace(cfg)
             if any(getattr(previous, name, None) != getattr(cfg, name, None) for name in
-                   ("crop", "player_status_crop", "player_status_separate", "player_status_enabled", "player_status_xp", "player_name")):
+                   ("crop", "player_status_crop", "player_status_separate", "player_status_enabled", "player_status_xp", "player_name",
+                    "capture_backend", "window_title")):
                 self._pause_player_status()
                 self._player_panel_key = None
                 self._player_crop_warned = False
@@ -1424,6 +1484,7 @@ class Engine(QObject):
         with self._lock:
             self._pause_player_status()
             self._player_panel_key = None
+            self._player_panel_valid_until = None
             self._player_crop_warned = False
             self._player_reader_warned = False
             self._ocr = ocr
@@ -1648,6 +1709,7 @@ class Engine(QObject):
         if self._player_telemetry_owner is not self._session_stats:
             from mnmparse.player_telemetry import PlayerTelemetry
             self._set_low_health_active(False)
+            self._reset_overburdened()
             self._player_telemetry = PlayerTelemetry(getattr(self._session_stats, "player_status", {}),
                                                      low_health_threshold=self._cfg.low_health_threshold)
             self._player_telemetry_owner = self._session_stats
@@ -1663,6 +1725,8 @@ class Engine(QObject):
 
     def _pause_player_status(self) -> None:
         self._set_low_health_active(False)
+        self._reset_overburdened()
+        self._player_panel_valid_until = None
         if self._player_telemetry is not None:
             self._telemetry().pause()
             self._save_player_status()
@@ -1673,6 +1737,40 @@ class Engine(QObject):
         if active != self._low_health_active:
             self._low_health_active = active
             self.low_health_changed.emit(active)
+
+    def _set_overburdened_active(self, active: bool) -> None:
+        active = bool(active)
+        if active != self._overburdened_active:
+            self._overburdened_active = active
+            self.overburdened_changed.emit(active)
+
+    def _reset_overburdened(self) -> None:
+        self._weight_previous = None
+        self._weight_sample_at = None
+        self._set_overburdened_active(False)
+
+    def _observe_weight(self, reading: Any, cfg: Config, now: float, max_gap: float) -> None:
+        if (not (cfg.player_status_enabled and self._cfg.player_status_enabled)
+                or self._paused or self._stop_event.is_set()):
+            self._reset_overburdened()
+            return
+        if (isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now)
+                or self._weight_sample_at is not None and now <= self._weight_sample_at):
+            return
+        self._weight_sample_at = now
+        current = getattr(reading, "weight_current", None)
+        maximum = getattr(reading, "weight_max", None)
+        if (type(current) is not int or type(maximum) is not int
+                or not 0 <= current <= 1_000_000_000 or not 0 < maximum <= 1_000_000_000):
+            self._weight_previous = None
+            return  # An OCR miss cannot demonstrate recovery.
+        previous = self._weight_previous
+        if current <= maximum:
+            self._set_overburdened_active(False)
+        elif (previous is not None and now - previous[0] <= max_gap
+              and previous[2] == maximum and previous[1] > previous[2]):
+            self._set_overburdened_active(True)
+        self._weight_previous = (now, current, maximum)
 
     def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any, *, ocr_ms: float = 0.0) -> None:
         telemetry = self._telemetry()
@@ -1701,6 +1799,8 @@ class Engine(QObject):
         if key != self._player_panel_key:
             telemetry.pause()
             self._set_low_health_active(False)
+            self._reset_overburdened()
+            self._player_panel_valid_until = None
             self._player_panel_key = key
         previous_sample = telemetry.snapshot().get("last_seen")
         measurement = {}
@@ -1715,6 +1815,9 @@ class Engine(QObject):
         # A slow cadence plus one missed frame needs room for ordinary OCR
         # scheduling jitter, while the existing ten-second ceiling still applies.
         max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * cadence + .25))
+        if reading is not None and (self._weight_sample_at is None or now > self._weight_sample_at):
+            self._player_panel_valid_until = now + max_gap
+        self._observe_weight(reading, cfg, now, max_gap)
         telemetry.update(measurement, now, max_gap=max_gap)
         summary = telemetry.snapshot()
         if not (cfg.player_status_enabled and cfg.low_health_enabled):
@@ -1836,6 +1939,9 @@ class Engine(QObject):
                     if reading is not None and reading.xp_bar_rect is not None else None,
                     "xp_percent": reading.xp_percent if reading is not None else None,
                     "xp_resolution_points": reading.xp_resolution_points if reading is not None else None,
+                    "weight_current": getattr(reading, "weight_current", None),
+                    "weight_max": getattr(reading, "weight_max", None),
+                    "overburdened_active": self.overburdened_active,
                     "measurements": dict(getattr(self._session_stats, "player_status", {})),
                 },
                 "row_count": len(lines),

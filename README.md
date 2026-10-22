@@ -304,7 +304,7 @@ past without being captured cannot be recovered.
 Log imports run in the background and can be canceled; a canceled import is not added.
 Carebear Mode also filters individual performance in historical and imported views and exports.
 
-**Mini stats.** Settings > Mini stat window can read your visible Health and XP bar.
+**Mini stats.** Settings > Mini stat window can read your visible Health, Weight and XP bar.
 New setups default to **Separate stats region**. In setup step 2, use **Select area** to
 choose Combat chat or optional Mini stats from the same frame. Select the stat panel,
 including its XP bar; readings begin after its rectangle is chosen. Keep it clear of chat,
@@ -321,6 +321,12 @@ HP reading reaches the threshold again; an unreadable value does not count as re
 Reduced motion shows a steady glow. Hiding overlays, pausing or stopping capture also
 hides the warning. The threshold defaults to **10%**. Choose the threshold, sound, volume
 and flash in the same section; **Preview sound** plays the selected tone and volume.
+Two fresh weight readings above maximum capacity pulse the screen edges gray until a
+valid reading returns to capacity or below. **Overburdened warning** in the same section
+disables this display independently of health alerts. Red low-health warnings take
+priority when both are active; gray returns if health recovers while weight remains high.
+Hover the combat-chat or mini-stat screen read area to reveal its top-left gear and open
+the relevant highlighted settings. The gears follow the captured game window.
 
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.

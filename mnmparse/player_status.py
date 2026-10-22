@@ -33,12 +33,22 @@ class PlayerStatusReading:
     xp_percent: float | None = None
     xp_bar_rect: Rect | None = None
     xp_resolution_points: float | None = None
+    weight_current: int | None = None
+    weight_max: int | None = None
 
     @property
     def hp_percent(self) -> float | None:
         if self.hp_current is None or self.hp_max is None or self.hp_max <= 0:
             return None
         return 100.0 * self.hp_current / self.hp_max
+
+    @property
+    def overburdened(self) -> bool | None:
+        if (type(self.weight_current) is not int or type(self.weight_max) is not int
+                or not 0 <= self.weight_current <= 1_000_000_000
+                or not 0 < self.weight_max <= 1_000_000_000):
+            return None
+        return self.weight_current > self.weight_max
 
 
 def _ratio(text: str, *, allow_overflow: bool = False) -> tuple[int, int] | None:
@@ -192,7 +202,7 @@ def read_player_status(lines: Sequence[OcrLine], bgr: np.ndarray | None = None, 
     """Read one verified stat panel; rectangles use crop-relative L,T,R,B.
 
     The panel needs Health, matching Mana/Endurance and Weight anchors. An
-    unreadable health ratio does not prevent an independently valid XP reading.
+    unreadable health ratio does not prevent independently valid weight or XP.
     XP is read only after the known bar is confirmed or its rectangle calibrated.
     ``panel_line_indices`` identifies spatial panel lines to omit from chat OCR.
     """
@@ -240,12 +250,11 @@ def read_player_status(lines: Sequence[OcrLine], bgr: np.ndarray | None = None, 
         if image is not None and bar is None:
             bar = _find_bar(image, panel, weight_bottom, height)
         measured = _read_xp(image, bar) if image is not None and bar is not None and (xp_bar_confirmed or calibrated) else None
-        if value is None and measured is None:
-            continue
         hp = value[0] if value is not None else (None, None)
         panels.append(PlayerStatusReading(hp[0], hp[1], panel, panel_indices,
                                          measured[0] if measured else None, bar,
-                                         measured[1] if measured else None))
+                                         measured[1] if measured else None,
+                                         weight_ratio[0][0], weight_ratio[0][1]))
     return panels[0] if len(panels) == 1 else None
 
 

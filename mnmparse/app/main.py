@@ -344,6 +344,7 @@ class _MissingEngine(QObject):
     encounter_closed = Signal(object)
     low_health = Signal(float)
     low_health_changed = Signal(bool)
+    overburdened_changed = Signal(bool)
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -1324,9 +1325,11 @@ class App(QApplication):
         self._update_ready_version = ""
         self._update_last_status = ""
         self._overlay_settings_gears: list[Any] = []
+        self._read_area_gears: Any | None = None
         self.triggers: Any | None = None
         self._low_health_flash: Any | None = None
         self._low_health_active = False
+        self._overburdened_active = False
         self._overlay_group_visible = True
         self._syncing_map_visibility = False
         self.tray: TrayIcon | None = None
@@ -1379,6 +1382,7 @@ class App(QApplication):
         self.tray = TrayIcon(self.icon, self)
         self._wire()
         self._install_overlay_settings_gears()
+        self._install_read_area_gears()
         if self.triggers is not None:
             self.triggers.set_config(cfg)
 
@@ -1532,6 +1536,7 @@ class App(QApplication):
         self._connect_optional(engine, "session", window.on_session)
         self._connect_optional(engine, "low_health", self._on_low_health)
         self._connect_optional(engine, "low_health_changed", self._on_low_health_changed)
+        self._connect_optional(engine, "overburdened_changed", self._on_overburdened_changed)
         from mnmparse.app.revenge import RevengePrompts, RevengeList
         self.revenge.pop_out_requested.connect(self.show_revenge_popout)
         self.revenge.alert_requested.connect(self._on_revenge_alert)
@@ -1690,6 +1695,34 @@ class App(QApplication):
                 reflow()
             panel.update()
             self._overlay_settings_gears.append(gear)
+
+    def _install_read_area_gears(self) -> None:
+        from mnmparse.app.read_area_gears import ReadAreaGears
+
+        self._read_area_gears = ReadAreaGears(
+            self._read_area_snapshot,
+            input_enabled=lambda: not bool(getattr(self.overlay, "click_through", False)),
+            parent=self.window,
+        )
+        self._read_area_gears.activated.connect(self._open_overlay_settings)
+        self._sync_read_area_gears()
+
+    def _read_area_snapshot(self) -> dict[str, Any]:
+        snapshot = getattr(self.engine, "read_area_snapshot", None)
+        return snapshot() if callable(snapshot) else {}
+
+    def _sync_read_area_gears(self) -> None:
+        gears = self.__dict__.get("_read_area_gears")
+        if gears is None:
+            return
+        wanted = (getattr(self.engine, "state", "") == "running"
+                  and self.__dict__.get("_overlay_group_visible", True)
+                  and not (self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)))
+        if wanted:
+            gears.start()
+            gears.refresh()
+        else:
+            gears.stop()
 
     def _open_overlay_settings(self, target: str) -> None:
         if self.window is None or self._shut_down or self.__dict__.get("_quit_pending", False):
@@ -1893,7 +1926,9 @@ class App(QApplication):
     def _on_engine_state(self, state: str) -> None:
         if state != "running":
             self._low_health_active = False
+            self._overburdened_active = False
             self._sync_low_health_flash()
+        self._sync_read_area_gears()
         if self.tray is not None:
             self.tray.set_capture_running(state in RUNNING_STATES)
             self.tray.set_status_text(STATE_TEXT.get(state, state))
@@ -1946,11 +1981,20 @@ class App(QApplication):
         self._low_health_active = bool(active) and getattr(self.engine, "state", "") == "running"
         self._sync_low_health_flash()
 
+    def _on_overburdened_changed(self, active: bool) -> None:
+        """Use the latest engine latch so queued old readings cannot revive it."""
+        active = getattr(self.engine, "overburdened_active", active)
+        self._overburdened_active = bool(active) and getattr(self.engine, "state", "") == "running"
+        self._sync_low_health_flash()
+
     def _sync_low_health_flash(self) -> None:
         """Keep the warning visible until recovery, respecting shared visibility."""
-        wanted = (self.__dict__.get("_low_health_active", False)
-                  and self.cfg.player_status_enabled and self.cfg.low_health_enabled
-                  and self.cfg.low_health_flash and self.__dict__.get("_overlay_group_visible", True)
+        low_health = (self.__dict__.get("_low_health_active", False)
+                      and self.cfg.low_health_enabled and self.cfg.low_health_flash)
+        overburdened = (self.__dict__.get("_overburdened_active", False)
+                       and self.cfg.overburdened_flash)
+        wanted = ((low_health or overburdened) and self.cfg.player_status_enabled
+                  and self.__dict__.get("_overlay_group_visible", True)
                   and getattr(self.engine, "state", "") == "running"
                   and not (self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)))
         flash = self.__dict__.get("_low_health_flash")
@@ -1958,15 +2002,19 @@ class App(QApplication):
             if flash is not None:
                 flash.stop()
             return
-        from mnmparse.app.low_health import LowHealthFlash
+        from mnmparse.app.low_health import LOW_HEALTH_COLOR, OVERBURDENED_COLOR, LowHealthFlash
         from mnmparse.capture import find_game_window_info
         screen = None
         try:
             game = find_game_window_info(self.cfg.window_title)
             if game is not None:
                 from PySide6.QtCore import QPoint
+                from mnmparse.app.read_area_gears import screen_at_physical
                 left, top, right, bottom = game.rect
-                screen = QGuiApplication.screenAt(QPoint((left + right) // 2, (top + bottom) // 2))
+                center = ((left + right) // 2, (top + bottom) // 2)
+                screen = screen_at_physical(center)
+                if screen is None:
+                    screen = QGuiApplication.screenAt(QPoint(*center))
         except Exception:
             log.debug("Low HP alert screen lookup failed", exc_info=True)
         if screen is None:
@@ -1974,6 +2022,8 @@ class App(QApplication):
         if screen is not None:
             if flash is None:
                 flash = self._low_health_flash = LowHealthFlash()
+            # Health takes visual priority while both conditions are active.
+            flash.set_warning_color(LOW_HEALTH_COLOR if low_health else OVERBURDENED_COLOR)
             flash.flash(screen.geometry(), reduced_motion=self.cfg.reduced_motion)
 
     def _on_message_for_triggers(self, msg: Any, ev: Any) -> None:
@@ -2291,6 +2341,7 @@ class App(QApplication):
             self.tray.set_overlay_click_through(bool(enabled))
         for gear in self.__dict__.get("_overlay_settings_gears", ()):
             gear.sync()
+        self._sync_read_area_gears()
 
     def _on_overlay_locked(self, locked: bool) -> None:
         self.settings.setValue("overlay/locked", bool(locked))
@@ -2311,6 +2362,7 @@ class App(QApplication):
         if popout is not None:
             popout.set_overlay_visible(visible)
         self._sync_low_health_flash()
+        self._sync_read_area_gears()
         if self.window is not None:
             self.window.set_overlay_state(visible)
         if self.tray is not None:
@@ -2349,6 +2401,10 @@ class App(QApplication):
         """The Settings page saved ``cfg``: adopt it in the shell and the overlay."""
         previous = self.cfg
         self.cfg = cfg
+        if any(getattr(previous, key) != getattr(cfg, key) for key in
+               ("crop", "player_status_crop", "player_status_separate", "player_status_enabled",
+                "player_status_xp", "player_name", "capture_backend", "window_title")):
+            self._overburdened_active = False
         if (previous.low_health_threshold != cfg.low_health_threshold
                 or previous.low_health_enabled != cfg.low_health_enabled
                 or any(getattr(previous, key) != getattr(cfg, key) for key in
@@ -2356,6 +2412,7 @@ class App(QApplication):
                         "player_status_xp", "player_name"))):
             self._low_health_active = False
         self._sync_low_health_flash()
+        self._sync_read_area_gears()
         revenge = self.__dict__.get("revenge")
         if revenge is not None:
             revenge.set_config(cfg)
@@ -2573,6 +2630,9 @@ class App(QApplication):
         announcement = self.__dict__.get("_whats_new")
         if announcement is not None:
             announcement.stop()
+        read_area_gears = self.__dict__.get("_read_area_gears")
+        if read_area_gears is not None:
+            read_area_gears.shutdown()
         log.info("Shutting down")
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)
