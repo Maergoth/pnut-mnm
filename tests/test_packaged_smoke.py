@@ -10,10 +10,30 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mnmparse.app.smoke import run_smoke_test
+from mnmparse.app.smoke import _exercise_leaderboard, run_smoke_test
 
 
 class PackagedSmokeTests(unittest.TestCase):
+    def test_leaderboard_storage_is_explicitly_skipped_off_windows(self):
+        report = {}
+        with tempfile.TemporaryDirectory() as temporary, patch("mnmparse.app.smoke.sys.platform", "linux"):
+            _exercise_leaderboard(report, Path(temporary))
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+        self.assertEqual(report, {"leaderboard": {"windows_storage_skipped": True}})
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows release dependencies")
+    def test_missing_native_crypto_fails_the_leaderboard_smoke_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report_path = root / "report.json"
+            with patch("mnmparse.app.smoke._exercise", side_effect=lambda report: _exercise_leaderboard(report, root)), \
+                 patch("mnmparse.leaderboard.public_key", side_effect=ImportError("simulated native crypto failure")):
+                self.assertEqual(run_smoke_test(report_path), 1)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertFalse(report["ok"])
+        self.assertIn("simulated native crypto failure", report["error"])
+        self.assertNotIn("leaderboard", report)
+
     def test_failed_qt_import_is_reported_before_normal_startup(self):
         script = """
 import importlib.abc
@@ -87,6 +107,15 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertTrue(report["ok"])
             self.assertIn("MapOverlay", report["windows"])
             self.assertIn("triggers", report["pages"])
+            self.assertIn("leaderboard", report["pages"])
+            self.assertEqual(report["leaderboard"], {
+                "native_crypto": True, "windows_storage": True, "counter_roundtrip": True,
+                "cache_roundtrip": True, "fresh_read_required": True,
+                "clipboard": True, "numeric_sort": True,
+            })
+            self.assertTrue(all(type(value) is bool for value in report["leaderboard"].values()))
+            self.assertNotIn("public_key", report["leaderboard"])
+            self.assertNotIn("alias", report["leaderboard"])
             self.assertEqual(set(report["presets"]), {"Gatekick", "Healkick", "Invis Break"})
             self.assertGreater(report["chat_share_chars"], 0)
             self.assertLessEqual(report["chat_share_chars"], 255)

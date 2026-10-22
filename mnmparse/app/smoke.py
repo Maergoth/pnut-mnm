@@ -25,6 +25,7 @@ APP_MODULES = (
     "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "legal_dialog",
     "map_overlay", "map_downloads", "app_updates", "main",
     "profile_tools", "setup_wizard", "low_health", "npc_panel", "npc_panel_lifetime", "npc_details",
+    "leaderboard_page", "leaderboard_client",
 )
 NATIVE_MODULES = ("numpy", "cv2", "regex", "regex._regex")
 WINDOWS_MODULES = (
@@ -33,6 +34,76 @@ WINDOWS_MODULES = (
     "winrt.windows.storage.streams", "winrt.windows.globalization",
     "winrt.windows.foundation", "winrt.windows.foundation.collections",
 )
+
+
+def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
+    """Run real native crypto/storage on synthetic data, without capture or network."""
+    if sys.platform != "win32":
+        report["leaderboard"] = {"windows_storage_skipped": True}
+        return
+
+    from PySide6.QtCore import Qt
+
+    from mnmparse.app.leaderboard_page import LeaderboardModel
+    from mnmparse.leaderboard import clipboard_text, dump_records, parse_records, utc_stamp, validate_snapshot
+    from mnmparse.parser import parse_line
+    from mnmparse.protected_stats import EncryptedFile, ProtectedLedger, ProtectionError
+
+    report["imports"].extend(("mnmparse.leaderboard", "mnmparse.protected_stats"))
+    directory = Path(temporary_root) / "leaderboard-smoke"
+    path = directory / "state.bin"
+    ledger = ProtectedLedger(path)
+    if ledger.error:
+        raise RuntimeError("Packaged leaderboard storage could not initialize")
+    # Exercises the bundled scrypt/OpenSSL path as well as Ed25519 below.
+    ledger.set_phrase("Synthetic startup smoke phrase")
+    ledger.set_capture_eligible(True)
+    ledger.record_stats({"max_health": 1234567, "max_mana": 7654321,
+                         "captured_at": utc_stamp(), "capture_backend": "window"})
+    event = parse_line("You have slain a smoke rat.", 100, "SmokeOwner")
+    if event is None or event.kind != "kill":
+        raise RuntimeError("Synthetic leaderboard kill did not parse")
+    ledger.record_event(event)
+    record = validate_snapshot(ledger.prepare_submission())
+    if (record["max_health"] != 1234567 or record["max_mana"] != 7654321
+            or record["personal_kills"] != 1):
+        raise RuntimeError("Packaged leaderboard did not retain synthetic reader values and personal kill")
+    text = clipboard_text(record)
+    if ("Max Health: 1234567" not in text or "Max Mana: 7654321" not in text
+            or "Kills: 1" not in text or "SmokeOwner" in text):
+        raise RuntimeError("Packaged leaderboard clipboard did not retain its anonymous fields")
+    if parse_records(dump_records([record]), strict=True) != [record]:
+        raise RuntimeError("Packaged leaderboard signature or public record round-trip failed")
+    cache = EncryptedFile(directory / "cache.bin")
+    state = {"records": [record], "pending": None}
+    cache.save(state)
+    if cache.load() != state:
+        raise RuntimeError("Packaged leaderboard cache round-trip failed")
+    for file in (path, cache.path):
+        raw = file.read_bytes()
+        if any(value in raw for value in (b"personal_kills", b"1234567", b"7654321", record["public_key"].encode("ascii"))):
+            raise RuntimeError("Packaged leaderboard wrote a plaintext numeric record")
+    restarted = ProtectedLedger(path)
+    status = restarted.status()
+    if (restarted.error or status.get("alias") != record["alias"]
+            or status.get("personal_kills") != 1 or status.get("eligible")):
+        raise RuntimeError("Packaged leaderboard restart did not preserve totals or clear eligibility")
+    try:
+        restarted.prepare_submission()
+    except ProtectionError:
+        pass
+    else:
+        raise RuntimeError("Packaged leaderboard reused pre-restart reader eligibility")
+    model = LeaderboardModel()
+    # Presentation records are intentionally synthetic: a lexicographic sort
+    # would put 9 ahead of 100 and fail this native-widget check.
+    model.set_records([dict(record, high_hit=9), dict(record, high_hit=100)])
+    model.sort(5, Qt.SortOrder.DescendingOrder)
+    if [entry["high_hit"] for entry in model.records] != [100, 9]:
+        raise RuntimeError("Packaged leaderboard numeric sorting failed")
+    report["leaderboard"] = {"native_crypto": True, "windows_storage": True, "counter_roundtrip": True,
+                             "cache_roundtrip": True, "fresh_read_required": True,
+                             "clipboard": True, "numeric_sort": True}
 
 
 def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
@@ -172,6 +243,8 @@ def _exercise(report: dict[str, Any]) -> None:
             missing = [key for key, page in window._pages.items() if isinstance(page, main._MissingPage)]
             if missing:
                 raise RuntimeError(f"Application pages fell back to placeholders: {missing}")
+            report["stage"] = "exercise anonymous leaderboard native dependencies"
+            _exercise_leaderboard(report, Path(temporary))
             settings_page = window.page("settings")
             if settings_page.app_update_on_startup.isChecked() or settings_page.map_download_on_startup.isChecked():
                 raise RuntimeError("Startup updates must be opt-in on a fresh installation")
