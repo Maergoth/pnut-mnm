@@ -7,4 +7,4 @@
 
 The [October 21 log audit](log-audit-2026-10-21.md) records the fixed-snapshot replay and remaining unreadable entries. First-time lookups still require a successful wiki response; an outage or rejected response preserves existing cached details.
 
-This is a local test candidate. Windows PR/package gates and local acceptance must pass before publication.
+Windows regression, startup and extracted portable-package checks gate publication. Installed copies can update through **Settings > App updates** after the release is published.
