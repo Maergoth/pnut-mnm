@@ -56,15 +56,18 @@ def probe(directory: str, selftest: bool):
         snapshot = make_snapshot({"max_health": 123, "max_mana": 50, "captured_at": utc_stamp(), "capture_backend": "window"},
                                  dict(personal_kills=2, personal_deaths=0, high_hit=100, coin_looted=1200), bytes([1]) * 32, 10)
         app.engine.leaderboard_status = lambda: {**snapshot, "eligible": True, "copy_eligible": True, "submitted_day": "", "error": ""}
-        app.engine.leaderboard_submission = lambda: snapshot
+        app.engine.leaderboard_submission = Mock(return_value=snapshot)
         app.engine.leaderboard_copy_text = lambda: clipboard_text(snapshot)
         app._read_area_gears.refresh = Mock()
         with patch.object(app._leaderboard_client, "submit", return_value=True) as submit:
             app._on_read_area_action("copy_stats")
             assert "Max Health: 123" in app.clipboard().text()
             submit.assert_not_called()
+            app.engine.leaderboard_submission.assert_not_called()
+            page.message_input.setText("  This shit is fun!  ")
             app._on_read_area_action("submit_stats")
             submit.assert_called_once_with(snapshot)
+            app.engine.leaderboard_submission.assert_called_once_with(message="This **** is fun!")
         app.show_demo()
         assert not page.copy_button.isEnabled()
         assert not page.submit_button.isEnabled()

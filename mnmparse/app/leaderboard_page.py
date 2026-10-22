@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRect, QSize, Qt, QTextBoundaryFinder, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLayout, QInputDialog,
                               QLabel, QLineEdit, QListView, QMessageBox, QPushButton, QScrollArea,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBox
 
 from mnmparse.app import theme
 from mnmparse.app.widgets import FlowLayout
+from mnmparse.leaderboard_messages import MAX_MESSAGE_CHARS, normalize_message
 COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "Max Mana"),
            ("personal_kills", "Kills"), ("personal_deaths", "Deaths"), ("high_hit", "Highest hit"),
            ("coin_looted", "Coin (copper)"), ("captured_at", "Captured (UTC)"),
@@ -51,6 +53,33 @@ def record_lines(record):
                  for row in RECORD_ROWS)
 
 
+def record_tooltip(record):
+    stamp = record.get("captured_at")
+    timestamp = "Captured (UTC): " + stamp.replace("T", " ").removesuffix("Z") if stamp else "Capture time unavailable"
+    message = record.get("message")
+    if not message:
+        return "<qt>" + escape(timestamp) + "</qt>"
+    # Add display-only wrap opportunities without breaking emoji/combining clusters.
+    # Qt otherwise lets a single 160-character word expand beyond the screen.
+    encoded = message.encode("utf-16-le")
+    boundaries = QTextBoundaryFinder(QTextBoundaryFinder.BoundaryType.Grapheme, message)
+    parts, start, run = [], 0, 0
+    while (end := boundaries.toNextBoundary()) != -1:
+        cluster = encoded[start * 2:end * 2].decode("utf-16-le")
+        parts.append(escape(cluster))
+        run = 0 if cluster.isspace() else run + 1
+        if run == 12:
+            parts.append("\u200b")
+            run = 0
+        start = end
+    # Qt's rich-text subset renders a small speech bubble; user text stays inert.
+    return (f'<qt><table width="300" cellspacing="0" cellpadding="0"><tr><td '
+            f'style="padding:8px; background-color:{theme.BG1}; border:1px solid {theme.ACCENT};">'
+            + "".join(parts) + '</td></tr><tr><td style="padding-left:12px; color:' + theme.ACCENT
+            + ';">&#9662;</td></tr></table><span style="color:' + theme.MUTED + ';">'
+            + escape(timestamp) + '</span></qt>')
+
+
 class LeaderboardModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,8 +105,7 @@ class LeaderboardModel(QAbstractTableModel):
         if role == RECORD_ROLE:
             return record
         if role == Qt.ItemDataRole.ToolTipRole:
-            stamp = record.get("captured_at")
-            return "Captured (UTC): " + stamp.replace("T", " ").removesuffix("Z") if stamp else "Capture time unavailable"
+            return record_tooltip(record)
         if role in (Qt.ItemDataRole.AccessibleTextRole, Qt.ItemDataRole.AccessibleDescriptionRole):
             return "\n".join(record_lines(record))
         if role == Qt.ItemDataRole.DisplayRole:
@@ -202,6 +230,18 @@ class LeaderboardPage(QWidget):
         self.local_tabs.setMinimumHeight(100)
         self.local_tabs.setMaximumHeight(145)
         root.addWidget(self.local_tabs)
+        message_row = QHBoxLayout()
+        message_label = QLabel("Message (optional)")
+        self.message_input = QLineEdit()
+        self.message_input.setAccessibleName("Message (optional)")
+        self.message_input.setPlaceholderText("Share a short message…")
+        self.message_input.setToolTip("Included only when you Submit. A submitted daily snapshot cannot be edited.")
+        self.message_input.setMaxLength(MAX_MESSAGE_CHARS)
+        self.message_input.setClearButtonEnabled(True)
+        message_label.setBuddy(self.message_input)
+        message_row.addWidget(message_label)
+        message_row.addWidget(self.message_input, 1)
+        root.addLayout(message_row)
         controls = QHBoxLayout()
         self.copy_button = QPushButton("Copy")
         self.submit_button = QPushButton("Submit")
@@ -333,6 +373,7 @@ class LeaderboardPage(QWidget):
         self.submit_button.setEnabled(not reason and not service and not busy and not self.submitted_today())
         self.submit_button.setToolTip(reason or service or ("Already submitted today (UTC)." if self.submitted_today() else "Publish this anonymous snapshot."))
         self.phrase_button.setEnabled(self.ledger is not None and not busy and not self._demo)
+        self.message_input.setEnabled(self.ledger is not None and not busy and not self._demo)
         self.refresh_button.setEnabled(self.client is not None and not busy and not self._demo)
 
     def action_reason(self, *, copy=False):
@@ -349,11 +390,11 @@ class LeaderboardPage(QWidget):
     def submitted_today(self):
         return self._status.get("submitted_day") == datetime.now(timezone.utc).date().isoformat()
 
-    def _snapshot(self):
+    def _snapshot(self, message=""):
         self.refresh_status()
         if self.action_reason():
             raise ValueError(self.action_reason())
-        return self.engine.leaderboard_submission()
+        return self.engine.leaderboard_submission(message=message) if message else self.engine.leaderboard_submission()
 
     def copy_stats(self):
         try:
@@ -371,7 +412,13 @@ class LeaderboardPage(QWidget):
     def submit_stats(self):
         self._restore_history()
         try:
-            record = self._snapshot()
+            message = normalize_message(self.message_input.text())
+        except ValueError:
+            self.message.setText(f"Use a message of up to {MAX_MESSAGE_CHARS} characters.")
+            return False
+        self.message_input.setText(message)
+        try:
+            record = self._snapshot(message)
         except ValueError:
             self.message.setText("Read fresh mini stats using Window Capture before submitting.")
             return False
