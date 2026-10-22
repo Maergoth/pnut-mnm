@@ -32,9 +32,13 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Hover the combat-chat or mini-stat capture area to reveal its settings gear, even with other overlays hidden.",
             "Mini-stat Copy and Submit shortcuts appear on monitors whose display names differ between Windows and Qt.",
+            "Ranks includes all attributes, AC and resists, separate Stat Total and Resist Total, and local best records.",
+            "Leaderboard entries use three rows with gold anonymous names. Hover for the capture time and optional message; common swear words are censored.",
         ),
         settings_label="Screen reader settings",
         settings_target="crop_picker",
+        feature_page="leaderboard",
+        feature_label="Leaderboard",
     ),
     "1.0.24": ReleaseNotes(
         changes=(
