@@ -45,7 +45,8 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
     from PySide6.QtCore import Qt
 
     from mnmparse.app.leaderboard_page import LeaderboardModel
-    from mnmparse.leaderboard import clipboard_text, dump_records, parse_records, utc_stamp, validate_snapshot
+    from mnmparse.leaderboard import (READING_FIELDS, clipboard_text, dump_records, local_clipboard_text,
+                                     parse_records, utc_stamp, validate_snapshot)
     from mnmparse.parser import parse_line
     from mnmparse.protected_stats import EncryptedFile, ProtectedLedger, ProtectionError
 
@@ -58,16 +59,28 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
     # Exercises the bundled scrypt/OpenSSL path as well as Ed25519 below.
     ledger.set_phrase("Synthetic startup smoke phrase")
     ledger.set_capture_eligible(True)
-    ledger.record_stats({"max_health": 1234567, "max_mana": 7654321,
-                         "captured_at": utc_stamp(), "capture_backend": "window"})
+    first = {"max_health": 1234567, "max_mana": 7654321, **dict.fromkeys(READING_FIELDS, 1),
+             "strength": 100, "resist_cold": 100,
+             "captured_at": utc_stamp(), "capture_backend": "window"}
+    ledger.record_stats(first)
+    current = {**first, "max_health": 100, "max_mana": 50, "strength": 1, "stamina": 100,
+               "resist_cold": 1, "resist_corruption": 100, "captured_at": utc_stamp()}
+    ledger.record_stats(current)
     event = parse_line("You have slain a smoke rat.", 100, "SmokeOwner")
     if event is None or event.kind != "kill":
         raise RuntimeError("Synthetic leaderboard kill did not parse")
     ledger.record_event(event)
     record = validate_snapshot(ledger.prepare_submission())
     if (record["max_health"] != 1234567 or record["max_mana"] != 7654321
-            or record["personal_kills"] != 1):
+            or record["personal_kills"] != 1 or record["schema_version"] != 3
+            or (record["strength"], record["stamina"]) != (100, 100)
+            or (record["resist_cold"], record["resist_corruption"]) != (100, 100)
+            or (record["stat_total"], record["resist_total"]) != (106, 107)):
         raise RuntimeError("Packaged leaderboard did not retain synthetic reader values and personal kill")
+    current_text = local_clipboard_text(current, ledger.status())
+    if ("Max Health: 100\n" not in current_text or "Max Mana: 50\n" not in current_text
+            or "\nStrength: 1\n" not in current_text or "Stat Total: 106\n" not in current_text):
+        raise RuntimeError("Packaged stat Copy did not use the fresh current reading")
     text = clipboard_text(record)
     if ("Max Health: 1234567" not in text or "Max Mana: 7654321" not in text
             or "Kills: 1" not in text or "SmokeOwner" in text):
@@ -103,7 +116,8 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
         raise RuntimeError("Packaged leaderboard numeric sorting failed")
     report["leaderboard"] = {"native_crypto": True, "windows_storage": True, "counter_roundtrip": True,
                              "cache_roundtrip": True, "fresh_read_required": True,
-                             "clipboard": True, "numeric_sort": True}
+                             "clipboard": True, "numeric_sort": True,
+                             "current_copy_best_submit": True, "complete_reading_totals": True}
 
 
 def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:

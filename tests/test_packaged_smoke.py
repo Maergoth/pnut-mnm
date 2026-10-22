@@ -112,6 +112,7 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
                 "native_crypto": True, "windows_storage": True, "counter_roundtrip": True,
                 "cache_roundtrip": True, "fresh_read_required": True,
                 "clipboard": True, "numeric_sort": True,
+                "current_copy_best_submit": True, "complete_reading_totals": True,
             })
             self.assertTrue(all(type(value) is bool for value in report["leaderboard"].values()))
             self.assertNotIn("public_key", report["leaderboard"])
