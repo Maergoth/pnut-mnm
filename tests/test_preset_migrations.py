@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mnmparse.trigger_presets import PRESETS
+from mnmparse.trigger_presets import PRESETS, RESIST_ID, RESIST_PATTERN
 from mnmparse.triggers import Trigger, TriggerStore, match_trigger
 
 
@@ -22,6 +22,58 @@ def previously_seeded(*triggers: Trigger) -> TriggerStore:
 
 
 class PresetMigrationTests(unittest.TestCase):
+    def test_fresh_resist_is_immediate_speech_for_own_outgoing_resists(self) -> None:
+        store = TriggerStore()
+        store.install_presets()
+        trigger = store.find(RESIST_ID)
+        self.assertIsNotNone(trigger)
+        self.assertTrue(trigger.enabled)
+        self.assertEqual((trigger.mode, trigger.pattern, trigger.action, trigger.speech),
+                         ("regex", RESIST_PATTERN, "speak", "resist"))
+        self.assertFalse(trigger.timer)
+        for line in ("a gorged ghoul resists your Fear the Dead!",
+                     "a bone carver resists your Mallet of Light!",
+                     "A Rat RESISTS   YOUR spell!"):
+            self.assertIsNotNone(match_trigger(trigger, line))
+        for line in ("a scarer tries to cast Fear on YOU, but is resisted!",
+                     "Your magical resistance has increased.", "A rat resists another caster's spell."):
+            self.assertIsNone(match_trigger(trigger, line))
+        self.assertFalse(store.install_presets())
+
+    def test_existing_profiles_do_not_receive_new_resist_default(self) -> None:
+        for data in ({"triggers": []}, {"triggers": [Trigger(name="Personal", pattern="my phrase").to_dict()]},
+                     {"triggers": [], "installed_presets": [preset["id"] for preset in PRESETS if preset["id"] != RESIST_ID]}):
+            with self.subTest(data=data):
+                store = TriggerStore()
+                store.load_dict(data)
+                before = [trigger.to_dict() for trigger in store.triggers]
+                store.install_presets()
+                self.assertIsNone(store.find(RESIST_ID))
+                self.assertTrue(all(row in [trigger.to_dict() for trigger in store.triggers] for row in before))
+                self.assertIn(RESIST_ID, store.installed_presets)
+                self.assertFalse(store.install_presets())
+
+    def test_resist_deletion_and_existing_profile_skip_survive_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "triggers.json"
+            store = TriggerStore(path)
+            store.install_presets()
+            store.triggers = [trigger for trigger in store.triggers if trigger.id != RESIST_ID]
+            store.save()
+            restarted = TriggerStore(path)
+            self.assertTrue(restarted.load())
+            self.assertFalse(restarted.install_presets())
+            self.assertIsNone(restarted.find(RESIST_ID))
+
+    def test_explicit_restore_can_add_the_new_starter_to_an_existing_profile(self) -> None:
+        store = TriggerStore()
+        store.load_dict({"triggers": []})
+        store.install_presets()
+        self.assertIsNone(store.find(RESIST_ID))
+        store.installed_presets.difference_update(preset["id"] for preset in PRESETS)
+        self.assertTrue(store.install_presets(include_first_install_only=True))
+        self.assertIsNotNone(store.find(RESIST_ID))
+
     def test_fresh_invis_break_matches_the_full_actual_phrase(self) -> None:
         store = TriggerStore()
         self.assertTrue(store.install_presets())

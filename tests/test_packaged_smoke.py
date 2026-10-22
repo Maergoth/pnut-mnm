@@ -116,7 +116,7 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             self.assertTrue(all(type(value) is bool for value in report["leaderboard"].values()))
             self.assertNotIn("public_key", report["leaderboard"])
             self.assertNotIn("alias", report["leaderboard"])
-            self.assertEqual(set(report["presets"]), {"Gatekick", "Healkick", "Invis Break"})
+            self.assertEqual(set(report["presets"]), {"Gatekick", "Healkick", "Invis Break", "Resist"})
             self.assertGreater(report["chat_share_chars"], 0)
             self.assertLessEqual(report["chat_share_chars"], 255)
             self.assertGreaterEqual(len(report["window_titles"]), 8)

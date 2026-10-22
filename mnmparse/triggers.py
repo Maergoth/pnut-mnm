@@ -326,6 +326,7 @@ class TriggerStore:
         self.rate = 0.0  #: speech rate -1..1
         self.output_device = ""  #: audio output device description ("" = the default)
         self.installed_presets: set[str] = set()
+        self._loaded = False
         self.match_warnings: dict[str, str] = {}
 
     def load(self) -> bool:
@@ -390,6 +391,7 @@ class TriggerStore:
         self.output_device = settings.get("output_device", self.output_device)
         self.installed_presets = set(presets)
         self.triggers = validated
+        self._loaded = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -400,17 +402,24 @@ class TriggerStore:
             "installed_presets": sorted(self.installed_presets),
         }
 
-    def install_presets(self) -> bool:
+    def install_presets(self, *, include_first_install_only: bool = False) -> bool:
         """Add bundled starters once, preserving customizations and deliberate deletions."""
         from .trigger_presets import (
             INVIS_BREAK_ID, INVIS_BREAK_PATTERN, INVIS_BREAK_PATTERN_REVISION,
-            INVIS_BREAK_ALERT_REVISION, PRESETS,
+            INVIS_BREAK_ALERT_REVISION, FIRST_INSTALL_ONLY, PRESETS,
         )
 
         changed = False
+        fresh_install = (include_first_install_only or
+                         not self._loaded and not self.triggers and not self.installed_presets
+                         and (self.path is None or not self.path.exists()))
         for data in PRESETS:
             key = str(data["id"])
             if key in self.installed_presets:
+                continue
+            if key in FIRST_INSTALL_ONLY and not fresh_install:
+                self.installed_presets.add(key)
+                changed = True
                 continue
             # Recognize the author's original IDs and renamed/imported copies too.
             exists = any(t.id == key or fold(t.name).replace(" ", "") == fold(str(data["name"])).replace(" ", "")

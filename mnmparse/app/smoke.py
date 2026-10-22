@@ -552,7 +552,7 @@ def _exercise(report: dict[str, Any]) -> None:
             store = TriggerStore()
             store.install_presets()
             names = {trigger.name for trigger in store.triggers}
-            if not {"Gatekick", "Healkick", "Invis Break"}.issubset(names):
+            if not {"Gatekick", "Healkick", "Invis Break", "Resist"}.issubset(names):
                 raise RuntimeError(f"Bundled trigger presets missing: {sorted(names)}")
             report["presets"] = sorted(names)
 

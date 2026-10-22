@@ -736,7 +736,7 @@ class TriggersPage(QWidget):
         # Restore missing starters without rerunning one-time migrations over
         # settings the user deliberately changed after an update.
         self.runner.store.installed_presets.difference_update(preset["id"] for preset in PRESETS)
-        self.runner.store.install_presets()
+        self.runner.store.install_presets(include_first_install_only=True)
         self._refill_list()
         self._schedule_save()
 
