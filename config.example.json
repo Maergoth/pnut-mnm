@@ -44,6 +44,7 @@
   "npc_unique_drops": true,
   "npc_quests": false,
   "npc_reputation": false,
+  "npc_celebration_sound": true,
   "start_capture_on_launch": true,
   "minimize_to_tray": true,
   "feed_max_lines": 500,
