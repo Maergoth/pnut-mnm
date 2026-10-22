@@ -127,7 +127,9 @@ class StatCardTests(unittest.TestCase):
         self.assertTrue(all(bold and color == theme.ACCENT for _y, bold, color in drawn))
 
     def test_narrow_view_scrolls_full_values_and_keyboard_selects_whole_cards(self):
-        self.page.model.set_records([sample(i, alias="Fictional Golden Antelope", high_hit=1_000_000_000)
+        # Force real overflow even when a previous shell test installed a smaller font.
+        large_values = {field: 1_000_000_000 for row in RECORD_ROWS for field in row}
+        self.page.model.set_records([sample(i, alias="Fictional Golden Antelope", **large_values)
                                      for i in range(10)])
         self.page.resize(700, 740)
         self.page.show()
