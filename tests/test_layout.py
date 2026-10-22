@@ -270,7 +270,7 @@ class WidgetLayoutTests(unittest.TestCase):
         header = _EncounterHeader()
         _offscreen(header)
         try:
-            header.add_action(QPushButton("Reset encounter"))
+            header.add_action(QPushButton("End Encounter"))
             header.set_snapshot(_snap(1.0, "Wyrmsbane Tomb", closed=False))
             header.resize(1100, 80)
             header.show()

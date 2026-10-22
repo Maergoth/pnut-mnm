@@ -31,6 +31,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.24": ReleaseNotes(
         changes=(
             "Hover settings gears now float over overlay content without reserving a separate column or enlarging the panel.",
+            "Gear shortcuts highlight their options. Weapon delay is now visible in Settings. The current-fight action is now End Encounter.",
             "NPC respawn timers created from the right-click menu show the map's monster icon inside their countdown ring, including when an expired timer is restarted.",
         ),
         settings_label="Overlay settings",

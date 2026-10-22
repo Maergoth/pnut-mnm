@@ -201,7 +201,7 @@ class MapLockWiringTests(unittest.TestCase):
         destinations = (
             (host.overlay, "overlay_enabled"),
             (host.overlay.timer_panel, "triggers"),
-            (host.overlay.attack_bar, "attack_bar"),
+            (host.overlay.attack_bar, "weapon_delay"),
             (host.overlay.npc_panel, "npc_enabled"),
             (host.map_overlay, "map_download_button"),
             (host.revenge_popout, "revenge_enabled"),

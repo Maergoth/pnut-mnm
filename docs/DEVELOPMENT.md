@@ -2,6 +2,13 @@
 
 [User guide](../README.md) · [File audit](FILE_AUDIT.md)
 
+Overlay gear shortcuts reveal the destination before adding a temporary, mouse-transparent
+`SettingsHighlight` child. Keep its outline independent of destination styles, graphics
+effects and layout. It uses monotonic elapsed time and the existing reduced-motion helper.
+Weapon delay remains the existing `attack_bar/weapon_delay` QSettings preference; both
+editors use `AttackBar.set_weapon_delay`, and restores call `reload_preferences` without
+clearing the swing tracker. Typed values commit once on Enter or focus loss.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL

@@ -264,7 +264,7 @@ past without being captured cannot be recovered.
   of every fight in that visit** (all damage, healing, taken and utility added up; duration =
   time in combat; it keeps updating while you fight there). Select a fight for that fight. The
   view follows the newest fight until you pick something else. A zone change ends the open
-  fight; fights from before the first zone line sit under "Unknown zone". **Reset encounter**
+  fight; fights from before the first zone line sit under "Unknown zone". **End Encounter**
   closes the open fight; **Export CSV / JSON** writes the selection (a summary too) under
   `logs\exports\`. **Import log...** re-parses any `combat_*.log` or `events_*.jsonl` file
   (yours or a friend's) into the same tree, tagged with the file name; fights already listed
@@ -452,7 +452,8 @@ damage; **Hit%** shows its hit accuracy.
 bar). It learns your swing delay from the gaps between your own swings ("You crush ...",
 including misses), so it normally needs a few swings first. Same-hand hits within the same
 instant, including Double Attack, count as one swing for timing; their damage still counts.
-Right-click the bar and choose **Weapon Delay** to enter a starting estimate in tenths of a
+Use **Settings > Overlay > Weapon delay**, or right-click the bar and choose **Weapon Delay**,
+to enter a starting estimate in tenths of a
 second: **36 means 3.6 seconds**, and **0** selects automatic timing. The value contributes
 one initial interval sample only when that hand has no timing reference. Real swings replace
 it as the rolling estimate develops; changing the setting never overrides learned timing.
@@ -652,7 +653,8 @@ and unavailable fields do not add empty headings.
 
 Hover any persistent overlay panel to reveal its top-left gear, floating over the existing
 content without a separate column or extra padding. Click it to open
-the main app at that panel's settings; the timer panel opens Triggers. The gear
+the main app at that panel's settings and briefly outline the destination; the timer panel
+opens Triggers and highlights its timer list. Reduced motion uses a steady brief outline. The gear
 respects click-through and hides when the pointer leaves the panel.
 
 The map header's **monster icon** opens notable NPCs for its selected zone. Choosing

@@ -978,8 +978,22 @@ class MainWindow(QMainWindow):
 
         reveal_option()
         # A page created on navigation gets its first layout on the next event.
-        QTimer.singleShot(0, page, reveal_option)
+        def reveal_and_highlight() -> None:
+            if self._stack.currentWidget() is page:
+                reveal_option()
+                anchor = toggle if target.height() > scroll.viewport().height() else target
+                self._highlight_settings_target(anchor)
+
+        QTimer.singleShot(0, page, reveal_and_highlight)
         toggle.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _highlight_settings_target(self, target: QWidget | None) -> None:
+        from mnmparse.app.settings_highlight import SettingsHighlight
+
+        for previous in self.findChildren(SettingsHighlight):
+            previous.stop()
+        if isinstance(target, QWidget) and target.isVisible():
+            SettingsHighlight(target, self._cfg)
 
     # -- pages ---------------------------------------------------------------------------
 
@@ -1600,6 +1614,8 @@ class App(QApplication):
                 for name in ("locked_changed", "click_through_changed", "tab_changed", "visibility_changed",
                              "appearance_changed", "attack_bar_changed", "npc_panel_changed"):
                     self._connect_optional(overlay, name, lambda *_: self._sync_overlay_settings())
+                self._connect_optional(getattr(overlay, "attack_bar", None), "weapon_delay_changed",
+                                       lambda _delay: self._sync_overlay_settings())
         if overlay is not None and callable(getattr(overlay, "set_history", None)):
             try:
                 overlay.set_history(engine.history())
@@ -1653,7 +1669,7 @@ class App(QApplication):
         targets = (
             (overlay, "overlay_enabled", "Combat overlay"),
             (getattr(overlay, "timer_panel", None), "triggers", "Timer"),
-            (getattr(overlay, "attack_bar", None), "attack_bar", "Auto-attack bar"),
+            (getattr(overlay, "attack_bar", None), "weapon_delay", "Auto-attack bar"),
             (getattr(overlay, "npc_panel", None), "npc_enabled", "Considered NPC"),
             (self.map_overlay, "map_download_button", "Map"),
             (self.__dict__.get("revenge_popout"), "revenge_enabled", "Revenge List"),
@@ -1681,6 +1697,9 @@ class App(QApplication):
         self.show_window()
         if target == "triggers":
             self.window.show_page("triggers")
+            page = self.window.page("triggers")
+            control = getattr(page, "timer_help", None)
+            self.window._highlight_settings_target(control.parentWidget() if control is not None else None)
         else:
             self.window._open_settings_option(target)
 
@@ -2190,6 +2209,14 @@ class App(QApplication):
     def _on_overlay_setting(self, key: str, value: Any) -> None:
         """A Settings > Overlay control changed: apply it to the overlay right away."""
         overlay = self.overlay
+        if key == "weapon_delay":
+            bar = getattr(overlay, "attack_bar", None)
+            if bar is not None:
+                bar.set_weapon_delay(int(value))
+            else:
+                self.settings.setValue("attack_bar/weapon_delay", int(value))
+            self._sync_overlay_settings()
+            return
         if key in {f"npc_{part}" for part in
                    ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")}:
             self.settings.setValue("npc/" + key[4:], bool(value))
@@ -2234,6 +2261,9 @@ class App(QApplication):
         sync = getattr(page, "sync_overlay", None)
         if not callable(sync):
             return
+        from mnmparse.app.attack_bar import saved_weapon_delay
+
+        sync(weapon_delay=saved_weapon_delay(self.settings))
         if overlay is None:
             sync(locked=self._current_overlay_lock(),
                  opacity=self.settings.value("overlay/opacity", self.cfg.overlay_opacity, type=float),

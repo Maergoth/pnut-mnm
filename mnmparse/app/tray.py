@@ -2,7 +2,7 @@
 
 :class:`TrayIcon` only emits signals; the application (``main.py``) decides what they do.
 The menu mirrors the top bar: show/hide the window, start/stop capture, overlay on/off,
-lock/unlock the overlay, reset the encounter, quit.  A balloon is shown the first time the
+lock/unlock the overlay, end the encounter, quit.  A balloon is shown the first time the
 window is minimised to the tray so the user knows where it went.
 """
 
@@ -28,7 +28,7 @@ class TrayIcon(QSystemTrayIcon):
         toggle_capture_requested: "Start capture" / "Stop capture".
         toggle_overlay_requested: "Show overlay" / "Hide overlay".
         toggle_lock_requested: "Lock overlay" / "Unlock overlay".
-        reset_requested: "Reset encounter".
+        reset_requested: "End Encounter".
         restart_update_requested: Restart into the downloaded application update.
         quit_requested: "Quit".
 
@@ -70,7 +70,7 @@ class TrayIcon(QSystemTrayIcon):
         self._click_through_action.setCheckable(True)
         self._click_through_action.setToolTip("Click-through: the overlay passes every click to the game (tabs and tooltips stop working)")
         self._click_through_action.triggered.connect(self.toggle_click_through_requested)
-        self._reset_action = QAction("Reset encounter", self._menu)
+        self._reset_action = QAction("End Encounter", self._menu)
         self._reset_action.triggered.connect(self.reset_requested)
         self._update_action = QAction(self._menu)
         self._update_action.triggered.connect(self.restart_update_requested)

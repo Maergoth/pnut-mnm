@@ -552,7 +552,7 @@ class _EncounterHeader(QWidget):
 
     # -- layout ------------------------------------------------------------------------
     def add_action(self, widget: QWidget) -> None:
-        """Append a button (e.g. Reset encounter) to the end of the first row."""
+        """Append a button (e.g. End Encounter) to the end of the first row."""
         self._actions.append(widget)
         self._row1.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
         self._update_mode()
@@ -1323,7 +1323,7 @@ class LivePage(QWidget):
         header_layout.setSpacing(18)
         self._header = _EncounterHeader()
         header_layout.addWidget(self._header, 1)
-        self._reset = QPushButton("Reset encounter")
+        self._reset = QPushButton("End Encounter")
         self._reset.setObjectName("Danger")
         self._reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self._reset.setToolTip("Close the open encounter now.")
@@ -1897,7 +1897,7 @@ class LivePage(QWidget):
 
     # -- actions ---------------------------------------------------------------------------
     def _on_reset(self) -> None:
-        log.info("Reset encounter requested from the Live page")
+        log.info("End encounter requested from the Live page")
         try:
             self._engine.reset_encounter()
         except Exception:  # noqa: BLE001 - the engine must never take the GUI down
@@ -2856,6 +2856,8 @@ class SettingsPage(QWidget):
         self._content.addWidget(panel)
 
     def _build_overlay(self) -> None:
+        from mnmparse.app.attack_bar import MAX_WEAPON_DELAY
+
         form = self._section(
             "Overlay",
             "Changes apply immediately to the overlay and its pop-out windows.",
@@ -2865,6 +2867,12 @@ class SettingsPage(QWidget):
         self.overlay_click_through = ToggleSwitch()
         self.attack_bar = ToggleSwitch()
         self.attack_bar.toggled.connect(self._on_form_changed)
+        self.weapon_delay = QSpinBox()
+        self.weapon_delay.setRange(0, MAX_WEAPON_DELAY)
+        self.weapon_delay.setKeyboardTracking(False)
+        self.weapon_delay.setSpecialValueText("Automatic")
+        self.weapon_delay.setMinimumWidth(120)
+        self.weapon_delay.valueChanged.connect(lambda value: self._emit_overlay_setting("weapon_delay", value))
         percent = _percent_text
         self.overlay_opacity = SliderRow("", 20, 100, 85, formatter=percent)
         self.overlay_opacity.setFixedWidth(360)
@@ -2885,6 +2893,8 @@ class SettingsPage(QWidget):
         self._row(form, "Tab", self.overlay_tab)
         self._row(form, "Auto-attack bar", self.attack_bar,
                   "Swing timer under the overlay, learned from your own swings; unlock the overlay to drag it off")
+        self._row(form, "Weapon delay", self.weapon_delay,
+                  "Weapon-stat units: 36 = 3.6 seconds; 0 is automatic. Starting estimate only; actual swings are learned.")
         self._row(form, "Position", reset)
         npc_form = self._section(
             "Considered NPC",
@@ -2922,6 +2932,7 @@ class SettingsPage(QWidget):
         "font_scale": "overlay_font_scale",
         "tab": "overlay_tab",
         "attack_bar": "attack_bar",
+        "weapon_delay": "weapon_delay",
         **{f"npc_{key}": f"npc_{key}" for key in
            ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
     }
@@ -2948,6 +2959,8 @@ class SettingsPage(QWidget):
                     value = round(float(value), 2)
                 elif key == "tab":
                     self._select(self.overlay_tab, str(value))
+                elif key == "weapon_delay":
+                    self.weapon_delay.setValue(int(value))
                 else:
                     getattr(self, field_name).setChecked(bool(value))
                 changes[field_name] = value
@@ -3268,6 +3281,9 @@ class SettingsPage(QWidget):
             self.show_other_groups.setChecked(bool(_cfg_get(cfg, "show_other_groups", False)))
             self.dummy_fix.setChecked(bool(_cfg_get(cfg, "dummy_fix", False)))
             self.attack_bar.setChecked(bool(_cfg_get(cfg, "attack_bar", True)))
+            from mnmparse.app.attack_bar import saved_weapon_delay
+
+            self.weapon_delay.setValue(saved_weapon_delay(self._settings))
             for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation"):
                 getattr(self, f"npc_{key}").setChecked(bool(getattr(cfg, f"npc_{key}")))
             self.feed_max_lines.setValue(int(_cfg_get(cfg, "feed_max_lines", 500)))
