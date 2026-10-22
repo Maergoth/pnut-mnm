@@ -354,6 +354,8 @@ class Engine(QObject):
         self._stat_snapshot: dict[str, Any] | None = None
         self._stat_snapshot_valid_until: float | None = None
         self._protected_ledger: Any = None
+        self._player_reader_epoch = 0
+        self._leaderboard_frame_context: tuple[int, Any, tuple[Any, ...]] | None = None
         self._player_crop_warned = False
         self._player_reader_warned = False
         self._low_health_alert_at = float("-inf")
@@ -508,6 +510,26 @@ class Engine(QObject):
                 and self._state == "running" and self._window_found and not self._paused
                 and not self._stop_event.is_set())
 
+    @staticmethod
+    def _leaderboard_reader_key(cfg: Config) -> tuple[Any, ...]:
+        return (tuple(cfg.crop), cfg.player_status_crop, cfg.player_status_separate,
+                cfg.player_status_enabled, cfg.player_name, cfg.capture_backend, cfg.window_title)
+
+    def _leaderboard_frame_current(self, cfg: Config | None = None) -> bool:
+        """Reject OCR begun before a capture/reader transition, including a round trip."""
+        if cfg is not None and self._leaderboard_reader_key(cfg) != self._leaderboard_reader_key(self._cfg):
+            return False
+        context = self._leaderboard_frame_context
+        return context is None or (context[0] == self._player_reader_epoch and context[1] is self._source
+                                   and context[2] == self._leaderboard_reader_key(self._cfg))
+
+    def _invalidate_leaderboard_reader(self) -> None:
+        self._player_reader_epoch += 1
+        self._stat_snapshot = None
+        self._stat_snapshot_valid_until = None
+        if self._protected_ledger is not None:
+            self._protected_ledger.set_capture_eligible(False)
+
     def leaderboard_status(self) -> dict[str, Any]:
         if not self._lock.acquire(blocking=False):
             return {"eligible": False, "reason": "Waiting for the screen reader"}
@@ -553,11 +575,11 @@ class Engine(QObject):
         finally:
             self._lock.release()
 
-    def _protect_live_stats(self, stats: dict[str, Any]) -> None:
+    def _protect_live_stats(self, stats: dict[str, Any], cfg: Config | None = None) -> None:
         ledger = self._protected_ledger
         if ledger is not None:
             try:
-                ledger.set_capture_eligible(self._leaderboard_capture_eligible())
+                ledger.set_capture_eligible(self._leaderboard_capture_eligible() and self._leaderboard_frame_current(cfg))
                 ledger.record_stats(stats)
             except (OSError, ValueError) as exc:
                 ledger.error = str(exc)
@@ -567,7 +589,7 @@ class Engine(QObject):
         if ledger is None:
             return
         try:
-            ledger.set_capture_eligible(self._leaderboard_capture_eligible())
+            ledger.set_capture_eligible(self._leaderboard_capture_eligible() and self._leaderboard_frame_current())
             if not (msg.backlog or msg.fragment or event.estimated or event.estimated_ts):
                 ledger.record_event(event, self._cfg.player_name)
         except (OSError, ValueError) as exc:
@@ -807,6 +829,7 @@ class Engine(QObject):
             self._archive_saved_version = None
             self._archive_attached = False
             cfg = self._cfg
+            self._invalidate_leaderboard_reader()
             self._session_encounter_keys.clear()
             self._session_stats = SessionStats(
                 cfg.player_name, include_personal=bool(getattr(cfg, "include_personal", False)), vocab=VOCAB,
@@ -1822,8 +1845,7 @@ class Engine(QObject):
         self._set_low_health_active(False)
         self._reset_overburdened()
         self._player_panel_valid_until = None
-        self._stat_snapshot = None
-        self._stat_snapshot_valid_until = None
+        self._invalidate_leaderboard_reader()
         if self._player_telemetry is not None:
             self._telemetry().pause()
             self._save_player_status()
@@ -1925,7 +1947,7 @@ class Engine(QObject):
                                    "captured_at": utc_stamp(datetime.fromtimestamp(now, timezone.utc)),
                                    "capture_backend": "window" if self._leaderboard_capture_eligible() else "screen"}
             self._stat_snapshot_valid_until = now + max_gap
-            self._protect_live_stats(self._stat_snapshot)
+            self._protect_live_stats(self._stat_snapshot, cfg)
         if reading is not None and (self._weight_sample_at is None or now > self._weight_sample_at):
             self._player_panel_valid_until = now + max_gap
         self._observe_weight(reading, cfg, now, max_gap)
@@ -1965,6 +1987,18 @@ class Engine(QObject):
 
     def _process_frame(self, frame: np.ndarray, cfg: Config, *, cropped: bool = False,
                        status_frame: np.ndarray | None = None, fresh: bool = True) -> None:
+        """Keep capture evidence attached to one OCR operation across GUI transitions."""
+        with self._lock:
+            previous = self._leaderboard_frame_context
+            self._leaderboard_frame_context = (self._player_reader_epoch, self._source, self._leaderboard_reader_key(cfg))
+        try:
+            self._process_captured_frame(frame, cfg, cropped=cropped, status_frame=status_frame, fresh=fresh)
+        finally:
+            with self._lock:
+                self._leaderboard_frame_context = previous
+
+    def _process_captured_frame(self, frame: np.ndarray, cfg: Config, *, cropped: bool = False,
+                                status_frame: np.ndarray | None = None, fresh: bool = True) -> None:
         """One frame: crop -> preprocess -> OCR -> tracker -> messages (cli._RunSession).
 
         ``cropped``: ``frame`` already is the crop (``latest_region``)."""
@@ -2012,7 +2046,7 @@ class Engine(QObject):
         ocr_ms = (time.perf_counter() - t1) * 1000.0
         now = time.time()
         with self._lock:
-            if fresh and cfg.player_status_enabled:
+            if fresh and cfg.player_status_enabled and self._leaderboard_frame_current(cfg):
                 self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else (),
                                             ocr_ms=ocr_ms)
             self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
