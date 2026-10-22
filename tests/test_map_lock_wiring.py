@@ -44,7 +44,7 @@ class _MapWindow(QWidget):
     def on_message(self, *_args):
         pass
 
-    def set_notable_npcs(self, *_args):
+    def set_notable_npcs(self, *_args, **_kwargs):
         pass
 
     def showEvent(self, event):

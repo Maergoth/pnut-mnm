@@ -26,7 +26,7 @@ USER_AGENT = "PNUT-MnM/1.0 (NPC reference; +https://github.com/Maergoth/pnut-mnm
 REQUEST_TIMEOUT = 8
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 CACHE_SCHEMA = 1
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 log = logging.getLogger(__name__)
 
 
@@ -67,6 +67,7 @@ class NotableNpcs:
     zone: str
     names: tuple[str, ...] = ()
     source: str = ""
+    levels: tuple[tuple[str, str], ...] = ()
 
 
 class WikiDataError(ValueError):
@@ -308,7 +309,7 @@ def _row_tables(root: _Node) -> dict[int, _Node]:
 def _infobox_field(label: str) -> str:
     """Field labels are finite; item/quest names can contain the same words."""
     key = _key(label)
-    if key in {"quest", "quests", "required by quests", "required for quests", "related quests", "quest involvement", "quest requirements"}:
+    if key in {"quest", "quests", "required by quests", "required for quests", "related quests", "quest involvement", "quest requirements", "quests offered", "offered quests", "quests given", "quest giver"}:
         return "quests"
     if key in {"reputation", "reputations", "reputation change", "reputation changes", "reputation gained", "reputation lost", "faction", "factions", "faction change", "faction changes", "faction hits", "faction gained", "faction lost"}:
         return "reputation"
@@ -497,7 +498,43 @@ def parse_notables(html: str, zone: str, source: str = "") -> NotableNpcs:
             names.extend(_values(node))
     if not recognized:
         raise WikiDataError("Zone notable-NPC section is not recognized; keeping the cached list")
-    return NotableNpcs(_title(zone), _unique(names), source or wiki_url(zone))
+    selected = _unique(names)
+    selected_keys = {_clean(name.replace("_", " ")).casefold(): name for name in selected}
+    levels: dict[str, list[str]] = {}
+    columns: dict[int, tuple[int, int]] = {}
+    # Notable names may appear in a compact zone summary while their levels
+    # live in another NPC table. Match those names only, never the zone's own
+    # level range or a quest's minimum/recommended level.
+    for node in _walk(root):
+        if node.tag != "tr":
+            continue
+        cells = [n for n in node.children if isinstance(n, _Node) and n.tag in {"td", "th"}]
+        table_id = id(row_tables.get(id(node)))
+        if cells and all(cell.tag == "th" for cell in cells):
+            labels = [_key(_text(cell)) for cell in cells]
+            name_column = next((i for i, label in enumerate(labels) if _notable_heading(label)
+                                or label in {"name", "npc", "npcs", "npc name", "npc names", "monster", "monsters", "mob", "mobs"}
+                                or label.startswith("npcs ")), None)
+            level_column = next((i for i, label in enumerate(labels) if label in {"level", "levels", "level range", "lvl"}), None)
+            if name_column is not None and level_column is not None:
+                columns[table_id] = (name_column, level_column)
+            else:
+                columns.pop(table_id, None)
+            continue
+        if table_id not in columns:
+            continue
+        name_column, level_column = columns[table_id]
+        if max(name_column, level_column) >= len(cells):
+            continue
+        level = _text(cells[level_column])
+        if len(level) > 120 or not re.search(r"\d", level):
+            continue
+        for name in _values(cells[name_column]):
+            canonical = selected_keys.get(_clean(name.replace("_", " ")).casefold())
+            if canonical:
+                levels.setdefault(canonical, []).append(level)
+    return NotableNpcs(_title(zone), selected, source or wiki_url(zone),
+                       tuple((name, " / ".join(_unique(levels[name]))) for name in selected if name in levels))
 
 
 _KINDS = {"npc": NpcDetails, "item": ItemDetails, "notables": NotableNpcs}
@@ -525,9 +562,14 @@ class WikiRepository:
             data = envelope["data"]
             if not isinstance(data, dict):
                 return None
+            if kind == "notables":
+                # Names-only records remain useful while a newer parser waits
+                # for the wiki. The next successful refresh adds zone levels.
+                data.setdefault("levels", [])
             text_keys = {"name", "source", "level"} if kind == "npc" else {"name", "source"} if kind == "item" else {"zone", "source"}
             tuple_keys = {"common_drops", "unique_drops", "quests", "reputation"} if kind == "npc" else {"lines"} if kind == "item" else {"names"}
-            if set(data) != text_keys | tuple_keys:
+            pair_keys = {"levels"} if kind == "notables" else set()
+            if set(data) != text_keys | tuple_keys | pair_keys:
                 return None
             if any(not isinstance(data[key], str) or len(data[key]) > 2000 for key in text_keys):
                 return None
@@ -535,6 +577,12 @@ class WikiRepository:
                 if not isinstance(data[key], list) or len(data[key]) > 512 or any(not isinstance(v, str) or len(v) > 600 for v in data[key]):
                     return None
                 data[key] = tuple(data[key])
+            for key in pair_keys:
+                if (not isinstance(data[key], list) or len(data[key]) > 512
+                        or any(not isinstance(pair, list) or len(pair) != 2
+                               or any(not isinstance(v, str) or len(v) > 600 for v in pair) for pair in data[key])):
+                    return None
+                data[key] = tuple(tuple(pair) for pair in data[key])
             source = urlsplit(data["source"])
             if source.scheme != "https" or source.hostname != urlsplit(WIKI).hostname or not source.path.startswith("/wiki/"):
                 return None

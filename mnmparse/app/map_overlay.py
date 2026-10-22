@@ -3,19 +3,20 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from io import BytesIO
 from typing import Any
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMenu,
+    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from mnmparse.app import theme
 from mnmparse.app.monster_icon import monster_icon as _monster_icon
+from mnmparse.app.notable_npc_menu import NotableNpcMenu, npc_title_key
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
 from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title, zone_from_who
@@ -269,7 +270,8 @@ class MapOverlay(QWidget):
         self._normal_geometry = QRect()
         self._closing = False
         self._current_zone = str(settings.value("map/zone", "") or "")
-        self._notable_npcs: dict[str, tuple[tuple[str, ...], str]] = {}
+        self._notable_npcs: dict[str, tuple[tuple[str, ...], str, dict[str, str], frozenset[str], frozenset[str]]] = {}
+        self._notable_menu_zone = ""
         self._saved_view = self._read_view_state(settings.value("map/view", {}))
         self._restore_view = self._saved_view
         self.setMinimumSize(360, 240)
@@ -296,7 +298,7 @@ class MapOverlay(QWidget):
         self.notable_npcs.setCursor(Qt.CursorShape.PointingHandCursor)
         self.notable_npcs.setAccessibleName("Notable NPCs")
         self.notable_npcs.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.notable_npcs_menu = QMenu(self.notable_npcs)
+        self.notable_npcs_menu = NotableNpcMenu(self.notable_npcs)
         self.notable_npcs_menu.setAccessibleName("Notable NPCs in the selected zone")
         self.notable_npcs_menu.aboutToShow.connect(self._open_notable_npcs)
         self.notable_npcs_menu.aboutToHide.connect(self._header_hide_after_menu)
@@ -426,6 +428,7 @@ class MapOverlay(QWidget):
         self.notable_npcs.setFixedSize(size, size)
         icon_size = max(20, round(px * 1.54))
         self.notable_npcs.setIconSize(QSize(icon_size, icon_size))
+        self.notable_npcs_menu.set_badge_size(max(14, round(px * 1.35)))
         self.drag_handle.setFixedSize(max(24, round(px * 1.85)), size)
         self.fullscreen.setFixedSize(size, size)
         self._position_chrome()
@@ -470,7 +473,9 @@ class MapOverlay(QWidget):
             self.npc_zone_requested.emit(title)
             self.load()
 
-    def set_notable_npcs(self, zone: str, names: Sequence[str], status: str = "") -> None:
+    def set_notable_npcs(self, zone: str, names: Sequence[str], status: str = "", *,
+                        levels: Mapping[str, str] | None = None,
+                        unique_loot: Iterable[str] = (), quests: Iterable[str] = ()) -> None:
         """Accept cached or refreshed names without replacing another zone's menu.
 
         An empty status with no names means a successfully loaded empty list.
@@ -484,9 +489,13 @@ class MapOverlay(QWidget):
         for name in names:
             name = str(name).strip()
             if name:
-                unique.setdefault(name.casefold(), name)
+                unique.setdefault(npc_title_key(name), name)
         rows = tuple(sorted(unique.values(), key=str.casefold))
-        value = (rows, str(status).strip())
+        value = (rows, str(status).strip(),
+                 {npc_title_key(name): str(level).strip() for name, level in (levels or {}).items()
+                  if npc_title_key(name) and level is not None},
+                 frozenset(npc_title_key(name) for name in unique_loot),
+                 frozenset(npc_title_key(name) for name in quests))
         if self._notable_npcs.get(title) == value:
             return
         self._notable_npcs[title] = value
@@ -497,12 +506,23 @@ class MapOverlay(QWidget):
         zone = self._current_zone
         self.notable_npcs.setEnabled(bool(zone))
         self.notable_npcs.setToolTip(f"Notable NPCs in {zone}" if zone else "Select a zone to browse notable NPCs")
+        names, status, levels, unique_loot, quests = self._notable_npcs.get(
+            zone, ((), "Loading notable NPCs…", {}, frozenset(), frozenset()))
+        # Metadata changes keep native actions and their vertical hit targets.
+        # Membership/status changes wait until close/open so no item underneath
+        # the pointer can become a different NPC while the user selects it.
+        if self.notable_npcs_menu.isVisible():
+            if self._notable_menu_zone == zone:
+                self.notable_npcs_menu.refresh_metadata(levels, unique_loot, quests)
+            return
         self.notable_npcs_menu.clear()
-        names, status = self._notable_npcs.get(zone, ((), "Loading notable NPCs…"))
+        self._notable_menu_zone = zone
         for name in names:
-            # Ampersands are NPC name text, not keyboard mnemonic markers.
-            action = self.notable_npcs_menu.addAction(name.replace("&", "&&"))
+            key = npc_title_key(name)
+            action = self.notable_npcs_menu.addAction("")
             action.setData(name)
+            self.notable_npcs_menu.set_action_label(action, name, levels.get(key, ""))
+            self.notable_npcs_menu.set_badges(action, unique_loot=key in unique_loot, quests=key in quests)
             action.triggered.connect(lambda _checked=False, name=name, zone=zone: self._select_npc(zone, name))
         if status or not names:
             if names:
@@ -516,11 +536,13 @@ class MapOverlay(QWidget):
 
     def _open_notable_npcs(self) -> None:
         self._show_header()
+        self._update_notable_npcs()
         if self._current_zone and not self._closing:
             self.npc_zone_requested.emit(self._current_zone)
 
     def _header_hide_after_menu(self) -> None:
         self._header_hide.start()
+        QTimer.singleShot(0, self._update_notable_npcs)
 
     def load(self, *, refresh: bool = False, entry: MapImage | None = None,
              preserve_view: bool = False) -> None:

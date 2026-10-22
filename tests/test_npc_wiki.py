@@ -237,6 +237,7 @@ class WikiParserTests(unittest.TestCase):
     def test_notable_table_uses_npc_column_and_stops_at_next_section(self):
         details = parse_notables(NOTABLE_HTML, "Night Harbor")
         self.assertEqual(details.names, ("Test Keeper", "A test captain"))
+        self.assertEqual(details.levels, (("Test Keeper", "12"),))
         self.assertEqual(parse_notables("<h2>Notable NPCs</h2><p>None known</p>", "Test Zone").names, ())
         with self.assertRaises(WikiDataError):
             parse_notables('<h2>NPCs</h2><a href="/wiki/A_rat">A rat</a>', "Test Zone")
@@ -267,6 +268,40 @@ class WikiParserTests(unittest.TestCase):
         <tr><td><a href="/wiki/A_common_bat">A common bat</a></td><td>1</td></tr></table>'''
         self.assertEqual(parse_notables(html, "Test Zone").names, ("Test Keeper",))
         self.assertEqual(parse_notables('<h2>Notable NPCs</h2>' + html, "Test Zone").names, ("Test Keeper",))
+
+    def test_notable_summary_uses_matching_npc_table_levels_and_preserves_ranges(self):
+        html = '''<table><tr><th>Level</th><td>1–50</td></tr>
+        <tr><th>Notable NPCs</th><td><a href="/wiki/Test_Keeper">Test Keeper</a>,
+        <a href="/wiki/A_test_captain">A test captain</a>, <a href="/wiki/Test_Shadow">Test Shadow</a></td></tr></table>
+        <table><tr><th>Quest</th><th>NPC</th><th>Minimum Level</th></tr>
+        <tr><td>Test Quest</td><td><a href="/wiki/Test_Keeper">Test Keeper</a></td><td>99</td></tr></table>
+        <table><tr><th>NPCs - West Gate</th><th>Level</th><th>Loot</th></tr>
+        <tr><td><a href="/wiki/Test_Keeper">Test Keeper</a></td><td>~12–15</td><td>Token</td></tr>
+        <tr><td><a href="/wiki/A_test_captain">A test captain</a></td><td>20+</td><td>-</td></tr>
+        <tr><td><a href="/wiki/Test_Shadow">Test Shadow</a></td><td>Unknown</td><td>-</td></tr>
+        <tr><td><a href="/wiki/A_common_rat">A common rat</a></td><td>1</td><td>-</td></tr></table>'''
+        details = parse_notables(html, "Test Zone")
+        self.assertEqual(details.names, ("Test Keeper", "A test captain", "Test Shadow"))
+        self.assertEqual(details.levels, (("Test Keeper", "~12–15"), ("A test captain", "20+")))
+
+    def test_notable_levels_follow_column_order_and_keep_distinct_variants(self):
+        html = '''<table><tr><th>Named NPCs</th><th>Race</th><th>Level</th></tr>
+        <tr><td><a href="/wiki/Test_Keeper">Test Keeper</a></td><td>Human</td><td>12</td></tr>
+        <tr><td><a href="/wiki/Test_Keeper">Test Keeper</a></td><td>Human</td><td>14–16</td></tr>
+        <tr><td><a href="/wiki/Test_Keeper">Test Keeper</a></td><td>Human</td><td>12</td></tr>
+        <tr><th>Level</th><th>Common NPCs</th></tr>
+        <tr><td>1</td><td><a href="/wiki/A_common_rat">A common rat</a></td></tr></table>'''
+        details = parse_notables(html, "Test Zone")
+        self.assertEqual(details.names, ("Test Keeper",))
+        self.assertEqual(details.levels, (("Test Keeper", "12 / 14–16"),))
+
+    def test_npc_quests_union_offered_and_required_without_dialogue_or_rewards(self):
+        html = '''<table class="infobox"><tr><th>Quests offered</th>
+        <td><a href="/wiki/Test_Errand">Test Errand</a></td></tr></table>
+        <h2>Required by quests</h2><ul><li><a href="/wiki/Test_Hunt">Test Hunt</a></li></ul>
+        <h2>Quest dialogue</h2><p><a href="/wiki/Unrelated_Name">Unrelated Name</a></p>
+        <h2>Quest rewards</h2><p><a href="/wiki/Test_Reward">Test Reward</a></p>'''
+        self.assertEqual(parse_npc(html, "Test Keeper").quests, ("Test Errand", "Test Hunt"))
 
     def test_titles_are_encoded_and_do_not_become_paths(self):
         self.assertTrue(wiki_url("Test Keeper's Ring").endswith("Test_Keeper%27s_Ring"))
@@ -464,6 +499,37 @@ class WikiCacheTests(unittest.TestCase):
         self.assertEqual(other.cached_item("Staff of Sigils"), item)
         self.assertEqual(other.cached_notables("Night Harbor"), notables)
         self.assertIsNone(other.cached_npc("Staff of Sigils"))
+
+    def test_legacy_notable_cache_is_immediate_offline_and_refresh_adds_levels(self):
+        record = NotableNpcs("Test Zone", ("Test Keeper",), wiki_url("Test Zone"))
+        self.repo._save("notables", "Test Zone", "Test Zone", "42:2026-10-20T10:00:00Z", record)
+        path = self.repo._path("notables", "Test Zone")
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        envelope["data"].pop("levels")
+        envelope["parser_version"] = 1
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        before = path.read_bytes()
+        with patch.object(npc_wiki, "_api", side_effect=AssertionError("offline cache read")):
+            self.assertEqual(self.repo.cached_notables("Test Zone"), record)
+        self.assertEqual(path.read_bytes(), before)
+        with patch.object(npc_wiki, "_api", side_effect=URLError("offline")):
+            with self.assertRaises(OSError):
+                self.repo.refresh_notables("Test Zone")
+        self.assertEqual(path.read_bytes(), before)
+        with patch.object(npc_wiki, "_api", side_effect=[revision("Test Zone"), parsed(NOTABLE_HTML, "Test Zone")]):
+            refreshed = self.repo.refresh_notables("Test Zone")
+        self.assertEqual(refreshed.levels, (("Test Keeper", "12"),))
+        self.assertEqual(WikiRepository(self.root).cached_notables("Test Zone"), refreshed)
+
+    def test_malformed_cached_notable_level_pairs_are_ignored(self):
+        record = NotableNpcs("Test Zone", ("Test Keeper",), wiki_url("Test Zone"), (("Test Keeper", "12"),))
+        self.repo._save("notables", "Test Zone", "Test Zone", "42:", record)
+        path = self.repo._path("notables", "Test Zone")
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        for invalid in (["12"], [["Test Keeper", 12]], [["Test Keeper", "12", "extra"]]):
+            envelope["data"]["levels"] = invalid
+            path.write_text(json.dumps(envelope), encoding="utf-8")
+            self.assertIsNone(self.repo.cached_notables("Test Zone"))
 
     def test_corrupt_or_untrusted_cache_is_ignored(self):
         path = self.repo._path("npc", "Test Keeper")

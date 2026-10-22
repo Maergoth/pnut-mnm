@@ -123,6 +123,7 @@ mnmparse/            library + CLI
     update_restart.py visible automatic restart countdown, postponement and retry notice
     overlay_settings.py hover-only overlay shortcuts into the main app's settings
     monster_icon.py shared scalable NPC glyph for maps and respawn timers
+    notable_npc_menu.py level labels and unique-loot/quest badges for the map's NPC menu
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)
     timer_panel.py   TimerPanel: trigger countdowns with radial rings, docked under the overlay
     triggers_page.py TriggersPage: trigger list and editor, audio settings

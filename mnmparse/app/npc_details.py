@@ -12,7 +12,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Qt, Signal
 
 from mnmparse.maps import zone_title
-from mnmparse.npc_wiki import ItemDetails, WikiPageMissing
+from mnmparse.npc_wiki import ItemDetails, WikiPageMissing, unique_drops_excluding_common
 from mnmparse.parser import parse_line
 
 log = logging.getLogger(__name__)
@@ -32,6 +32,11 @@ class NpcDetailsController(QObject):
         self._pending: set[tuple[str, str]] = set()
         self._next_check: dict[tuple[str, str], float] = {}
         self._last_errors: dict[tuple[str, str], str] = {}
+        self._notable_records: dict[str, Any] = {}
+        self._notable_status: dict[str, str] = {}
+        self._npc_metadata: dict[str, Any] = {}
+        self._enrichment: set[tuple[str, str]] = set()
+        self._enrichment_retry_at = 0.0
         self._queue: deque[tuple[str, str]] = deque()
         self._condition = threading.Condition()
         self._closed = False
@@ -85,9 +90,57 @@ class NpcDetailsController(QObject):
             return
         self._zone = zone
         cached = self.repo.cached_notables(zone)
-        self.map_overlay.set_notable_npcs(zone, cached.names if cached else (),
-                                         self._status("notables", zone, cached))
+        self._present_notables(zone, cached, self._status("notables", zone, cached), enrich=False)
         self._request("notables", zone)
+        for name in getattr(cached, "names", ()):
+            self._request("npc", name, background=True)
+
+    @staticmethod
+    def _positive_values(values: Any) -> tuple[str, ...]:
+        """Unavailable placeholders never claim that loot or quests exist."""
+        result = []
+        if isinstance(values, str):
+            values = (values,)
+        for raw in values or ():
+            if not isinstance(raw, str):
+                continue
+            value = " ".join(raw.replace("_", " ").split()).strip(" .:;!?–—-")
+            key = value.casefold()
+            if (not value or key in {"none", "none known", "unknown", "n/a", "n a", "na", "tbd", "not known", "not yet known"}
+                    or key.startswith(("not available", "not recorded", "not listed", "unavailable", "no data", "no known ", "no quest", "no unique", "no drop"))):
+                continue
+            result.append(raw)
+        return tuple(result)
+
+    def _present_notables(self, zone: str, record: Any, status: str, *, enrich: bool = True) -> None:
+        self._notable_records[zone] = record
+        self._notable_status[zone] = status
+        names = tuple(getattr(record, "names", ())) if record is not None else ()
+        zone_levels = {self._key(name).casefold(): level for name, level in getattr(record, "levels", ())}
+        levels, unique_loot, quests = {}, [], []
+        for name in names:
+            key = self._key(name).casefold()
+            details = self._npc_metadata.get(key)
+            if key not in self._npc_metadata:
+                details = self.repo.cached_npc(name)
+                self._npc_metadata[key] = details
+            candidates = (zone_levels.get(key), getattr(details, "level", ""))
+            level = next((value for value in candidates if isinstance(value, str)
+                          and len(value) <= 120 and re.search(r"\d", value)), "")
+            if level:
+                levels[name] = level
+            if details is not None:
+                common = self._positive_values(getattr(details, "common_drops", ()))
+                unique = self._positive_values(getattr(details, "unique_drops", ()))
+                if unique_drops_excluding_common(common, unique):
+                    unique_loot.append(name)
+                if self._positive_values(getattr(details, "quests", ())):
+                    quests.append(name)
+        self.map_overlay.set_notable_npcs(zone, names, status, levels=levels,
+                                         unique_loot=unique_loot, quests=quests)
+        if enrich:
+            for name in names:
+                self._request("npc", name, background=True)
 
     def show_item(self, name: str) -> None:
         name = self._key(name)
@@ -139,7 +192,11 @@ class NpcDetailsController(QObject):
         if self._closed or time.monotonic() < self._next_check.get(key, 0):
             return
         with self._condition:
+            if background and kind == "npc" and time.monotonic() < self._enrichment_retry_at:
+                return
             if key in self._pending:
+                if not background:
+                    self._enrichment.discard(key)
                 if not background and key in self._queue:
                     self._queue.remove(key)
                     self._queue.appendleft(key)
@@ -150,9 +207,12 @@ class NpcDetailsController(QObject):
                     return
                 discarded = self._queue.pop()
                 self._pending.discard(discarded)
+                self._enrichment.discard(discarded)
             self._pending.add(key)
             if background:
                 self._queue.append(key)
+                if kind == "npc":
+                    self._enrichment.add(key)
             else:
                 self._queue.appendleft(key)
             if not self._started:
@@ -174,6 +234,17 @@ class NpcDetailsController(QObject):
             except Exception as exc:
                 error = "page_missing" if isinstance(exc, WikiPageMissing) else "unavailable"
                 log.info("NPC wiki %s lookup for %s: %s", kind, name, exc)
+                if error == "unavailable":
+                    # A shared outage must not turn a zone list into dozens of
+                    # failed requests. Already-active work stays bounded at two;
+                    # foreground considers and item hovers remain available.
+                    with self._condition:
+                        self._enrichment_retry_at = time.monotonic() + RETRY_SECONDS
+                        for queued in tuple(self._queue):
+                            if queued in self._enrichment:
+                                self._queue.remove(queued)
+                                self._pending.discard(queued)
+                                self._enrichment.discard(queued)
             if not self._closed:
                 try:
                     self._ready.emit(kind, name, result, error)
@@ -185,6 +256,7 @@ class NpcDetailsController(QObject):
             return
         key = (kind, name)
         self._pending.discard(key)
+        self._enrichment.discard(key)
         self._next_check[key] = time.monotonic() + (RETRY_SECONDS if error else RECHECK_SECONDS)
         if error:
             self._last_errors[key] = error
@@ -192,12 +264,19 @@ class NpcDetailsController(QObject):
             self._last_errors.pop(key, None)
         cached = result or getattr(self.repo, f"cached_{kind}")(name)
         status = self._status(kind, name, cached) if error else ""
-        if kind == "npc" and name == self._selected:
-            self.panel.set_details(cached, status)
+        if kind == "npc":
             if cached is not None:
-                self._prefetch_items(cached)
+                self._npc_metadata[self._key(name).casefold()] = cached
+            if name == self._selected:
+                self.panel.set_details(cached, status)
+                if cached is not None:
+                    self._prefetch_items(cached)
+            for zone, record in tuple(self._notable_records.items()):
+                if any(self._key(candidate).casefold() == self._key(name).casefold()
+                       for candidate in getattr(record, "names", ())):
+                    self._present_notables(zone, record, self._notable_status[zone], enrich=False)
         elif kind == "notables":
-            self.map_overlay.set_notable_npcs(name, cached.names if cached else (), status)
+            self._present_notables(name, cached, status)
         elif kind == "item":
             if cached is not None:
                 self._present_item(name, cached)
@@ -209,4 +288,5 @@ class NpcDetailsController(QObject):
             self._closed = True
             self._queue.clear()
             self._pending.clear()
+            self._enrichment.clear()
             self._condition.notify_all()

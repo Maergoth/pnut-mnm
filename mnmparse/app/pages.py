@@ -2895,7 +2895,7 @@ class SettingsPage(QWidget):
         )
         for key, label in (("enabled", "Show NPC details"), ("level", "Level / level range"),
                            ("common_drops", "Common drops"), ("unique_drops", "Unique drops"),
-                           ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
+                           ("quests", "Quests"), ("reputation", "Reputation gained / lost")):
             control = ToggleSwitch()
             setattr(self, f"npc_{key}", control)
             self._row(npc_form, label, control)

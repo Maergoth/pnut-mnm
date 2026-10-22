@@ -657,6 +657,9 @@ respects click-through and hides when the pointer leaves the panel.
 
 The map header's **monster icon** opens notable NPCs for its selected zone. Choosing
 one displays the same card and respects the same field settings as considering it.
+Known levels appear before each name. A sparkled sword marks unique loot, and a feather
+marks NPCs that offer quests or are needed by quests. Cached details appear immediately;
+missing details fill in through background wiki requests.
 NPC records, notable lists and item stats are saved in `npc_cache/` beside the app.
 Cached records display immediately, then a background check compares wiki revisions
 and template modification timestamps before fetching changed content. Successful
