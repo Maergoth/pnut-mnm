@@ -39,6 +39,12 @@ jobs:
         run: |
           .\.venv\Scripts\python.exe -m unittest discover -s tests -v
           if ($LASTEXITCODE -ne 0) { throw "Regression suite failed (Python exit code $LASTEXITCODE)" }
+      - name: Run leaderboard Worker conformance tests
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          node --test leaderboard_worker/test/worker.test.js
+          if ($LASTEXITCODE -ne 0) { throw "Worker conformance tests failed (Node exit code $LASTEXITCODE)" }
       - name: Clean frozen build and embedded provenance/startup gate
         shell: pwsh
         run: ./build_exe.ps1 -Clean
