@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import faulthandler
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,17 @@ import unittest
 from unittest.mock import patch
 import uuid
 
+PROBE_TIMEOUT_SECONDS = 30
+
 
 def _probe(scenario: str, output: Path) -> None:
+    # Native Qt/font initialization can be slow on a busy, cold Windows runner.
+    # Keep the event-loop watchdog below separate from this startup budget, and
+    # leave actionable diagnostics if a callback or native window call stalls.
+    trace = output.with_suffix(".trace.txt").open("w", encoding="utf-8")
+    faulthandler.enable(file=trace, all_threads=True)
+    faulthandler.dump_traceback_later(8, repeat=True, file=trace)
+    output.write_text(json.dumps({"phase": "imports", "events": []}), encoding="utf-8")
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from PySide6.QtCore import QSettings, QTimer
     from mnmparse.app.main import App, MainWindow, _MissingEngine
@@ -46,6 +56,8 @@ def _probe(scenario: str, output: Path) -> None:
             "shutdown": app._shut_down,
             "fullscreen": app.map_overlay.isFullScreen(),
         }
+        observations["phase"] = name
+        output.write_text(json.dumps(observations), encoding="utf-8")
 
     def visibility(visible: bool) -> None:
         observations["events"].append(["map", visible, app._shut_down])
@@ -81,6 +93,9 @@ def _probe(scenario: str, output: Path) -> None:
     observations["saved_visible"] = reopened.value("map/visible", True, type=bool)
     observations["saved_fullscreen"] = reopened.value("map/fullscreen", False, type=bool)
     output.write_text(json.dumps(observations), encoding="utf-8")
+    faulthandler.cancel_dump_traceback_later()
+    faulthandler.disable()
+    trace.close()
 
 
 @unittest.skipUnless(sys.platform == "win32" and os.environ.get("PNUT_NATIVE_UI_TESTS") == "1",
@@ -115,7 +130,15 @@ class MapRestartVisibilityTests(unittest.TestCase):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 )
                 try:
-                    stdout, stderr = process.communicate(timeout=10)
+                    stdout, stderr = process.communicate(timeout=PROBE_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate(timeout=5)
+                    progress = output.read_text(encoding="utf-8") if output.is_file() else "No probe progress"
+                    trace = output.with_suffix(".trace.txt")
+                    stacks = trace.read_text(encoding="utf-8") if trace.is_file() else "No traceback"
+                    self.fail(f"Native map probe {scenario!r} exceeded {PROBE_TIMEOUT_SECONDS}s.\n"
+                              f"Progress: {progress}\n{stacks[-16000:]}\n{stderr or stdout}")
                 finally:
                     if process.poll() is None:
                         process.kill()
