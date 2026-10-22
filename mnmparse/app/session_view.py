@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -55,6 +55,51 @@ def _mmss(seconds: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+class _SessionFooter(QLabel):
+    activated = Signal()
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__("", parent)
+        self._action_enabled = False
+        self._press: QPointF | None = None
+        self._moved = False
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAccessibleName("Session totals and hourly rates")
+
+    def set_action_enabled(self, enabled: bool) -> None:
+        self._action_enabled = bool(enabled)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
+        self.setAccessibleDescription("Click to start a new session." if enabled else "")
+        if not enabled:
+            self._press = None
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        self._press = None
+        self._moved = False
+        if self._action_enabled and event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.globalPosition()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._press is not None and (event.globalPosition() - self._press).manhattanLength() > 4:
+            self._moved = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        pressed, self._press = self._press, None
+        if (self._action_enabled and pressed is not None and not self._moved
+                and event.button() == Qt.MouseButton.LeftButton
+                and self.rect().contains(event.position().toPoint())
+                and (event.globalPosition() - pressed).manhattanLength() <= 4):
+            self.activated.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class SessionView(QWidget):
     """Category tree of the session; ``compact`` is the overlay density."""
 
@@ -69,6 +114,9 @@ class SessionView(QWidget):
         self._view_mode = "group"
         self._player = ""
         self._expanded: dict[str, bool] = {"items": True}
+        self._new_session_allowed = bool(show_new_session)
+        self._new_session_enabled = True
+        self._footer_tip = ""
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, compact)
 
         root = QVBoxLayout(self)
@@ -101,9 +149,10 @@ class SessionView(QWidget):
         self._tree.itemCollapsed.connect(lambda item: self._remember(item, False))
         root.addWidget(self._tree, 1)
 
-        self._footer = QLabel("", self)
+        self._footer = _SessionFooter(self)
         self._footer.setStyleSheet(f"color: {theme.MUTED}; background: transparent;")
         self._footer.setWordWrap(True)
+        self._footer.activated.connect(self._request_new_session)
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 0, 0)
         footer.setSpacing(12)
@@ -114,9 +163,10 @@ class SessionView(QWidget):
             self._new_session_button.setProperty("class", "primary")
             self._new_session_button.setCursor(Qt.CursorShape.PointingHandCursor)
             self._new_session_button.setToolTip("Archive the current live session and start a new one.")
-            self._new_session_button.clicked.connect(self.new_session_requested)
+            self._new_session_button.clicked.connect(self._request_new_session)
             footer.addWidget(self._new_session_button, 0, Qt.AlignmentFlag.AlignBottom)
         root.addLayout(footer)
+        self._sync_new_session_action()
         self.set_font_scale(1.0)
 
     # ------------------------------------------------------------------
@@ -134,8 +184,19 @@ class SessionView(QWidget):
 
     def set_new_session_enabled(self, enabled: bool) -> None:
         """Only the owner of a live session may enable its optional footer action."""
+        self._new_session_enabled = bool(enabled)
+        self._sync_new_session_action()
+
+    def _sync_new_session_action(self) -> None:
+        enabled = self._new_session_allowed and self._new_session_enabled
         if self._new_session_button is not None:
-            self._new_session_button.setEnabled(bool(enabled))
+            self._new_session_button.setEnabled(enabled)
+        self._footer.set_action_enabled(enabled and bool(self._footer.text()))
+        self._footer.setToolTip(self._footer_tip + ("\n\nClick to start a new session." if enabled and self._footer.text() else ""))
+
+    def _request_new_session(self) -> None:
+        if self._new_session_allowed and self._new_session_enabled:
+            self.new_session_requested.emit()
 
     def set_config(self, cfg: Any) -> None:
         self._cfg = cfg
@@ -155,7 +216,7 @@ class SessionView(QWidget):
             self._tree.clear()
             if snap is None:
                 self._footer.setText("")
-                self._footer.setToolTip("")
+                self._footer_tip = ""
                 return
             self._add_items(snap)
             averages = getattr(snap, "group_averages", {})
@@ -228,9 +289,10 @@ class SessionView(QWidget):
             else:
                 session_tip = (f"Recorded session averages over {_mmss(snap.elapsed)} total session time, "
                                "including idle time. This older archive has no rolling activity measurements.")
-            self._footer.setToolTip(session_tip + ("\n\n" + rate_tip if rate_tip else ""))
+            self._footer_tip = session_tip + ("\n\n" + rate_tip if rate_tip else "")
         finally:
             self._tree.setUpdatesEnabled(True)
+            self._sync_new_session_action()
 
     # ------------------------------------------------------------------
     def _add_experience(self, snap: SessionSnapshot) -> None:

@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -3637,6 +3638,7 @@ class SessionPage(QWidget):
         self._live: Any | None = None
         self._imported: dict[str, Any] = {}
         self._archive_offset = 0
+        self._reset_prompt_open = False
         self.setStyleSheet(_page_qss())
 
         layout = QVBoxLayout(self)
@@ -3683,7 +3685,7 @@ class SessionPage(QWidget):
             widget.hide()
 
         self._view = SessionView(compact=False, parent=self, show_new_session=True)
-        self._view.new_session_requested.connect(self._on_reset)
+        self._view.new_session_requested.connect(self.request_new_session)
         layout.addWidget(self._view, 1)
         self._status = _label("", "Muted")
         layout.addWidget(self._status)
@@ -3826,8 +3828,29 @@ class SessionPage(QWidget):
     def _on_mine_toggled(self, checked: bool) -> None:
         self._view.set_view_mode("self" if checked and not casual_enabled(self._cfg) else "group", self._cfg.player_name or "You")
 
-    def _on_reset(self) -> None:
-        if self._source.currentData() is not None or getattr(self, "_demo_active", False):
+    def request_new_session(self, *, live_source: bool = False,
+                            confirmation_parent: QWidget | None = None) -> None:
+        """Confirm a live reset once; compact views may request it while browsing history."""
+        def eligible() -> bool:
+            return (not getattr(self, "_demo_active", False)
+                    and (live_source or self._source.currentData() is None)
+                    and not bool(getattr(confirmation_parent, "click_through", False)))
+
+        if self._reset_prompt_open or not eligible() or not callable(getattr(self._engine, "reset_session", None)):
+            return
+        self._reset_prompt_open = True
+        try:
+            answer = QMessageBox.question(confirmation_parent if confirmation_parent is not None else self,
+                "New session", "Start new session?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if answer == QMessageBox.StandardButton.Yes and eligible():
+                self._on_reset(live_source=live_source)
+        finally:
+            self._reset_prompt_open = False
+
+    def _on_reset(self, *, live_source: bool = False) -> None:
+        if (self._source.currentData() is not None and not live_source) or getattr(self, "_demo_active", False):
             return
         reset = getattr(self._engine, "reset_session", None)
         if callable(reset):
@@ -3836,6 +3859,8 @@ class SessionPage(QWidget):
                 return
             self.new_session_requested.emit()
             self.refresh_archives()
+            if live_source:
+                self._source.setCurrentIndex(0)
             self._status.setText("Previous session archived. New session started.")
 
     def _update_new_session_action(self) -> None:

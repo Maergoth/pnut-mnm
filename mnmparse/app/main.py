@@ -1496,6 +1496,9 @@ class App(QApplication):
             self._connect_optional(live_page, "group_override_requested", self.set_group_override)
             self._connect_optional(live_page, "pet_owner_requested", self.set_pet_owner)
         session_page = window.page("session")
+        if session_page is not None and overlay is not None:
+            self._connect_optional(overlay, "new_session_requested", lambda: session_page.request_new_session(
+                live_source=True, confirmation_parent=overlay))
         if session_page is not None and live_page is not None:
             self._connect_optional(session_page, "archive_selected", live_page.set_archive_history)
             self._connect_optional(live_page, "archive_corrected", session_page.refresh_corrected_archive)
@@ -2432,6 +2435,7 @@ class App(QApplication):
         self.window.on_session(bundle.session)
         self.window.page("session").set_demo_active(True)
         if self.overlay is not None:
+            self.overlay.set_new_session_enabled(False)
             self.overlay.set_config(presentation)
             self.overlay.set_snapshot(bundle.encounters[-1])
             self.overlay.set_session(bundle.session)
@@ -2454,6 +2458,7 @@ class App(QApplication):
         self.window.on_session(self.engine.session_snapshot())
         self.window.on_state(getattr(self.engine, "state", "stopped"))
         if self.overlay is not None:
+            self.overlay.set_new_session_enabled(True)
             self.overlay.set_config(self.cfg)
             self.overlay.clear_history()
             self.overlay.set_snapshot(None)

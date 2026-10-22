@@ -30,11 +30,12 @@ class ReleaseNotes:
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.23": ReleaseNotes(
         changes=(
-            "Downloaded app updates now show a 10-second restart countdown and install automatically. Choose Later to postpone; restart from Settings or the tray when ready.",
-            "NPC cards resize in both directions while unlocked, with a corner grip and more columns at wider sizes.",
-            "Click a mob or drop name to open its wiki page. Item hover tooltips remain available.",
-            "Drops listed as both common and unique appear only under common. Empty wiki fields and headings are hidden.",
-            "Hover an overlay to reveal its top-left gear, then click it to open that panel's settings in the main app.",
+            "Downloaded updates install automatically after a 10-second countdown. Choose Later to postpone; restart from Settings or the tray.",
+            "NPC cards resize while unlocked, with a corner grip and more columns at wider sizes.",
+            "Click mob or drop names to open their wiki pages. Item hover tooltips remain available.",
+            "Drops listed as common and unique appear only under common. Empty wiki fields are hidden.",
+            "Hover an overlay to reveal its top-left settings gear.",
+            "Click the live Session footer to confirm starting a new session, in the main app or overlay.",
         ),
         settings_label="App updates",
         settings_target="app_update_button",

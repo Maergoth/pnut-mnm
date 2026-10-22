@@ -339,9 +339,10 @@ time instead of all being assigned to the final comparison. A detected own level
 confirms a bar wrap; PNUT briefly waits for the bar to catch up when chat arrives first. Log imports
 cannot supply bar measurements. Older archived averages are labeled **XP session**.
 
-Use **New session** at the bottom right of the Session tab, beside the XP rate, to archive
-the current session and start a fresh one. The button is available while viewing your live
-session; archived, imported and demo sessions cannot reset it.
+Click the live Session footer beside the XP rate, in the main app or overlay, or use
+**New session** at the bottom right of the Session tab. Confirm **Start new session?**
+to archive the current session and start a fresh one. Cancel keeps it active.
+Archived, imported and demo session views cannot reset the live session.
 
 **Capture profiles and backups.** Settings saves character, game source, crop, OCR, rate and
 log folder as named capture profiles. Stop capture before applying a profile or restoring
