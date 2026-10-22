@@ -37,11 +37,15 @@ remains an optional local/reference adapter.
 Leaderboard schema 2 adds nullable attributes, AC, resists and derived totals. Preserve
 the exact legacy signed payload when reading older rows; inserting defaults would
 invalidate its signature. `stat_total` is the seven attributes and `resist_total` the
-eight resists, each from one complete observation. The local ledger keeps independent
-per-stat records and capture timestamps. Fresh current readings are submitted, never a
-combination of local maxima. Keep records out of session state, configuration and logs.
+eight resists, each from one complete observation. Schema 3 submits the ledger's independent
+per-stat personal bests, with the separately recorded best complete-reading totals. A
+total can be lower than the sum of the uploaded individual records, or unavailable if
+no complete reading was ever observed. Never derive a personal-best total by adding
+individual records. The fresh Window Capture context supplies eligibility and the update
+timestamp; Copy continues using current values. Keep records out of session state,
+configuration and logs.
 
-Schema 2 also includes the optional canonical public message. Normalize and censor it
+Schemas 2 and 3 also include the optional canonical public message. Normalize and censor it
 before signing; adapters validate it without rewriting a signed payload. Python's
 ASCII JSON encoding and Worker signing bytes must agree for emoji and non-ASCII text.
 The 160-character message limit counts Unicode code points, rather than UTF-16 units.

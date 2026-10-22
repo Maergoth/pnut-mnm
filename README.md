@@ -339,26 +339,29 @@ the relevant highlighted settings. These shortcuts stay available during capture
 the normal overlays are hidden. The gears follow the captured game window.
 
 **Leaderboard.** Open **Ranks** in the main navigation to view the **Leaderboard**.
-It shows your anonymous three-word name, maximum HP/Mana, AC, all seven attributes and
+It shows your anonymous three-word name, personal-best maximum HP/Mana, AC, all seven attributes and
 all eight resists, alongside lifetime personal kills, deaths, highest hit and corpse coin
 looted. **Stat Total** adds STR, STA, AGI, DEX, INT, WIS and CHA; **Resist Total** adds
 Cold, Corruption, Disease, Electricity, Fire, Holy, Magic and Poison. Each total requires
-a complete reading of its group. Missing readings appear as —. Coin is shown in copper before party
+a complete reading of its group. Each total keeps its highest complete reading, independently
+of the individual stat records. Missing readings appear as —. Coin is shown in copper before party
 splitting. Session resets and imported logs do not change these totals. New totals are
 collected from live **Window Capture** only; desktop capture does not contribute.
 
-**Copy** places the current anonymous summary on your clipboard and never submits it.
-It works with a fresh mini-stat reading from either capture backend. **Submit** publishes
+**Copy current** places the current anonymous summary on your clipboard and never submits it.
+It works with a fresh mini-stat reading from either capture backend. **Submit personal bests** publishes
 one anonymous snapshot per UTC day and requires a fresh reading from **Window Capture**.
 The same separate Copy and Submit icons appear beside the mini-stat read area while
 hovering. Submissions run in the background through the hosted service without an
 external sign-in. If the service is unavailable, your local totals remain available to retry.
 No character name is added automatically. Public entries use three lines, with the bold gold anonymous
 name repeated on each line. Sort by any stat without separating an entry's lines, and hover
-an entry to see its capture time. **Fresh reading** shows the current values; **Local best**
+an entry to see its update time. **Fresh reading** shows the current values; **Local best**
 keeps each stat's highest observed value and its capture time. Best totals come from one
 complete reading, rather than adding individual records reached at different times.
-Submitting uses the fresh reading. **Refresh public entries** checks the public file while keeping
+Submitting uses these stored personal bests and lifetime counters. The fresh Window Capture
+reading establishes eligibility and the snapshot's update time; Copy continues using current
+values. **Refresh public entries** checks the public file while keeping
 cached entries visible during an outage. Opening PNUT does not contact the leaderboard.
 
 Add an optional message of up to 160 characters before submitting. Common English swear

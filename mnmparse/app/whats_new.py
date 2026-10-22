@@ -32,7 +32,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Hover the combat-chat or mini-stat capture area to reveal its settings gear, even with other overlays hidden.",
             "Mini-stat Copy and Submit shortcuts appear on monitors whose display names differ between Windows and Qt.",
-            "Ranks includes all attributes, AC and resists, separate Stat Total and Resist Total, and local best records.",
+            "Ranks submits stored personal bests; Copy uses current stats. Stat Total and Resist Total keep their best complete readings.",
             "Leaderboard entries use three rows with gold anonymous names. Hover for the capture time and optional message; common swear words are censored.",
             "Fresh installs include Fizzle with its bundled sound. Use Restore starter triggers in Triggers to add missing starters to an existing profile.",
         ),
