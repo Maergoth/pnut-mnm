@@ -109,20 +109,35 @@ class _MapParser(HTMLParser):
 
     Deliberately exclude overview photographs and item icons, even on mapless pages.
     """
-    def __init__(self, source: str) -> None:
+    def __init__(self, source: str, zone: str) -> None:
         super().__init__(convert_charrefs=True)
         self.source = source
+        self.zone = zone_title(zone)
         self.maps: list[MapImage] = []
         self.figure: dict | None = None
         self.heading: list[str] | None = None
         self.in_map_section = False
+        self._tables: list[bool] = []
+        self._heading_level = 0
+        self._zone_map_table: int | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
+        if tag == "table":
+            self._tables.append(bool(re.search(r"\bborder\s*:\s*[^;]+", a.get("style") or "", re.I)
+                                     or (a.get("border") or "").strip() not in {"", "0"}))
         if re.fullmatch(r"h[1-6]", tag):
             self.heading = []
+            self._heading_level = int(tag[1])
         if tag == "figure":
-            self.figure = {"border": "mw-image-border" in (a.get("class") or ""), "text": [], "url": "", "file": ""}
+            # Some primary map panels use only the zone name as their heading,
+            # with an unbordered full-file figure (Caves of Irem's Irem.png).
+            # Keep that evidence local to its bordered table; intro screenshots
+            # and ordinary thumbnail figures do not become maps.
+            zone_panel = (self._zone_map_table is not None and len(self._tables) >= self._zone_map_table
+                          and "mw:File" in (a.get("typeof") or "").split())
+            self.figure = {"border": "mw-image-border" in (a.get("class") or ""), "text": [],
+                           "url": "", "file": "", "zone_panel": zone_panel}
         if self.figure is not None:
             if tag == "a" and "/wiki/File:" in (a.get("href") or ""):
                 self.figure["file"] = unquote((a["href"] or "").split("File:", 1)[1]).replace("_", " ")
@@ -138,25 +153,33 @@ class _MapParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if re.fullmatch(r"h[1-6]", tag) and self.heading is not None:
-            self.in_map_section = bool(re.search(r"\bmaps?\b", "".join(self.heading), re.I))
+            heading = " ".join("".join(self.heading).split())
+            self.in_map_section = bool(re.search(r"\bmaps?\b", heading, re.I))
+            self._zone_map_table = (len(self._tables) if self._heading_level > 1
+                                    and heading.casefold() == self.zone.casefold()
+                                    and self._tables and self._tables[-1] else None)
             self.heading = None
+        if tag == "table" and self._tables:
+            self._tables.pop()
+            if self._zone_map_table is not None and len(self._tables) < self._zone_map_table:
+                self._zone_map_table = None
         if tag != "figure" or self.figure is None:
             return
         f, self.figure = self.figure, None
         caption = " ".join(f["text"]).strip()
-        is_map = f["border"] or self.in_map_section or re.search(r"\bmap\b|isometric", caption + " " + f["file"], re.I)
+        is_map = f["border"] or f["zone_panel"] or self.in_map_section or re.search(r"\bmap\b|isometric", caption + " " + f["file"], re.I)
         url = _original_image(f["url"])
         if unquote(urlsplit(url).path.rsplit("/", 1)[-1]).casefold() == "phformaps.png":
             return  # The wiki's shared "map coming soon" placeholder is not a zone map.
         if is_map and _allowed_url(url) and urlsplit(url).path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-            name = caption or re.sub(r"\.(?:png|jpe?g|webp)$", "", f["file"], flags=re.I)
+            name = caption or (self.zone if f["zone_panel"] else "") or re.sub(r"\.(?:png|jpe?g|webp)$", "", f["file"], flags=re.I)
             if url not in {m.url for m in self.maps}:
                 source = WIKI + "/wiki/File:" + quote(f["file"].replace(" ", "_"), safe="") if f["file"] else self.source
                 self.maps.append(MapImage(name or "Map", url, source))
 
 
 def parse_maps(html: str, zone: str) -> list[MapImage]:
-    parser = _MapParser(wiki_url(zone))
+    parser = _MapParser(wiki_url(zone), zone)
     parser.feed(html)
     return parser.maps
 
