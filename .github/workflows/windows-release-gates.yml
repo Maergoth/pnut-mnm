@@ -16,6 +16,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: '1'
+      PYTHONFAULTHANDLER: '1'
       PNUT_NATIVE_UI_TESTS: '1'
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-          if ($LASTEXITCODE -ne 0) { throw 'Regression suite failed' }
+          if ($LASTEXITCODE -ne 0) { throw "Regression suite failed (Python exit code $LASTEXITCODE)" }
       - name: Clean frozen build and embedded provenance/startup gate
         shell: pwsh
         run: ./build_exe.ps1 -Clean
