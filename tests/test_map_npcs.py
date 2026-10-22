@@ -8,6 +8,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.name == "nt":
+    os.environ.setdefault("QT_QPA_FONTDIR", os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"))
 
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, QSettings, Qt
 from PySide6.QtGui import QCursor, QEnterEvent
@@ -298,7 +300,13 @@ class MapNotableNPCTests(unittest.TestCase):
         self.app.processEvents()
         native.setActiveAction(action)
         old_y = native.y()
-        level = " / ".join(str(n) for n in range(10, 30))
+        # A previously applied app stylesheet can override setFont(24px).
+        # Choose genuine overflow using the polished popup's actual metrics.
+        for last_level in range(30, 100):
+            level = " / ".join(str(n) for n in range(10, last_level))
+            if native.fontMetrics().horizontalAdvance(f"Lv. {level}  Fictional Keeper") > area.width():
+                break
+        self.assertGreater(native.fontMetrics().horizontalAdvance(f"Lv. {level}  Fictional Keeper"), area.width())
         native.refresh_metadata({"fictional keeper": level}, {"fictional keeper"}, {"fictional keeper"})
         for _ in range(3):
             self.app.processEvents()
