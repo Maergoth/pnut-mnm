@@ -395,6 +395,22 @@ class WikiCacheTests(unittest.TestCase):
         self.assertEqual(api.call_args.args[0]["prop"], "text|revid")
         self.assertNotIn("oldid", api.call_args.args[0])
 
+    def test_missing_or_invalid_touch_metadata_never_replaces_cached_reference(self):
+        expected = self.seed_npc()
+        before = self.repo._path("npc", "Test Keeper").read_bytes()
+        for touched in (None, "", "not a timestamp", "2026-02-30T12:00:00Z"):
+            metadata = revision()
+            if touched is None:
+                metadata["query"]["pages"][0].pop("touched")
+            else:
+                metadata["query"]["pages"][0]["touched"] = touched
+            with self.subTest(touched=touched), patch.object(npc_wiki, "_api", return_value=metadata) as api:
+                with self.assertRaises(WikiDataError):
+                    self.repo.refresh_npc("Test Keeper")
+                self.assertEqual(api.call_count, 1)
+                self.assertEqual(self.repo.cached_npc("Test Keeper"), expected)
+                self.assertEqual(self.repo._path("npc", "Test Keeper").read_bytes(), before)
+
     def test_parse_requests_revision_and_rejects_text_only_response(self):
         with patch.object(npc_wiki, "_api", side_effect=[revision(), {"parse": {"title": "Test Keeper", "text": NPC_HTML}}]) as api:
             with self.assertRaises(WikiDataError):

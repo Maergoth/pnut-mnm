@@ -8,6 +8,7 @@ page, missing page, or a page whose structure could not be understood.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 import hashlib
 from html.parser import HTMLParser
 import json
@@ -653,9 +654,13 @@ class WikiRepository:
             if page.get("ns", 0) != 0 or isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
                 raise WikiDataError("Wiki revision metadata is malformed")
             # touched also changes when transcluded loot/stat templates change.
-            touched = page.get("touched", "")
-            if not isinstance(touched, str) or len(touched) > 64:
+            touched = page.get("touched")
+            if not isinstance(touched, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", touched):
                 raise WikiDataError("Wiki revision metadata is malformed")
+            try:
+                datetime.strptime(touched, "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                raise WikiDataError("Wiki revision metadata is malformed") from None
             return _title(page["title"]), revision, str(revision) + ":" + touched
         if missing == len(candidates):
             raise WikiPageMissing("This NPC, item or zone is not published on the wiki")

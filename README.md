@@ -678,8 +678,10 @@ you happen to be browsing on the map. Old logs, imports, demos and startup chat 
 celebrate past kills. Cached notable lists work offline; a first lookup needs the wiki.
 NPC records, notable lists and item stats are saved in `npc_cache/` beside the app.
 Cached records display immediately, then a background check compares wiki revisions
-and template modification timestamps before fetching changed content. Successful
-lookups are rechecked at most every five minutes; failed requests retry after a minute.
+and template modification timestamps before fetching changed content. Recent references
+are automatically rechecked about every five minutes, without another consider or hover;
+failed requests retry after a minute. Checks share a bounded queue, and an outage pauses
+automatic batches while cached details remain available.
 The app warms tooltip data for displayed loot. An unavailable wiki preserves cached
 records; a first lookup without a cache needs the wiki to recover. Public page-title
 requests can include the considered target's name; see the [Privacy Policy](legal/privacy.md).

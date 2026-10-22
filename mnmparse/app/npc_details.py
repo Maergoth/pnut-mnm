@@ -1,7 +1,7 @@
 """Cache-first NPC lookups; bounded daemon workers never touch widgets."""
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import replace
 import logging
 import re
@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from shiboken6 import isValid
 
 from mnmparse.maps import zone_title
@@ -20,6 +20,8 @@ log = logging.getLogger(__name__)
 RECHECK_SECONDS = 300.0
 RETRY_SECONDS = 60.0
 MAX_QUEUED = 64
+MAX_WATCHED = 64
+PERIODIC_BATCH = 2
 
 
 class NpcDetailsController(QObject):
@@ -42,11 +44,15 @@ class NpcDetailsController(QObject):
         self._npc_metadata: dict[str, Any] = {}
         self._enrichment: set[tuple[str, str]] = set()
         self._enrichment_retry_at = 0.0
+        self._watched: OrderedDict[tuple[str, str], bool] = OrderedDict()
         self._queue: deque[tuple[str, str]] = deque()
         self._condition = threading.Condition()
         self._closed = False
         self._started = False
         self._ready.connect(self._finished, Qt.ConnectionType.QueuedConnection)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.timeout.connect(self._revalidate)
         panel.item_hovered.connect(self.show_item)
         self.attach_map(map_overlay)
 
@@ -252,18 +258,58 @@ class NpcDetailsController(QObject):
                 self._present_item(name, cached)
             self._request("item", name, background=True)
 
-    def _request(self, kind: str, name: str, *, background: bool = False) -> None:
-        key = (kind, name)
+    def _watch(self, key: tuple[str, str], *, background: bool) -> None:
+        if key in self._watched:
+            self._watched[key] = self._watched[key] or not background
+            self._watched.move_to_end(key)
+        else:
+            if len(self._watched) >= MAX_WATCHED:
+                discard = next((candidate for candidate, foreground in self._watched.items()
+                                if not foreground), None)
+                if discard is None:
+                    if background:
+                        return
+                    discard = next(iter(self._watched))
+                self._watched.pop(discard)
+            self._watched[key] = not background
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _revalidate(self) -> None:
+        """Recheck recent references without a crawl or another user action."""
         if self._closed:
             return
+        now = time.monotonic()
+        if now < self._enrichment_retry_at:
+            return
+        scheduled = 0
+        # Explicitly viewed references precede speculative tooltip/enrichment
+        # work. The watchlist and the existing shared queue are both bounded.
+        candidates = sorted(self._watched, key=lambda key: (not self._watched[key],
+                                                            self._next_check.get(key, 0)))
+        for key in candidates:
+            if key in self._pending or now < self._next_check.get(key, 0):
+                continue
+            if self._request(*key, background=True, periodic=True):
+                scheduled += 1
+                if scheduled >= PERIODIC_BATCH:
+                    break
+
+    def _request(self, kind: str, name: str, *, background: bool = False,
+                 periodic: bool = False) -> bool:
+        key = (kind, name)
+        if self._closed:
+            return False
+        if not background:
+            self._watch(key, background=False)
         if kind in {"npc", "item"}:
             cached = getattr(self.repo, f"cached_{kind}")(name)
             self._announce_reference(kind, name, cached, self._status(kind, name, cached))
         if self._closed or time.monotonic() < self._next_check.get(key, 0):
-            return
+            return False
         with self._condition:
-            if background and kind == "npc" and time.monotonic() < self._enrichment_retry_at:
-                return
+            if background and time.monotonic() < self._enrichment_retry_at:
+                return False
             if key in self._pending:
                 if not background:
                     self._enrichment.discard(key)
@@ -271,25 +317,27 @@ class NpcDetailsController(QObject):
                     self._queue.remove(key)
                     self._queue.appendleft(key)
                     self._condition.notify()
-                return
+                return False
             if len(self._queue) >= MAX_QUEUED:
                 if background:
-                    return
+                    return False
                 discarded = self._queue.pop()
                 self._pending.discard(discarded)
                 self._enrichment.discard(discarded)
             self._pending.add(key)
             if background:
                 self._queue.append(key)
-                if kind == "npc":
-                    self._enrichment.add(key)
+                self._enrichment.add(key)
             else:
                 self._queue.appendleft(key)
+            if background and not periodic:
+                self._watch(key, background=True)
             if not self._started:
                 self._started = True
                 for index in range(2):
                     threading.Thread(target=self._work, name=f"npc-wiki-{index}", daemon=True).start()
             self._condition.notify()
+            return True
 
     def _work(self) -> None:
         while True:
@@ -305,9 +353,8 @@ class NpcDetailsController(QObject):
                 error = "page_missing" if isinstance(exc, WikiPageMissing) else "unavailable"
                 log.info("NPC wiki %s lookup for %s: %s", kind, name, exc)
                 if error == "unavailable":
-                    # A shared outage must not turn a zone list into dozens of
-                    # failed requests. Already-active work stays bounded at two;
-                    # foreground considers and item hovers remain available.
+                    # Pause all automatic checks/prefetch during a shared
+                    # outage. Explicit considers and hovers remain available.
                     with self._condition:
                         self._enrichment_retry_at = time.monotonic() + RETRY_SECONDS
                         for queued in tuple(self._queue):
@@ -355,6 +402,7 @@ class NpcDetailsController(QObject):
         self._announce_reference(kind, name, cached, status)
 
     def shutdown(self) -> None:
+        self._refresh_timer.stop()
         with self._condition:
             if self._closed:
                 return
@@ -362,6 +410,7 @@ class NpcDetailsController(QObject):
             self._queue.clear()
             self._pending.clear()
             self._enrichment.clear()
+            self._watched.clear()
             self._condition.notify_all()
         # Native destruction must not call back into a Python ownership cycle
         # that is already being collected. Disconnect while both sides live.
