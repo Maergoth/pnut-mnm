@@ -1,7 +1,7 @@
 """Cache-first NPC lookups; bounded daemon workers never touch widgets."""
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import replace
 import logging
 import re
@@ -9,20 +9,26 @@ import threading
 import time
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from shiboken6 import isValid
 
 from mnmparse.maps import zone_title
-from mnmparse.npc_wiki import ItemDetails, WikiPageMissing
+from mnmparse.npc_wiki import ItemDetails, WikiPageMissing, unique_drops_excluding_common
 from mnmparse.parser import parse_line
 
 log = logging.getLogger(__name__)
 RECHECK_SECONDS = 300.0
 RETRY_SECONDS = 60.0
 MAX_QUEUED = 64
+MAX_WATCHED = 64
+PERIODIC_BATCH = 2
 
 
 class NpcDetailsController(QObject):
     _ready = Signal(str, str, object, str)
+    notables_updated = Signal(str, object)
+    npc_updated = Signal(str, object, str)
+    item_updated = Signal(str, object, str)
 
     def __init__(self, repository: Any, panel: Any, map_overlay: Any, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -32,14 +38,53 @@ class NpcDetailsController(QObject):
         self._pending: set[tuple[str, str]] = set()
         self._next_check: dict[tuple[str, str], float] = {}
         self._last_errors: dict[tuple[str, str], str] = {}
+        self._notable_records: dict[str, Any] = {}
+        self._notable_status: dict[str, str] = {}
+        self._map_views: list[Any] = []
+        self._npc_metadata: dict[str, Any] = {}
+        self._enrichment: set[tuple[str, str]] = set()
+        self._enrichment_retry_at = 0.0
+        self._watched: OrderedDict[tuple[str, str], bool] = OrderedDict()
         self._queue: deque[tuple[str, str]] = deque()
         self._condition = threading.Condition()
         self._closed = False
         self._started = False
         self._ready.connect(self._finished, Qt.ConnectionType.QueuedConnection)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.timeout.connect(self._revalidate)
         panel.item_hovered.connect(self.show_item)
-        map_overlay.npc_selected.connect(self.show_npc)
-        map_overlay.npc_zone_requested.connect(self.show_notables)
+        self.attach_map(map_overlay)
+
+    def attach_map(self, view: Any) -> None:
+        """Share cached notable details with another map without changing hunting zone."""
+        if self._closed or any(view is existing for existing in self._map_views):
+            return
+        self._map_views.append(view)
+        view.npc_selected.connect(self.show_npc)
+        view.npc_zone_requested.connect(self.show_notables)
+        destroyed = getattr(view, "destroyed", None)
+        if destroyed is not None:
+            destroyed.connect(self._map_destroyed)
+        for zone, record in tuple(self._notable_records.items()):
+            self._present_notables(zone, record, self._notable_status[zone], enrich=False)
+
+    def detach_map(self, view: Any) -> None:
+        self._map_views = [existing for existing in self._map_views if existing is not view]
+        if not isValid(self) or isinstance(view, QObject) and not isValid(view):
+            return
+        for name, callback in (("npc_selected", self.show_npc), ("npc_zone_requested", self.show_notables),
+                               ("destroyed", self._map_destroyed)):
+            try:
+                getattr(view, name).disconnect(callback)
+            except (RuntimeError, TypeError):
+                pass  # A QObject can already be in its native destructor.
+
+    def _map_destroyed(self, destroyed: QObject) -> None:
+        # A QObject-bound receiver is disconnected when this controller dies.
+        # The destroyed view no longer needs native signal operations.
+        self._map_views = [view for view in self._map_views
+                           if view is not destroyed and (not isinstance(view, QObject) or isValid(view))]
 
     @staticmethod
     def _key(name: str) -> str:
@@ -68,6 +113,18 @@ class NpcDetailsController(QObject):
         self.panel.show_npc(name)
         self.refresh_selection()
 
+    def request_npc(self, name: str) -> None:
+        """Present/fetch an NPC for a browser without selecting the overlay."""
+        name = self._key(name)
+        if name and not self._closed:
+            self._request("npc", name)
+
+    def request_item(self, name: str) -> None:
+        """Present/fetch a lazy browser tooltip even when overlays are disabled."""
+        name = self._key(name)
+        if name and not self._closed:
+            self._request("item", name)
+
     def refresh_selection(self) -> None:
         name = self._selected
         if not name or self._closed or not self.panel.enabled:
@@ -85,9 +142,68 @@ class NpcDetailsController(QObject):
             return
         self._zone = zone
         cached = self.repo.cached_notables(zone)
-        self.map_overlay.set_notable_npcs(zone, cached.names if cached else (),
-                                         self._status("notables", zone, cached))
+        self._present_notables(zone, cached, self._status("notables", zone, cached), enrich=False)
         self._request("notables", zone)
+        for name in getattr(cached, "names", ()):
+            self._request("npc", name, background=True)
+
+    def ensure_notables(self, zone: str) -> None:
+        """Warm the current hunting zone without changing the map's selected zone."""
+        zone = zone_title(zone)
+        if zone and not self._closed:
+            self._request("notables", zone)
+
+    @staticmethod
+    def _positive_values(values: Any) -> tuple[str, ...]:
+        """Unavailable placeholders never claim that loot or quests exist."""
+        result = []
+        if isinstance(values, str):
+            values = (values,)
+        for raw in values or ():
+            if not isinstance(raw, str):
+                continue
+            value = " ".join(raw.replace("_", " ").split()).strip(" .:;!?–—-")
+            key = value.casefold()
+            if (not value or key in {"none", "none known", "unknown", "n/a", "n a", "na", "tbd", "not known", "not yet known"}
+                    or key.startswith(("not available", "not recorded", "not listed", "unavailable", "no data", "no known ", "no quest", "no unique", "no drop"))):
+                continue
+            result.append(raw)
+        return tuple(result)
+
+    def _present_notables(self, zone: str, record: Any, status: str, *, enrich: bool = True) -> None:
+        self._notable_records[zone] = record
+        self._notable_status[zone] = status
+        names = tuple(getattr(record, "names", ())) if record is not None else ()
+        zone_levels = {self._key(name).casefold(): level for name, level in getattr(record, "levels", ())}
+        levels, unique_loot, quests = {}, [], []
+        for name in names:
+            key = self._key(name).casefold()
+            details = self._npc_metadata.get(key)
+            if key not in self._npc_metadata:
+                details = self.repo.cached_npc(name)
+                self._npc_metadata[key] = details
+            candidates = (zone_levels.get(key), getattr(details, "level", ""))
+            level = next((value for value in candidates if isinstance(value, str)
+                          and len(value) <= 120 and re.search(r"\d", value)), "")
+            if level:
+                levels[name] = level
+            if details is not None:
+                common = self._positive_values(getattr(details, "common_drops", ()))
+                unique = self._positive_values(getattr(details, "unique_drops", ()))
+                if unique_drops_excluding_common(common, unique):
+                    unique_loot.append(name)
+                if self._positive_values(getattr(details, "quests", ())):
+                    quests.append(name)
+        for view in tuple(self._map_views):
+            try:
+                view.set_notable_npcs(zone, names, status, levels=levels,
+                                      unique_loot=unique_loot, quests=quests)
+            except RuntimeError:
+                self.detach_map(view)
+        self.notables_updated.emit(zone, record)
+        if enrich:
+            for name in names:
+                self._request("npc", name, background=True)
 
     def show_item(self, name: str) -> None:
         name = self._key(name)
@@ -106,6 +222,14 @@ class NpcDetailsController(QObject):
         if isinstance(item, ItemDetails):
             item = replace(item, name=requested)
         self.panel.set_item_details(item)
+
+    def _announce_reference(self, kind: str, requested: str, details: Any, status: str) -> None:
+        if kind == "npc":
+            self.npc_updated.emit(requested, details, status)
+        elif kind == "item":
+            if isinstance(details, ItemDetails):
+                details = replace(details, name=requested)
+            self.item_updated.emit(requested, details, status)
 
     def _status(self, kind: str, name: str, cached: Any) -> str:
         error = self._last_errors.get((kind, name))
@@ -134,32 +258,86 @@ class NpcDetailsController(QObject):
                 self._present_item(name, cached)
             self._request("item", name, background=True)
 
-    def _request(self, kind: str, name: str, *, background: bool = False) -> None:
-        key = (kind, name)
-        if self._closed or time.monotonic() < self._next_check.get(key, 0):
+    def _watch(self, key: tuple[str, str], *, background: bool) -> None:
+        if key in self._watched:
+            self._watched[key] = self._watched[key] or not background
+            self._watched.move_to_end(key)
+        else:
+            if len(self._watched) >= MAX_WATCHED:
+                discard = next((candidate for candidate, foreground in self._watched.items()
+                                if not foreground), None)
+                if discard is None:
+                    if background:
+                        return
+                    discard = next(iter(self._watched))
+                self._watched.pop(discard)
+            self._watched[key] = not background
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _revalidate(self) -> None:
+        """Recheck recent references without a crawl or another user action."""
+        if self._closed:
             return
+        now = time.monotonic()
+        if now < self._enrichment_retry_at:
+            return
+        scheduled = 0
+        # Explicitly viewed references precede speculative tooltip/enrichment
+        # work. The watchlist and the existing shared queue are both bounded.
+        candidates = sorted(self._watched, key=lambda key: (not self._watched[key],
+                                                            self._next_check.get(key, 0)))
+        for key in candidates:
+            if key in self._pending or now < self._next_check.get(key, 0):
+                continue
+            if self._request(*key, background=True, periodic=True):
+                scheduled += 1
+                if scheduled >= PERIODIC_BATCH:
+                    break
+
+    def _request(self, kind: str, name: str, *, background: bool = False,
+                 periodic: bool = False) -> bool:
+        key = (kind, name)
+        if self._closed:
+            return False
+        if not background:
+            self._watch(key, background=False)
+        if kind in {"npc", "item"}:
+            cached = getattr(self.repo, f"cached_{kind}")(name)
+            self._announce_reference(kind, name, cached, self._status(kind, name, cached))
+        if self._closed or time.monotonic() < self._next_check.get(key, 0):
+            return False
         with self._condition:
+            if background and time.monotonic() < self._enrichment_retry_at:
+                return False
             if key in self._pending:
+                if not background:
+                    self._enrichment.discard(key)
                 if not background and key in self._queue:
                     self._queue.remove(key)
                     self._queue.appendleft(key)
                     self._condition.notify()
-                return
+                return False
             if len(self._queue) >= MAX_QUEUED:
                 if background:
-                    return
+                    return False
                 discarded = self._queue.pop()
                 self._pending.discard(discarded)
+                self._enrichment.discard(discarded)
             self._pending.add(key)
             if background:
                 self._queue.append(key)
+                self._enrichment.add(key)
             else:
                 self._queue.appendleft(key)
+            if background and not periodic:
+                self._watch(key, background=True)
             if not self._started:
                 self._started = True
                 for index in range(2):
                     threading.Thread(target=self._work, name=f"npc-wiki-{index}", daemon=True).start()
             self._condition.notify()
+            return True
 
     def _work(self) -> None:
         while True:
@@ -174,6 +352,16 @@ class NpcDetailsController(QObject):
             except Exception as exc:
                 error = "page_missing" if isinstance(exc, WikiPageMissing) else "unavailable"
                 log.info("NPC wiki %s lookup for %s: %s", kind, name, exc)
+                if error == "unavailable":
+                    # Pause all automatic checks/prefetch during a shared
+                    # outage. Explicit considers and hovers remain available.
+                    with self._condition:
+                        self._enrichment_retry_at = time.monotonic() + RETRY_SECONDS
+                        for queued in tuple(self._queue):
+                            if queued in self._enrichment:
+                                self._queue.remove(queued)
+                                self._pending.discard(queued)
+                                self._enrichment.discard(queued)
             if not self._closed:
                 try:
                     self._ready.emit(kind, name, result, error)
@@ -185,6 +373,7 @@ class NpcDetailsController(QObject):
             return
         key = (kind, name)
         self._pending.discard(key)
+        self._enrichment.discard(key)
         self._next_check[key] = time.monotonic() + (RETRY_SECONDS if error else RECHECK_SECONDS)
         if error:
             self._last_errors[key] = error
@@ -192,21 +381,43 @@ class NpcDetailsController(QObject):
             self._last_errors.pop(key, None)
         cached = result or getattr(self.repo, f"cached_{kind}")(name)
         status = self._status(kind, name, cached) if error else ""
-        if kind == "npc" and name == self._selected:
-            self.panel.set_details(cached, status)
+        if kind == "npc":
             if cached is not None:
-                self._prefetch_items(cached)
+                self._npc_metadata[self._key(name).casefold()] = cached
+            if name == self._selected:
+                self.panel.set_details(cached, status)
+                if cached is not None:
+                    self._prefetch_items(cached)
+            for zone, record in tuple(self._notable_records.items()):
+                if any(self._key(candidate).casefold() == self._key(name).casefold()
+                       for candidate in getattr(record, "names", ())):
+                    self._present_notables(zone, record, self._notable_status[zone], enrich=False)
         elif kind == "notables":
-            self.map_overlay.set_notable_npcs(name, cached.names if cached else (), status)
+            self._present_notables(name, cached, status)
         elif kind == "item":
             if cached is not None:
                 self._present_item(name, cached)
             else:
                 self.panel.set_item_status(name, status)
+        self._announce_reference(kind, name, cached, status)
 
     def shutdown(self) -> None:
+        self._refresh_timer.stop()
         with self._condition:
+            if self._closed:
+                return
             self._closed = True
             self._queue.clear()
             self._pending.clear()
+            self._enrichment.clear()
+            self._watched.clear()
             self._condition.notify_all()
+        # Native destruction must not call back into a Python ownership cycle
+        # that is already being collected. Disconnect while both sides live.
+        for view in tuple(self._map_views):
+            self.detach_map(view)
+        if isValid(self) and (not isinstance(self.panel, QObject) or isValid(self.panel)):
+            try:
+                self.panel.item_hovered.disconnect(self.show_item)
+            except (RuntimeError, TypeError):
+                pass

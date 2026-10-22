@@ -1342,7 +1342,7 @@ class OverlayWindow(QWidget):
             dialog.deleteLater()
         if not 0 < seconds <= MAX_RESPAWN_SECONDS:
             return
-        runner.start_one_time_timer(f"{name} respawn", seconds, keep_until_dismissed=True)
+        runner.start_one_time_timer(f"{name} respawn", seconds, keep_until_dismissed=True, respawn=True)
         if not key:
             return  # An unknown zone must not share a default with unrelated encounters.
         durations = self._respawn_durations()
@@ -1711,16 +1711,10 @@ class OverlayWindow(QWidget):
         """Narrowest the overlay may get at the current font size."""
         margins = self.layout().contentsMargins() if self.layout() is not None else None
         side = (margins.left() + margins.right()) if margins is not None else 20
-        chrome = self._toolbar.sizeHint().width() + 38 if getattr(self, "_settings_gear", None) is not None else 0
-        return max(MIN_SIZE.width(), self._tabs.needed_width() + side, self._table.minimum_width() + side, chrome)
+        return max(MIN_SIZE.width(), self._tabs.needed_width() + side, self._table.minimum_width() + side)
 
     def _settings_gear_changed(self) -> None:
-        """Reserve stable room after the app attaches the hover settings button."""
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        self.layout().setContentsMargins(10 + inset, 4, 10, 8)
-        self.setMinimumWidth(self.needed_min_width())
-        self.layout().activate()
-        self._position_chrome()
+        """The hover gear floats above existing content without changing layout."""
         self.update()
 
     def _apply_stylesheet(self) -> None:
@@ -1761,8 +1755,6 @@ class OverlayWindow(QWidget):
     def _position_chrome(self) -> None:
         self._toolbar.adjustSize()
         left = self.width() - self._toolbar.width() - 8
-        if getattr(self, "_settings_gear", None) is not None:
-            left = max(30, left)
         self._toolbar.move(left, 4)
         self._grip.move(self.width() - self._grip.width() - 2, self.height() - self._grip.height() - 2)
 

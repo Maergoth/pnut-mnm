@@ -53,7 +53,7 @@ ACTIONS: tuple[str, ...] = ("none", "sound", "file", "speak")
 TIMER_MODES: tuple[str, ...] = ("replace", "retain", "stack")
 _LEGACY_TIMER_MODES = {"restart": "replace", "ignore": "retain"}
 #: Built-in cues (generated as small .wav files the first time they are needed).
-BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling", "Siren")
+BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling", "Siren", "Victory fanfare")
 STORE_VERSION = 1
 # Matching CPU use above 30 ms is diagnostic; regex engine limits allow additional
 # scheduling time. Synchronous callers also limit work started for one line;
@@ -326,6 +326,7 @@ class TriggerStore:
         self.rate = 0.0  #: speech rate -1..1
         self.output_device = ""  #: audio output device description ("" = the default)
         self.installed_presets: set[str] = set()
+        self._loaded = False
         self.match_warnings: dict[str, str] = {}
 
     def load(self) -> bool:
@@ -390,6 +391,7 @@ class TriggerStore:
         self.output_device = settings.get("output_device", self.output_device)
         self.installed_presets = set(presets)
         self.triggers = validated
+        self._loaded = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -400,17 +402,24 @@ class TriggerStore:
             "installed_presets": sorted(self.installed_presets),
         }
 
-    def install_presets(self) -> bool:
+    def install_presets(self, *, include_first_install_only: bool = False) -> bool:
         """Add bundled starters once, preserving customizations and deliberate deletions."""
         from .trigger_presets import (
             INVIS_BREAK_ID, INVIS_BREAK_PATTERN, INVIS_BREAK_PATTERN_REVISION,
-            INVIS_BREAK_ALERT_REVISION, PRESETS,
+            INVIS_BREAK_ALERT_REVISION, FIRST_INSTALL_ONLY, PRESETS,
         )
 
         changed = False
+        fresh_install = (include_first_install_only or
+                         not self._loaded and not self.triggers and not self.installed_presets
+                         and (self.path is None or not self.path.exists()))
         for data in PRESETS:
             key = str(data["id"])
             if key in self.installed_presets:
+                continue
+            if key in FIRST_INSTALL_ONLY and not fresh_install:
+                self.installed_presets.add(key)
+                changed = True
                 continue
             # Recognize the author's original IDs and renamed/imported copies too.
             exists = any(t.id == key or fold(t.name).replace(" ", "") == fold(str(data["name"])).replace(" ", "")
@@ -528,6 +537,7 @@ class ActiveTimer:
     low_s: float = 5.0
     keep_until_dismissed: bool = False
     template_values: dict[str, str] = field(default_factory=dict)  #: matched values available to timer alerts
+    respawn: bool = False  #: explicitly created by the NPC respawn action
 
     def remaining(self, now: float) -> float:
         return max(0.0, self.start + self.duration - now)
@@ -547,7 +557,7 @@ class TimerBoard:
         self.timers: list[ActiveTimer] = []
 
     def start(self, trigger: Trigger, label: str, now: float | None = None, *,
-              keep_until_dismissed: bool = False) -> ActiveTimer | None:
+              keep_until_dismissed: bool = False, respawn: bool = False) -> ActiveTimer | None:
         """Start a fresh timer; ``None`` means retain an unexpired timer and ignore the match."""
         now = time.time() if now is None else now
         running = [t for t in self.timers if t.trigger_id == trigger.id and not t.ended and t.remaining(now) > 0]
@@ -559,7 +569,8 @@ class TimerBoard:
         timer = ActiveTimer(uuid.uuid4().hex[:8], trigger.id, label, now, float(trigger.timer_seconds),
                             float(trigger.timer_warn_s), color=trigger.timer_color,
                             warn_color=trigger.timer_warn_color, low_color=trigger.timer_low_color,
-                            low_s=trigger.timer_low_s, keep_until_dismissed=keep_until_dismissed)
+                            low_s=trigger.timer_low_s, keep_until_dismissed=keep_until_dismissed,
+                            respawn=respawn)
         self.timers.append(timer)
         ordinary = [t for t in self.timers if not t.keep_until_dismissed]
         if len(ordinary) > self.MAX_TIMERS:

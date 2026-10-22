@@ -287,7 +287,7 @@ class TriggersPage(QWidget):
         lay.addWidget(self.undo_delete)
         starters = QPushButton("Restore starter triggers")
         starters.setObjectName("Chip")
-        starters.setToolTip("Add missing Gatekick, Healkick and Invis Break starters; keep existing trigger settings")
+        starters.setToolTip("Add missing Gatekick, Healkick, Invis Break and Resist starters; keep existing trigger settings")
         starters.clicked.connect(self._restore_presets)
         lay.addWidget(starters)
         return panel
@@ -736,7 +736,7 @@ class TriggersPage(QWidget):
         # Restore missing starters without rerunning one-time migrations over
         # settings the user deliberately changed after an update.
         self.runner.store.installed_presets.difference_update(preset["id"] for preset in PRESETS)
-        self.runner.store.install_presets()
+        self.runner.store.install_presets(include_first_install_only=True)
         self._refill_list()
         self._schedule_save()
 

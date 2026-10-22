@@ -114,8 +114,9 @@ _engine_mod = _optional_import("mnmparse.app.engine", ["Engine"])
 _overlay_mod = _optional_import("mnmparse.app.overlay", ["OverlayWindow"])
 _widgets_mod = _optional_import("mnmparse.app.widgets", ["StatusChip", "ToggleSwitch"])
 _pages_mod = _optional_import(
-    "mnmparse.app.pages", ["LivePage", "SessionPage", "FeedPage", "TriggersPage", "SettingsPage", "AboutPage"]
+    "mnmparse.app.pages", ["LivePage", "SessionPage", "FeedPage", "TriggersPage", "LeaderboardPage", "SettingsPage", "AboutPage"]
 )
+_pages_mod.update(_optional_import("mnmparse.app.zones_page", ["ZonesPage"]))
 
 LOG_FILE_BYTES = 1_000_000
 LOG_FILE_BACKUPS = 3
@@ -135,6 +136,8 @@ PAGES: tuple[tuple[str, str], ...] = (
     ("session", "Session"),
     ("feed", "Feed"),
     ("triggers", "Triggers"),
+    ("leaderboard", "Leaderboard"),
+    ("zones", "Zones"),
     ("settings", "Settings"),
     ("about", "About"),
 )
@@ -340,10 +343,13 @@ class _MissingEngine(QObject):
     """Stand-in with the Engine's signals when ``mnmparse.app.engine`` is unavailable."""
 
     message = Signal(object, object)
+    live_group_kill = Signal(object, str)
+    live_group_activity = Signal(object, str)
     snapshot = Signal(object)
     encounter_closed = Signal(object)
     low_health = Signal(float)
     low_health_changed = Signal(bool)
+    overburdened_changed = Signal(bool)
     status = Signal(dict)
     state_changed = Signal(str)
     error = Signal(str)
@@ -415,6 +421,14 @@ def _paint_nav_glyph(painter: QPainter, name: str, size: float, color: QColor) -
         for i, frac in enumerate((1.0, 0.7, 0.88)):
             y = m + inner * (0.15 + 0.35 * i)
             painter.drawLine(QPointF(m, y), QPointF(m + inner * frac, y))
+    elif name == "zones":
+        path = QPainterPath()
+        path.moveTo(m, m + inner * .2)
+        for x, y in ((.34, 0), (.66, .2), (1, 0), (1, .8), (.66, 1), (.34, .8), (0, 1), (0, .2)):
+            path.lineTo(m + inner * x, m + inner * y)
+        painter.drawPath(path)
+        painter.drawLine(QPointF(m + inner * .34, m), QPointF(m + inner * .34, m + inner * .8))
+        painter.drawLine(QPointF(m + inner * .66, m + inner * .2), QPointF(m + inner * .66, m + inner))
     elif name == "session":
         # a loot bag: rounded body with a tied neck
         body = QRectF(m + inner * 0.1, m + inner * 0.3, inner * 0.8, inner * 0.68)
@@ -422,6 +436,9 @@ def _paint_nav_glyph(painter: QPainter, name: str, size: float, color: QColor) -
         painter.drawLine(QPointF(m + inner * 0.32, m + inner * 0.3), QPointF(m + inner * 0.42, m + inner * 0.06))
         painter.drawLine(QPointF(m + inner * 0.68, m + inner * 0.3), QPointF(m + inner * 0.58, m + inner * 0.06))
         painter.drawLine(QPointF(m + inner * 0.36, m + inner * 0.3), QPointF(m + inner * 0.64, m + inner * 0.3))
+    elif name == "leaderboard":
+        for offset, height in ((.05, .45), (.36, .85), (.67, .63)):
+            painter.drawRect(QRectF(m + inner * offset, m + inner * (1 - height), inner * .24, inner * height))
     elif name == "settings":
         radius = inner / 2
         painter.save()
@@ -494,7 +511,8 @@ class _NavButton(QToolButton):
     def __init__(self, key: str, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.key = key
-        self.setText(label)
+        self.setText("Ranks" if key == "leaderboard" else label)
+        self.setAccessibleName(label)
         self.setIcon(nav_icon(key))
         self.setIconSize(QSize(22, 22))
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
@@ -544,12 +562,14 @@ class MainWindow(QMainWindow):
         cfg: Config,
         settings: QSettings,
         parent: QWidget | None = None,
+        *, map_repository: Any | None = None,
     ) -> None:
         super().__init__(parent)
         self._engine = engine
         self._overlay = overlay
         self._cfg = cfg
         self._settings = settings
+        self._map_repository = map_repository
         self._quitting = False
         self._state = "stopped"
         self._scrolled_back = False  #: the chat does not show its newest line (engine status)
@@ -922,7 +942,7 @@ class MainWindow(QMainWindow):
             reason = _IMPORT_ERRORS.get("mnmparse.app.pages", f"{cls_name} not found")
             return _MissingPage(label, reason)
         try:
-            return cls(self._engine, self._cfg, self._settings)
+            return cls(self._engine, self._cfg, self._settings, repository=self._map_repository) if key == "zones" else cls(self._engine, self._cfg, self._settings)
         except Exception as exc:  # noqa: BLE001 - a broken page must not take the shell down
             log.exception("%s could not be created", cls_name)
             return _MissingPage(label, f"{type(exc).__name__}: {exc}")
@@ -978,8 +998,22 @@ class MainWindow(QMainWindow):
 
         reveal_option()
         # A page created on navigation gets its first layout on the next event.
-        QTimer.singleShot(0, page, reveal_option)
+        def reveal_and_highlight() -> None:
+            if self._stack.currentWidget() is page:
+                reveal_option()
+                anchor = toggle if target.height() > scroll.viewport().height() else target
+                self._highlight_settings_target(anchor)
+
+        QTimer.singleShot(0, page, reveal_and_highlight)
         toggle.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _highlight_settings_target(self, target: QWidget | None) -> None:
+        from mnmparse.app.settings_highlight import SettingsHighlight
+
+        for previous in self.findChildren(SettingsHighlight):
+            previous.stop()
+        if isinstance(target, QWidget) and target.isVisible():
+            SettingsHighlight(target, self._cfg)
 
     # -- pages ---------------------------------------------------------------------------
 
@@ -1310,9 +1344,11 @@ class App(QApplication):
         self._update_ready_version = ""
         self._update_last_status = ""
         self._overlay_settings_gears: list[Any] = []
+        self._read_area_gears: Any | None = None
         self.triggers: Any | None = None
         self._low_health_flash: Any | None = None
         self._low_health_active = False
+        self._overburdened_active = False
         self._overlay_group_visible = True
         self._syncing_map_visibility = False
         self.tray: TrayIcon | None = None
@@ -1344,27 +1380,49 @@ class App(QApplication):
         app_icon.ensure_icon_file(project_path("assets") / "icon.ico")
         self.engine = self._make_engine(cfg)
         self.engine.config_path = self.config_path
+        self._leaderboard_ledger = None
+        self._leaderboard_client = None
+        if selftest_seconds is None:
+            from mnmparse.protected_stats import ProtectedLedger, EncryptedFile
+            from mnmparse.app.leaderboard_client import LeaderboardClient
+            self._leaderboard_ledger = ProtectedLedger(self.config_path.parent / "leaderboard-state.bin")
+            setter = getattr(self.engine, "set_protected_ledger", None)
+            if callable(setter):
+                setter(self._leaderboard_ledger)
+            self._leaderboard_client = LeaderboardClient(
+                EncryptedFile(self.config_path.parent / "leaderboard-cache.bin"),
+                self if isinstance(self, QObject) else None)
         self.overlay = self._make_overlay(cfg)
         from mnmparse.app.map_overlay import MapOverlay
         from mnmparse.app.map_downloads import MapDownloadController
         from mnmparse.app.app_updates import AppUpdateController
         self.map_overlay = MapOverlay(self.settings)
-        if self.overlay is not None and hasattr(self.overlay, "npc_panel"):
-            from mnmparse.app.npc_details import NpcDetailsController
-            from mnmparse.npc_wiki import WikiRepository
-            self.npc_details = NpcDetailsController(
-                WikiRepository(project_path("npc_cache")), self.overlay.npc_panel, self.map_overlay,
-                self if isinstance(self, QObject) else None)
+        from mnmparse.app.npc_details import NpcDetailsController
+        from mnmparse.app.zones_page import BrowserOnlyNpcPanel
+        from mnmparse.npc_wiki import WikiRepository
+        panel = getattr(self.overlay, "npc_panel", None)
+        if panel is None:
+            panel = BrowserOnlyNpcPanel(self if isinstance(self, QObject) else None)
+        self.npc_details = NpcDetailsController(
+            WikiRepository(project_path("npc_cache")), panel, self.map_overlay,
+            self if isinstance(self, QObject) else None)
         self.map_downloads = MapDownloadController(self.map_overlay.repo, self)
         self.app_updates = AppUpdateController(self)
         self.triggers = self._make_trigger_runner()
         from mnmparse.app.revenge import RevengeController, RevengePopoutWindow
         self.revenge = RevengeController(cfg, self.config_path.parent / "revenge.json", self if isinstance(self, QObject) else None)
-        self.window = MainWindow(self.engine, self.overlay, cfg, self.settings)
+        self.window = MainWindow(self.engine, self.overlay, cfg, self.settings, map_repository=self.map_overlay.repo)
+        leaderboard = self.window.page("leaderboard")
+        if self._leaderboard_client is not None and callable(getattr(leaderboard, "bind", None)):
+            leaderboard.bind(self._leaderboard_ledger, self._leaderboard_client)
+        zones = self.window.page("zones")
+        if callable(getattr(zones, "bind", None)):
+            zones.bind(self.npc_details)
         self.revenge_popout = RevengePopoutWindow(self.revenge, self.settings)
         self.tray = TrayIcon(self.icon, self)
         self._wire()
         self._install_overlay_settings_gears()
+        self._install_read_area_gears()
         if self.triggers is not None:
             self.triggers.set_config(cfg)
 
@@ -1518,6 +1576,7 @@ class App(QApplication):
         self._connect_optional(engine, "session", window.on_session)
         self._connect_optional(engine, "low_health", self._on_low_health)
         self._connect_optional(engine, "low_health_changed", self._on_low_health_changed)
+        self._connect_optional(engine, "overburdened_changed", self._on_overburdened_changed)
         from mnmparse.app.revenge import RevengePrompts, RevengeList
         self.revenge.pop_out_requested.connect(self.show_revenge_popout)
         self.revenge.alert_requested.connect(self._on_revenge_alert)
@@ -1548,6 +1607,21 @@ class App(QApplication):
             npc_details = self.__dict__.get("npc_details")
             if npc_details is not None:
                 engine.message.connect(npc_details.on_message)
+                from mnmparse.app.notable_kills import NotableKillController
+
+                self.notable_kills = NotableKillController(
+                    npc_details,
+                    current_zone=lambda: getattr(self.engine, "current_zone", ""),
+                    active=lambda: (self.engine.state == "running" and not self._shut_down
+                                    and not self.__dict__.get("_quit_pending", False)
+                                    and not self.__dict__.get("_demo_active", False)
+                                    and not self._selftest),
+                    parent=window)
+                self._connect_optional(engine, "live_group_kill", self.notable_kills.on_kill)
+                self._connect_optional(engine, "live_group_activity", self.notable_kills.on_activity)
+                self._connect_optional(engine, "zone_changed", self.notable_kills.set_zone)
+                engine.state_changed.connect(self.notable_kills.on_state)
+                self.notable_kills.celebrated.connect(self._on_notable_kill)
             self._connect_optional(overlay, "copy_requested", self.copy_snapshot)
             self._connect_optional(overlay, "group_override_requested", self.set_group_override)
             self._connect_optional(overlay, "pet_owner_requested", self.set_pet_owner)
@@ -1600,6 +1674,8 @@ class App(QApplication):
                 for name in ("locked_changed", "click_through_changed", "tab_changed", "visibility_changed",
                              "appearance_changed", "attack_bar_changed", "npc_panel_changed"):
                     self._connect_optional(overlay, name, lambda *_: self._sync_overlay_settings())
+                self._connect_optional(getattr(overlay, "attack_bar", None), "weapon_delay_changed",
+                                       lambda _delay: self._sync_overlay_settings())
         if overlay is not None and callable(getattr(overlay, "set_history", None)):
             try:
                 overlay.set_history(engine.history())
@@ -1653,7 +1729,7 @@ class App(QApplication):
         targets = (
             (overlay, "overlay_enabled", "Combat overlay"),
             (getattr(overlay, "timer_panel", None), "triggers", "Timer"),
-            (getattr(overlay, "attack_bar", None), "attack_bar", "Auto-attack bar"),
+            (getattr(overlay, "attack_bar", None), "weapon_delay", "Auto-attack bar"),
             (getattr(overlay, "npc_panel", None), "npc_enabled", "Considered NPC"),
             (self.map_overlay, "map_download_button", "Map"),
             (self.__dict__.get("revenge_popout"), "revenge_enabled", "Revenge List"),
@@ -1675,12 +1751,69 @@ class App(QApplication):
             panel.update()
             self._overlay_settings_gears.append(gear)
 
+    def _install_read_area_gears(self) -> None:
+        from mnmparse.app.read_area_gears import ReadAreaGears
+
+        self._read_area_gears = ReadAreaGears(
+            self._read_area_snapshot,
+            input_enabled=lambda: not bool(getattr(self.overlay, "click_through", False)),
+            action_enabled=self._read_area_action_enabled,
+            parent=self.window,
+        )
+        self._read_area_gears.activated.connect(self._on_read_area_action)
+        self._sync_read_area_gears()
+
+    def _read_area_snapshot(self) -> dict[str, Any]:
+        page = self.window.page("leaderboard") if self.window is not None else None
+        if callable(getattr(page, "refresh_status", None)):
+            page.refresh_status()
+        snapshot = getattr(self.engine, "read_area_snapshot", None)
+        return snapshot() if callable(snapshot) else {}
+
+    def _on_read_area_action(self, target: str) -> None:
+        if target not in {"copy_stats", "submit_stats"}:
+            self._open_overlay_settings(target)
+            return
+        if self.window is None or self._shut_down or self._selftest or self.__dict__.get("_demo_active", False):
+            return
+        page = self.window.page("leaderboard")
+        action = getattr(page, "copy_stats" if target == "copy_stats" else "submit_stats", None)
+        if callable(action):
+            action()
+            self.window.show_message(page.message.text())
+
+    def _read_area_action_enabled(self, target: str) -> bool:
+        if target not in {"copy_stats", "submit_stats"}:
+            return True
+        if self._selftest or self._shut_down or self.__dict__.get("_demo_active", False) or self.window is None:
+            return False
+        page = self.window.page("leaderboard")
+        if not callable(getattr(page, "refresh_status", None)):
+            return False
+        return page.copy_button.isEnabled() if target == "copy_stats" else page.submit_button.isEnabled()
+
+    def _sync_read_area_gears(self) -> None:
+        gears = self.__dict__.get("_read_area_gears")
+        if gears is None:
+            return
+        wanted = (getattr(self.engine, "state", "") == "running"
+                  and self.__dict__.get("_overlay_group_visible", True)
+                  and not (self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)))
+        if wanted:
+            gears.start()
+            gears.refresh()
+        else:
+            gears.stop()
+
     def _open_overlay_settings(self, target: str) -> None:
         if self.window is None or self._shut_down or self.__dict__.get("_quit_pending", False):
             return
         self.show_window()
         if target == "triggers":
             self.window.show_page("triggers")
+            page = self.window.page("triggers")
+            control = getattr(page, "timer_help", None)
+            self.window._highlight_settings_target(control.parentWidget() if control is not None else None)
         else:
             self.window._open_settings_option(target)
 
@@ -1816,6 +1949,9 @@ class App(QApplication):
                 page.set_map_download_status(message, False)
         if self.map_overlay is not None:
             self.map_overlay.reload_cached_map()
+        zones = self.window.page("zones") if self.window is not None else None
+        if zones is not None and hasattr(zones, "map"):
+            zones.map.reload_cached_map()
 
     @staticmethod
     def _connect_optional(obj: Any, signal_name: str, slot: Callable[..., Any]) -> bool:
@@ -1874,7 +2010,9 @@ class App(QApplication):
     def _on_engine_state(self, state: str) -> None:
         if state != "running":
             self._low_health_active = False
+            self._overburdened_active = False
             self._sync_low_health_flash()
+        self._sync_read_area_gears()
         if self.tray is not None:
             self.tray.set_capture_running(state in RUNNING_STATES)
             self.tray.set_status_text(STATE_TEXT.get(state, state))
@@ -1927,11 +2065,20 @@ class App(QApplication):
         self._low_health_active = bool(active) and getattr(self.engine, "state", "") == "running"
         self._sync_low_health_flash()
 
+    def _on_overburdened_changed(self, active: bool) -> None:
+        """Use the latest engine latch so queued old readings cannot revive it."""
+        active = getattr(self.engine, "overburdened_active", active)
+        self._overburdened_active = bool(active) and getattr(self.engine, "state", "") == "running"
+        self._sync_low_health_flash()
+
     def _sync_low_health_flash(self) -> None:
         """Keep the warning visible until recovery, respecting shared visibility."""
-        wanted = (self.__dict__.get("_low_health_active", False)
-                  and self.cfg.player_status_enabled and self.cfg.low_health_enabled
-                  and self.cfg.low_health_flash and self.__dict__.get("_overlay_group_visible", True)
+        low_health = (self.__dict__.get("_low_health_active", False)
+                      and self.cfg.low_health_enabled and self.cfg.low_health_flash)
+        overburdened = (self.__dict__.get("_overburdened_active", False)
+                       and self.cfg.overburdened_flash)
+        wanted = ((low_health or overburdened) and self.cfg.player_status_enabled
+                  and self.__dict__.get("_overlay_group_visible", True)
                   and getattr(self.engine, "state", "") == "running"
                   and not (self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)))
         flash = self.__dict__.get("_low_health_flash")
@@ -1939,15 +2086,19 @@ class App(QApplication):
             if flash is not None:
                 flash.stop()
             return
-        from mnmparse.app.low_health import LowHealthFlash
+        from mnmparse.app.low_health import LOW_HEALTH_COLOR, OVERBURDENED_COLOR, LowHealthFlash
         from mnmparse.capture import find_game_window_info
         screen = None
         try:
             game = find_game_window_info(self.cfg.window_title)
             if game is not None:
                 from PySide6.QtCore import QPoint
+                from mnmparse.app.read_area_gears import screen_at_physical
                 left, top, right, bottom = game.rect
-                screen = QGuiApplication.screenAt(QPoint((left + right) // 2, (top + bottom) // 2))
+                center = ((left + right) // 2, (top + bottom) // 2)
+                screen = screen_at_physical(center)
+                if screen is None:
+                    screen = QGuiApplication.screenAt(QPoint(*center))
         except Exception:
             log.debug("Low HP alert screen lookup failed", exc_info=True)
         if screen is None:
@@ -1955,6 +2106,8 @@ class App(QApplication):
         if screen is not None:
             if flash is None:
                 flash = self._low_health_flash = LowHealthFlash()
+            # Health takes visual priority while both conditions are active.
+            flash.set_warning_color(LOW_HEALTH_COLOR if low_health else OVERBURDENED_COLOR)
             flash.flash(screen.geometry(), reduced_motion=self.cfg.reduced_motion)
 
     def _on_message_for_triggers(self, msg: Any, ev: Any) -> None:
@@ -2103,6 +2256,12 @@ class App(QApplication):
         except Exception:  # noqa: BLE001 - sound is a nicety
             log.debug("could not play %s", name, exc_info=True)
 
+    def _on_notable_kill(self, _name: str) -> None:
+        """The controller already checked live ownership, zone membership and duplicate notices."""
+        if (self.triggers is not None and not self.triggers.muted
+                and self.settings.value("npc/celebration_sound", self.cfg.npc_celebration_sound, type=bool)):
+            self.play_sound("Victory fanfare")
+
     def _on_message_for_overlay(self, msg: Any, ev: Any) -> None:
         if self.overlay is None:
             return
@@ -2190,6 +2349,18 @@ class App(QApplication):
     def _on_overlay_setting(self, key: str, value: Any) -> None:
         """A Settings > Overlay control changed: apply it to the overlay right away."""
         overlay = self.overlay
+        if key == "weapon_delay":
+            bar = getattr(overlay, "attack_bar", None)
+            if bar is not None:
+                bar.set_weapon_delay(int(value))
+            else:
+                self.settings.setValue("attack_bar/weapon_delay", int(value))
+            self._sync_overlay_settings()
+            return
+        if key == "npc_celebration_sound":
+            self.settings.setValue("npc/celebration_sound", bool(value))
+            self._sync_overlay_settings()
+            return
         if key in {f"npc_{part}" for part in
                    ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")}:
             self.settings.setValue("npc/" + key[4:], bool(value))
@@ -2230,10 +2401,17 @@ class App(QApplication):
     def _sync_overlay_settings(self) -> None:
         """Mirror the overlay's current state into Settings > Overlay."""
         overlay = self.overlay
+        zones = self.window.page("zones") if self.window is not None else None
+        if callable(getattr(zones, "set_config", None)):
+            zones.set_config(self.cfg)
         page = self.window.page("settings") if self.window is not None else None
         sync = getattr(page, "sync_overlay", None)
         if not callable(sync):
             return
+        from mnmparse.app.attack_bar import saved_weapon_delay
+
+        sync(weapon_delay=saved_weapon_delay(self.settings), npc_celebration_sound=self.settings.value(
+            "npc/celebration_sound", self.cfg.npc_celebration_sound, type=bool))
         if overlay is None:
             sync(locked=self._current_overlay_lock(),
                  opacity=self.settings.value("overlay/opacity", self.cfg.overlay_opacity, type=float),
@@ -2261,6 +2439,7 @@ class App(QApplication):
             self.tray.set_overlay_click_through(bool(enabled))
         for gear in self.__dict__.get("_overlay_settings_gears", ()):
             gear.sync()
+        self._sync_read_area_gears()
 
     def _on_overlay_locked(self, locked: bool) -> None:
         self.settings.setValue("overlay/locked", bool(locked))
@@ -2281,6 +2460,7 @@ class App(QApplication):
         if popout is not None:
             popout.set_overlay_visible(visible)
         self._sync_low_health_flash()
+        self._sync_read_area_gears()
         if self.window is not None:
             self.window.set_overlay_state(visible)
         if self.tray is not None:
@@ -2319,6 +2499,10 @@ class App(QApplication):
         """The Settings page saved ``cfg``: adopt it in the shell and the overlay."""
         previous = self.cfg
         self.cfg = cfg
+        if any(getattr(previous, key) != getattr(cfg, key) for key in
+               ("crop", "player_status_crop", "player_status_separate", "player_status_enabled",
+                "player_status_xp", "player_name", "capture_backend", "window_title")):
+            self._overburdened_active = False
         if (previous.low_health_threshold != cfg.low_health_threshold
                 or previous.low_health_enabled != cfg.low_health_enabled
                 or any(getattr(previous, key) != getattr(cfg, key) for key in
@@ -2326,6 +2510,7 @@ class App(QApplication):
                         "player_status_xp", "player_name"))):
             self._low_health_active = False
         self._sync_low_health_flash()
+        self._sync_read_area_gears()
         revenge = self.__dict__.get("revenge")
         if revenge is not None:
             revenge.set_config(cfg)
@@ -2434,6 +2619,9 @@ class App(QApplication):
         live._json.setEnabled(False)
         self.window.on_session(bundle.session)
         self.window.page("session").set_demo_active(True)
+        leaderboard = self.window.page("leaderboard")
+        if callable(getattr(leaderboard, "set_demo_active", None)):
+            leaderboard.set_demo_active(True)
         if self.overlay is not None:
             self.overlay.set_new_session_enabled(False)
             self.overlay.set_config(presentation)
@@ -2454,6 +2642,9 @@ class App(QApplication):
         self.window.set_config(self.cfg)
         self.window.page("live")._demo_active = False
         self.window.page("session").set_demo_active(False)
+        leaderboard = self.window.page("leaderboard")
+        if callable(getattr(leaderboard, "set_demo_active", None)):
+            leaderboard.set_demo_active(False)
         self.window.page("live").set_history([])
         self.window.on_session(self.engine.session_snapshot())
         self.window.on_state(getattr(self.engine, "state", "stopped"))
@@ -2543,6 +2734,12 @@ class App(QApplication):
         announcement = self.__dict__.get("_whats_new")
         if announcement is not None:
             announcement.stop()
+        read_area_gears = self.__dict__.get("_read_area_gears")
+        if read_area_gears is not None:
+            read_area_gears.shutdown()
+        leaderboard_client = self.__dict__.get("_leaderboard_client")
+        if leaderboard_client is not None:
+            leaderboard_client.shutdown()
         log.info("Shutting down")
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)
@@ -2567,8 +2764,14 @@ class App(QApplication):
         npc_details = self.__dict__.get("npc_details")
         if npc_details is not None:
             npc_details.shutdown()
+        notable_kills = self.__dict__.get("notable_kills")
+        if notable_kills is not None:
+            notable_kills.shutdown()
         if self.map_overlay is not None:
             self.map_overlay.shutdown()
+        zones = self.window.page("zones") if self.window is not None else None
+        if callable(getattr(zones, "shutdown", None)):
+            zones.shutdown()
         if self.overlay is not None:
             try:
                 self.overlay.close()

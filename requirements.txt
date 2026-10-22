@@ -8,6 +8,9 @@ pillow==12.3.0
 mss==10.2.0
 regex==2026.9.29
 typing_extensions==4.16.0
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.11
 windows-capture==2.0.1
 winrt-runtime==3.2.1
 winrt-Windows.Foundation==3.2.1

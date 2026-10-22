@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from mnmparse.ocr import OcrLine
-from mnmparse.player_status import read_player_status, read_status_crop
+from mnmparse.player_status import PlayerStatusReading, read_player_status, read_status_crop
 
 
 def panel(hp: str = "601 / 733", *, inline: bool = False) -> list[OcrLine]:
@@ -51,6 +51,8 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertEqual((reading.hp_current, reading.hp_max), (601, 733))
                 self.assertAlmostEqual(reading.hp_percent, 81.99, places=2)
                 self.assertIsNone(reading.xp_percent)
+                self.assertEqual((reading.weight_current, reading.weight_max), (120, 122))
+                self.assertFalse(reading.overburdened)
                 self.assertEqual([asdict(line) for line in lines], before)
 
     def test_low_zero_health_and_overweight_are_not_other_resource_ratios(self):
@@ -62,6 +64,8 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertIsNotNone(reading)
                 self.assertEqual(reading.hp_percent, current)
                 self.assertEqual(reading.hp_current, current)
+                self.assertEqual((reading.weight_current, reading.weight_max), (150, 122))
+                self.assertTrue(reading.overburdened)
 
     def test_shuffled_ocr_uses_geometry_for_split_health_and_xp(self):
         lines = panel()
@@ -91,8 +95,10 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertEqual(reading.xp_bar_rect, rect)
                 self.assertAlmostEqual(reading.xp_percent, 73.2, delta=0.1)
                 self.assertEqual([asdict(line) for line in lines], before)
-                self.assertIsNone(read_player_status(lines, image))
-                self.assertIsNone(read_player_status(lines))
+                for weight_only in (read_player_status(lines, image), read_player_status(lines)):
+                    self.assertIsNone(weight_only.hp_current)
+                    self.assertIsNone(weight_only.xp_percent)
+                    self.assertEqual((weight_only.weight_current, weight_only.weight_max), (120, 122))
         # An isolated XP-looking track without verified stat labels is still ignored.
         self.assertIsNone(read_player_status(panel("707 1767")[:2], image, xp_bar_confirmed=True))
 
@@ -100,15 +106,33 @@ class PlayerStatusTests(unittest.TestCase):
         inputs = [
             [OcrLine(10, 20, 10, "My Health 10/100, mana 60/200")],
             [OcrLine(10, 20, 10, "Health 10/100")],
-            panel("120/100", inline=True), panel("10/0", inline=True),
-            panel("1,,0/100", inline=True), panel("9" * 5000 + "/100", inline=True),
             panel(inline=True) + [OcrLine(line.x + 350, line.y, line.h, line.text) for line in panel(inline=True)],
         ]
         for lines in inputs:
             with self.subTest(text=lines[0].text[:80]):
                 self.assertIsNone(read_player_status(lines))
-        # A foreign ratio adjacent to HEALTH is ambiguous, not a fallback.
-        self.assertIsNone(read_player_status(panel() + [OcrLine(181, 42, 12, "10/100")]))
+        # Ambiguous HP never becomes a guessed value; independently anchored
+        # Weight remains readable in that same otherwise verified panel.
+        reading = read_player_status(panel() + [OcrLine(181, 42, 12, "10/100")])
+        self.assertIsNone(reading.hp_current)
+        self.assertFalse(reading.overburdened)
+
+    def test_weight_is_validated_and_independent_of_unreadable_health(self):
+        for value, expected in (("150/122", True), ("122/122", False), ("0/122", False),
+                                ("1,500/1,220", True)):
+            with self.subTest(value=value):
+                lines = panel("garbled")
+                lines[-1].text = value
+                reading = read_player_status(lines)
+                self.assertIsNone(reading.hp_current)
+                self.assertIs(reading.overburdened, expected)
+        for value in ("150/0", "-5/122", "150/12O", "1,,50/122", "9" * 11 + "/122"):
+            with self.subTest(invalid=value):
+                lines = panel(inline=True)
+                lines[-1].text = "Weight " + value
+                self.assertIsNone(read_player_status(lines))
+        legacy = PlayerStatusReading(10, 100, (0, 0, 10, 10), ())
+        self.assertIsNone(legacy.overburdened)
 
     def test_panel_exclusions_do_not_remove_a_chat_line_on_the_same_row(self):
         lines = panel() + [OcrLine(8, 41, 12, "You slash a skeleton for 601 points of damage."),

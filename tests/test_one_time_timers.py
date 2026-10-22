@@ -64,6 +64,21 @@ class OneTimeTimerTests(unittest.TestCase):
         self.runner.audio.run.assert_not_called()
         self.fired.assert_not_called()
 
+    def test_respawn_provenance_is_explicit_for_manual_and_trigger_timers(self) -> None:
+        label = "a rat respawn"
+        marked = self.runner.start_one_time_timer(label, 30, now=100,
+                                                 keep_until_dismissed=True, respawn=True)
+        ordinary = self.runner.start_one_time_timer(label, 30, now=100)
+        retained = self.runner.start_one_time_timer(label, 30, now=100, keep_until_dismissed=True)
+        automatic = Trigger(name=label, pattern="automatic", action="none", timer=True, timer_seconds=30)
+        self.store.triggers.append(automatic)
+        self.runner.observe("automatic", now=100)
+        triggered = next(timer for timer in self.runner.board.timers if timer.trigger_id == automatic.id)
+        self.assertTrue(marked.respawn)
+        self.assertFalse(ordinary.respawn)
+        self.assertFalse(retained.respawn)
+        self.assertFalse(triggered.respawn)
+
     def test_one_time_countdown_does_not_persist_or_match_chat(self) -> None:
         timer = self.runner.start_one_time_timer("a rat", 30, now=100)
         self.assertEqual(self.runner.observe("a rat", now=110), [])
@@ -167,13 +182,15 @@ class OneTimeTimerTests(unittest.TestCase):
         self.assertFalse(self.runner.restart_timer(timer.id, now=1000010))
 
     def test_retained_timer_restarts_same_countdown_through_multiple_expiries(self) -> None:
-        timer = self.runner.start_one_time_timer("a rat respawn", 10, now=100, keep_until_dismissed=True)
+        timer = self.runner.start_one_time_timer("a rat respawn", 10, now=100,
+                                                keep_until_dismissed=True, respawn=True)
         timer.color, timer.low_color = "#112233", "#aabbcc"
         original = (timer.id, timer.trigger_id, timer.label, timer.duration, timer.color, timer.low_color)
         for restarted_at in (120, 1000000):
             with patch("mnmparse.triggers.time.time", return_value=restarted_at):
                 self.runner._tick()
             self.assertTrue(timer.ended)
+            self.assertTrue(timer.respawn)
             timer.warned = True
             self.changes.reset_mock()
             with patch("mnmparse.app.triggers_runtime.time.time", return_value=restarted_at) as clock:
@@ -185,6 +202,7 @@ class OneTimeTimerTests(unittest.TestCase):
             self.assertFalse(timer.warned)
             self.assertFalse(timer.ended)
             self.assertTrue(timer.keep_until_dismissed)
+            self.assertTrue(timer.respawn)
             self.assertTrue(self.runner._clock.isActive())
             self.assertEqual(self.changes.call_count, 1)
         self.runner.audio.run.assert_not_called()

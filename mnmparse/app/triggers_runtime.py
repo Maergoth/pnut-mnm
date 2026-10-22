@@ -73,6 +73,33 @@ def _dink() -> list[float]:
     return out
 
 
+FANFARE_BPM = 130
+# The supplied two-bar fragment, in B-flat major; eighth-note triplets and a
+# dotted-half final note. The preceding empty measure is omitted for an immediate cue.
+FANFARE_SCORE = ((74, 1 / 3), (74, 1 / 3), (74, 1 / 3), (74, 1), (70, 1), (72, 1),
+                 (74, 1 / 3), (None, 1 / 3), (72, 1 / 3), (74, 3))
+
+
+def _victory_fanfare() -> list[float]:
+    """A short synthesized arrangement of the user-provided score, without external assets."""
+    samples = []
+    for note, beats in FANFARE_SCORE:
+        count = round(SAMPLE_RATE * beats * 60 / FANFARE_BPM)
+        if note is None:
+            samples.extend([0.0] * count)
+            continue
+        frequency = 440 * 2 ** ((note - 69) / 12)
+        duration = count / SAMPLE_RATE
+        for index in range(count):
+            seconds = index / SAMPLE_RATE
+            envelope = min(1.0, seconds / 0.008, (duration - seconds) / min(0.09, duration / 3))
+            envelope *= 0.95 - 0.2 * seconds / duration
+            phase = 2 * math.pi * frequency * seconds
+            samples.append(0.55 * envelope * (0.65 * math.sin(phase) + 0.23 * math.sin(2 * phase)
+                                              + 0.12 * math.sin(3 * phase)))
+    return samples
+
+
 _CUES = {
     "Chime": lambda: _tone([(784, 0.18), (1175, 0.45)], decay=5),
     "Dink": _dink,
@@ -84,6 +111,7 @@ _CUES = {
     "Rising": lambda: _glide(400, 1200, 0.45),
     "Falling": lambda: _glide(1200, 400, 0.45),
     "Siren": lambda: _glide(580, 1060, 0.26) + _glide(1060, 580, 0.26),
+    "Victory fanfare": _victory_fanfare,
 }
 
 
@@ -502,8 +530,8 @@ class TriggerRunner(QObject):
 
     # -- timers ------------------------------------------------------------------------
     def start_one_time_timer(self, label: str, seconds: float, now: float | None = None, *,
-                             keep_until_dismissed: bool = False) -> ActiveTimer:
-        """Start an independent, silent countdown without adding a chat trigger."""
+                             keep_until_dismissed: bool = False, respawn: bool = False) -> ActiveTimer:
+        """Start a silent countdown; only the NPC action explicitly marks it as a respawn."""
         if not isinstance(label, str) or not label.strip():
             raise ValueError("A one-time timer needs a label")
         try:
@@ -525,7 +553,7 @@ class TriggerRunner(QObject):
             self.board.cancel(obsolete.id)
             ordinary.remove(obsolete)
         timer = self.board.start(trigger, trigger.name, now,
-                                 keep_until_dismissed=keep_until_dismissed)
+                                 keep_until_dismissed=keep_until_dismissed, respawn=respawn)
         assert timer is not None  # A fresh stack timer cannot retain an older instance.
         for old in previous:
             if old not in self.board.timers:

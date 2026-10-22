@@ -30,6 +30,7 @@ from mnmparse.stats import Stats
 from mnmparse.triggers import Trigger, TriggerStore
 
 if HAVE_QT:
+    from mnmparse.app.monster_icon import monster_icon
     from mnmparse.app.overlay import OverlayWindow
     from mnmparse.app.respawn_timer_dialog import DEFAULT_RESPAWN_SECONDS, MAX_RESPAWN_SECONDS, RespawnTimerDialog
     from mnmparse.app.triggers_runtime import TriggerRunner
@@ -187,7 +188,11 @@ class RespawnTimerUiTests(unittest.TestCase):
         timer, = self.runner.board.timers
         self.assertEqual((timer.label, timer.duration), (f"{NAMED_MOB} respawn", 754))
         self.assertTrue(timer.keep_until_dismissed)
+        self.assertTrue(timer.respawn)
         self.assertIn(timer, self.overlay.timer_panel.timers())
+        with patch("mnmparse.app.timer_panel.monster_icon", wraps=monster_icon) as draw_icon:
+            self.overlay.timer_panel.grab()
+        draw_icon.assert_called_once()
         self.assertEqual(self.runner.store.to_dict(), before)
         self.runner.audio.run.assert_not_called()
 

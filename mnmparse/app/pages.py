@@ -98,6 +98,7 @@ from mnmparse.export import actor_export_name
 from mnmparse.privacy import (AVERAGE_UNAVAILABLE_TEXT, casual_enabled, metric_available,
                              project_encounter, project_session)
 from mnmparse.app.morality import MoralityPanel
+from mnmparse.app.leaderboard_page import LeaderboardPage
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
@@ -165,6 +166,7 @@ __all__ = [
     "FeedPage",
     "HistoryPage",
     "LivePage",
+    "LeaderboardPage",
     "METRIC_TABS",
     "SettingsPage",
     "export_csv",
@@ -552,7 +554,7 @@ class _EncounterHeader(QWidget):
 
     # -- layout ------------------------------------------------------------------------
     def add_action(self, widget: QWidget) -> None:
-        """Append a button (e.g. Reset encounter) to the end of the first row."""
+        """Append a button (e.g. End Encounter) to the end of the first row."""
         self._actions.append(widget)
         self._row1.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
         self._update_mode()
@@ -1323,7 +1325,7 @@ class LivePage(QWidget):
         header_layout.setSpacing(18)
         self._header = _EncounterHeader()
         header_layout.addWidget(self._header, 1)
-        self._reset = QPushButton("Reset encounter")
+        self._reset = QPushButton("End Encounter")
         self._reset.setObjectName("Danger")
         self._reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self._reset.setToolTip("Close the open encounter now.")
@@ -1897,7 +1899,7 @@ class LivePage(QWidget):
 
     # -- actions ---------------------------------------------------------------------------
     def _on_reset(self) -> None:
-        log.info("Reset encounter requested from the Live page")
+        log.info("End encounter requested from the Live page")
         try:
             self._engine.reset_encounter()
         except Exception:  # noqa: BLE001 - the engine must never take the GUI down
@@ -2367,7 +2369,7 @@ class SettingsPage(QWidget):
                        self.overlay_enabled, self.overlay_locked, self.overlay_click_through, self.revenge_enabled,
                        self.reduced_motion, self.revenge_alert_enabled, self.revenge_alert_flash,
                        self.player_status_enabled, self.player_status_separate, self.player_status_xp,
-                       self.low_health_enabled, self.low_health_flash):
+                       self.low_health_enabled, self.low_health_flash, self.overburdened_flash):
             toggle.toggled.connect(self._on_form_changed)
         self.low_health_sound.currentIndexChanged.connect(self._on_form_changed)
         self.low_health_volume.value_changed.connect(self._on_form_changed)
@@ -2819,6 +2821,14 @@ class SettingsPage(QWidget):
         self.fps = self._dspin(0.5, 30.0, 0.5, 1, " fps")
         self._row(form, "Window title", self.window_title)
         self._row(form, "Backend", self.capture_backend)
+        self.leaderboard_capture_warning = _label(
+            "Leaderboard Submit and personal counter tracking require Window Capture. "
+            "Desktop capture readings are not eligible for submission; Copy stays local.", "Muted")
+        self.leaderboard_capture_warning.setWordWrap(True)
+        form.addRow(self.leaderboard_capture_warning)
+        self.capture_backend.currentTextChanged.connect(
+            lambda value: self.leaderboard_capture_warning.setVisible(value != "wgc"))
+        self.leaderboard_capture_warning.setVisible(self.capture_backend.currentText() != "wgc")
         self._row(form, "Capture rate", self.fps, "Frames read per second; 6 keeps up with a busy chat")
 
     def _build_ocr(self) -> None:
@@ -2856,6 +2866,8 @@ class SettingsPage(QWidget):
         self._content.addWidget(panel)
 
     def _build_overlay(self) -> None:
+        from mnmparse.app.attack_bar import MAX_WEAPON_DELAY
+
         form = self._section(
             "Overlay",
             "Changes apply immediately to the overlay and its pop-out windows.",
@@ -2865,6 +2877,12 @@ class SettingsPage(QWidget):
         self.overlay_click_through = ToggleSwitch()
         self.attack_bar = ToggleSwitch()
         self.attack_bar.toggled.connect(self._on_form_changed)
+        self.weapon_delay = QSpinBox()
+        self.weapon_delay.setRange(0, MAX_WEAPON_DELAY)
+        self.weapon_delay.setKeyboardTracking(False)
+        self.weapon_delay.setSpecialValueText("Automatic")
+        self.weapon_delay.setMinimumWidth(120)
+        self.weapon_delay.valueChanged.connect(lambda value: self._emit_overlay_setting("weapon_delay", value))
         percent = _percent_text
         self.overlay_opacity = SliderRow("", 20, 100, 85, formatter=percent)
         self.overlay_opacity.setFixedWidth(360)
@@ -2885,6 +2903,8 @@ class SettingsPage(QWidget):
         self._row(form, "Tab", self.overlay_tab)
         self._row(form, "Auto-attack bar", self.attack_bar,
                   "Swing timer under the overlay, learned from your own swings; unlock the overlay to drag it off")
+        self._row(form, "Weapon delay", self.weapon_delay,
+                  "Weapon-stat units: 36 = 3.6 seconds; 0 is automatic. Starting estimate only; actual swings are learned.")
         self._row(form, "Position", reset)
         npc_form = self._section(
             "Considered NPC",
@@ -2895,10 +2915,24 @@ class SettingsPage(QWidget):
         )
         for key, label in (("enabled", "Show NPC details"), ("level", "Level / level range"),
                            ("common_drops", "Common drops"), ("unique_drops", "Unique drops"),
-                           ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
+                           ("quests", "Quests"), ("reputation", "Reputation gained / lost"),
+                           ("celebration_sound", "Notable NPC victory fanfare")):
             control = ToggleSwitch()
             setattr(self, f"npc_{key}", control)
-            self._row(npc_form, label, control)
+            if key == "celebration_sound":
+                self.npc_celebration_preview = QPushButton("Preview sound")
+                self.npc_celebration_preview.setObjectName("Chip")
+                self.npc_celebration_preview.setAccessibleName("Preview notable NPC victory fanfare")
+                self.npc_celebration_preview.clicked.connect(
+                    lambda: self.sound_preview_requested.emit("Victory fanfare"))
+                sound_row = QHBoxLayout()
+                sound_row.setSpacing(8)
+                sound_row.addWidget(control)
+                sound_row.addWidget(self.npc_celebration_preview)
+                sound_row.addStretch(1)
+                self._row(npc_form, label, sound_row)
+            else:
+                self._row(npc_form, label, control)
             control.toggled.connect(self._on_form_changed)
             control.toggled.connect(lambda value, k=key: self._emit_overlay_setting(f"npc_{k}", bool(value)))
         live = (
@@ -2922,8 +2956,9 @@ class SettingsPage(QWidget):
         "font_scale": "overlay_font_scale",
         "tab": "overlay_tab",
         "attack_bar": "attack_bar",
+        "weapon_delay": "weapon_delay",
         **{f"npc_{key}": f"npc_{key}" for key in
-           ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
+           ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation", "celebration_sound")},
     }
 
     def _emit_overlay_setting(self, key: str, value: Any) -> None:
@@ -2948,6 +2983,8 @@ class SettingsPage(QWidget):
                     value = round(float(value), 2)
                 elif key == "tab":
                     self._select(self.overlay_tab, str(value))
+                elif key == "weapon_delay":
+                    self.weapon_delay.setValue(int(value))
                 else:
                     getattr(self, field_name).setChecked(bool(value))
                 changes[field_name] = value
@@ -3015,6 +3052,9 @@ class SettingsPage(QWidget):
         self.player_status_region.hide()
         self.player_status_xp = ToggleSwitch()
         self._row(form, "Track XP", self.player_status_xp)
+        self.overburdened_flash = ToggleSwitch()
+        self._row(form, "Overburdened warning", self.overburdened_flash,
+                  "Pulse gray screen edges while current weight exceeds maximum weight. Reduced motion keeps the glow steady.")
         self.low_health_enabled = ToggleSwitch()
         self._row(form, "Low-health alert", self.low_health_enabled)
         self.low_health_threshold = QSpinBox()
@@ -3054,6 +3094,7 @@ class SettingsPage(QWidget):
         self.player_status_separate.setEnabled(enabled)
         self.player_status_region.setVisible(enabled and self.player_status_separate.isChecked())
         self.player_status_xp.setEnabled(enabled)
+        self.overburdened_flash.setEnabled(enabled)
         self.low_health_enabled.setEnabled(enabled)
         alerts = enabled and self.low_health_enabled.isChecked()
         for control in (self.low_health_threshold, self.low_health_flash, self.low_health_sound, self.low_health_volume):
@@ -3262,13 +3303,17 @@ class SettingsPage(QWidget):
             self.low_health_enabled.setChecked(cfg.low_health_enabled)
             self.low_health_threshold.setValue(cfg.low_health_threshold)
             self.low_health_flash.setChecked(cfg.low_health_flash)
+            self.overburdened_flash.setChecked(cfg.overburdened_flash)
             self._select(self.low_health_sound, cfg.low_health_sound or "None")
             self.low_health_volume.set_value(cfg.low_health_volume)
             self._sync_player_status_controls(cfg.player_status_enabled)
             self.show_other_groups.setChecked(bool(_cfg_get(cfg, "show_other_groups", False)))
             self.dummy_fix.setChecked(bool(_cfg_get(cfg, "dummy_fix", False)))
             self.attack_bar.setChecked(bool(_cfg_get(cfg, "attack_bar", True)))
-            for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation"):
+            from mnmparse.app.attack_bar import saved_weapon_delay
+
+            self.weapon_delay.setValue(saved_weapon_delay(self._settings))
+            for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation", "celebration_sound"):
                 getattr(self, f"npc_{key}").setChecked(bool(getattr(cfg, f"npc_{key}")))
             self.feed_max_lines.setValue(int(_cfg_get(cfg, "feed_max_lines", 500)))
             self.log_break.setValue(float(_cfg_get(cfg, "log_break_minutes", 60.0)))
@@ -3329,6 +3374,7 @@ class SettingsPage(QWidget):
             "low_health_enabled": self.low_health_enabled.isChecked(),
             "low_health_threshold": self.low_health_threshold.value(),
             "low_health_flash": self.low_health_flash.isChecked(),
+            "overburdened_flash": self.overburdened_flash.isChecked(),
             "low_health_sound": ("" if self.low_health_sound.currentText() == "None"
                                  else self.low_health_sound.currentText()),
             "low_health_volume": int(self.low_health_volume.value()),
@@ -3336,7 +3382,7 @@ class SettingsPage(QWidget):
             "dummy_fix": self.dummy_fix.isChecked(),
             "attack_bar": self.attack_bar.isChecked(),
             **{f"npc_{key}": getattr(self, f"npc_{key}").isChecked() for key in
-               ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
+               ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation", "celebration_sound")},
             "feed_max_lines": int(self.feed_max_lines.value()),
             "log_break_minutes": float(self.log_break.value()),
             "log_max_mb": float(self.log_max.value()),

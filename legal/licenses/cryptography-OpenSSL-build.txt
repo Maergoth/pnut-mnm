@@ -1,0 +1,9 @@
+cryptography's statically linked OpenSSL in the official Windows wheel
+cryptography version: 50.0.2
+Version reported by binary: OpenSSL 4.0.3 29 Sep 2026
+License: Apache-2.0; full license and authors are in OpenSSL-4.0.3.txt.
+Corresponding upstream source: https://github.com/openssl/openssl/tree/openssl-4.0.3
+Windows wheel build: https://cryptography.io/en/50.0.2/installation/#building-cryptography-on-windows
+Wheel source and release files: https://pypi.org/project/cryptography/50.0.2/#files
+Rust dependency licenses: cryptography-50.0.2-Rust-dependencies.txt
+This is separate from CPython's OpenSSL 3.0.18 dependency.

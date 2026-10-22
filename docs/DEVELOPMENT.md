@@ -2,6 +2,56 @@
 
 [User guide](../README.md) · [File audit](FILE_AUDIT.md)
 
+Overlay gear shortcuts reveal the destination before adding a temporary, mouse-transparent
+`SettingsHighlight` child. Keep its outline independent of destination styles, graphics
+effects and layout. It uses monotonic elapsed time and the existing reduced-motion helper.
+Weapon delay remains the existing `attack_bar/weapon_delay` QSettings preference; both
+editors use `AttackBar.set_weapon_delay`, and restores call `reload_preferences` without
+clearing the swing tracker. Typed values commit once on Enter or focus loss.
+
+### Anonymous leaderboard
+
+`leaderboard.py` defines the public JSONL snapshot format. `protected_stats.py` owns
+the local identity and cumulative personal history. The engine accepts
+leaderboard counter/stat evidence only from its actual fresh WGC source; it never seeds
+from session totals, imports, demo data or alternate capture. Local Copy separately
+uses the fresh stat reader from either backend without producing a submission.
+
+`app/leaderboard_client.py` uses one bounded plain-Python daemon worker, a queue and a
+GUI-owned active-only polling timer. Opening the page reads the local cache;
+only explicit Refresh or Submit accesses the network. ACKs are delivered to the ledger
+before public rows. Timed-out submissions remain pending in the cache, and retries use
+fresh readings with the same identity/UTC-day submission ID. Shutdown discards
+late completions without a worker-owned QObject. The public cache is stored beside the
+selected config in `leaderboard-cache.bin`; local counters use `leaderboard-state.bin`.
+
+The desktop defaults to the anonymous hosted Worker at
+`https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
+`leaderboard_worker`; the public JSONL is on the `leaderboard-data` branch. The Worker
+was verified with the actual desktop HTTP client, including a GitHub write, duplicate
+retry, public read and removal of the synthetic test entry. Hosting uses the Sites
+Cloudflare runtime; no separate player account or sign-in is required. Worker publication
+and a desktop app release are separate operations. The Python `leaderboard_service`
+remains an optional local/reference adapter.
+
+For development, set `PNUT_LEADERBOARD_SUBMIT_URL=https://YOUR-SERVICE/snapshots`;
+an empty override disables Submit. HTTP is accepted only on localhost/loopback for
+local service tests. Redirects, credentials and query-string secrets are rejected.
+The Worker uses manual redirect handling and rejects upstream 3xx responses because
+the deployed runtime does not support fetch's `error` redirect mode. Its Node
+conformance tests run in PR CI. Large-history capacity needs measurement on the
+actual host; the local Node benchmark does not prove compatibility with a 10 ms tier.
+
+Notable kill celebrations consume `Engine.live_group_kill` and `live_group_activity`,
+emitted only after fresh captured events have been parsed and roster ownership checked.
+Their zone is captured under the engine lock; GUI delivery also verifies the current
+zone and running state. Keep history/import/demo and encounter rebuild paths separate.
+The NPC controller warms zone lists through its bounded cache queue, while the kill
+controller keeps at most 16 unresolved kills for 30 seconds. Only complementary active
+and passive kill notices within two seconds are paired; fresh damage re-arms pairing,
+and distinct same-form kills remain separate. The victory cue is synthesized from the
+user-supplied two-bar score at 130 BPM; no external recording or MIDI is downloaded.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
@@ -25,7 +75,7 @@ ZIP under `dist/releases/`, extracts it into a temporary directory, and runs tha
 EXE with a minimal Windows PATH. Only the ZIP and its `.sha256` file are release assets;
 machine-specific install metadata and smoke reports are not.
 
-Publishing is automated. Squash merging a PR that bumps `__version__` in
+Publishing is automated. Merging a PR that bumps `__version__` in
 `mnmparse/__init__.py` runs the build, startup and portable package gates on the merged
 commit without repeating the full regression suite, and the workflow's release
 job then publishes `v<version>` on GitHub with that run's gated ZIP and checksum attached,
@@ -115,13 +165,17 @@ mnmparse/            library + CLI
     engine.py        Engine(QObject): worker thread running the pipeline, Qt signals
     models.py        ActorRow / EncounterSnapshot / build_snapshot (CC crediting lives here)
     docked_panel.py  DockedPanel: base for windows that dock under the overlay (drag off, snap back)
-    map_overlay.py  resizable/fullscreen map viewer, asynchronous requests and zone switching
-    npc_details.py  cache-first lookup controller, bounded daemon workers and hover prefetch
+    map_overlay.py  shared asynchronous map viewer: floating overlay or embedded normal widget
+    zones_page.py   independent main-window map browser and cache-backed NPC detail/item view
+    npc_details.py  cache-first lookup controller, shared attached map views, browser signals and bounded workers
     npc_panel.py    detachable NPC details and passive item-stat tooltips
     map_downloads.py  background map updates for Settings and the optional startup download
     app_updates.py  verified GitHub downloads and deferred Windows application replacement
     update_restart.py visible automatic restart countdown, postponement and retry notice
     overlay_settings.py hover-only overlay shortcuts into the main app's settings
+    read_area_gears.py hover settings shortcuts for the live combat-chat and mini-stat read areas
+    monster_icon.py shared scalable NPC glyph for maps and respawn timers
+    notable_npc_menu.py level labels and unique-loot/quest badges for the map's NPC menu
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)
     timer_panel.py   TimerPanel: trigger countdowns with radial rings, docked under the overlay
     triggers_page.py TriggersPage: trigger list and editor, audio settings

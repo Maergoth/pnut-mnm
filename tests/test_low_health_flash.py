@@ -10,7 +10,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QApplication
 
-from mnmparse.app.low_health import EDGE_FRACTION, LowHealthFlash, PULSE_SECONDS
+from mnmparse.app.low_health import EDGE_FRACTION, LOW_HEALTH_COLOR, OVERBURDENED_COLOR, LowHealthFlash, PULSE_SECONDS
 
 
 class LowHealthFlashTests(unittest.TestCase):
@@ -146,6 +146,24 @@ class LowHealthFlashTests(unittest.TestCase):
         self.flash.flash(QRect())
         self.assertEqual(self.flash.geometry(), previous)
         self.assertTrue(self.flash.active)
+
+    def test_gray_weight_warning_keeps_the_red_warnings_coverage_and_pulse_phase(self):
+        self.render()
+        self.now += 0.6
+        phase = self.flash._started
+        self.flash.set_warning_color(OVERBURDENED_COLOR)
+        gray = self.flash.grab().toImage()
+        pixel = gray.pixelColor(4, gray.height() // 2)
+        self.assertEqual(pixel.red(), pixel.green())
+        self.assertEqual(pixel.green(), pixel.blue())
+        self.assertGreater(pixel.alpha(), 0)
+        self.assertEqual(self.flash._started, phase)
+        self.assertEqual(gray.pixelColor(gray.width() // 2, gray.height() // 2).alpha(), 0)
+        self.flash.set_warning_color(LOW_HEALTH_COLOR)
+        restored = self.flash.grab().toImage().pixelColor(4, gray.height() // 2)
+        self.assertGreater(restored.red(), restored.green())
+        self.assertEqual(restored.alpha(), pixel.alpha())
+        self.assertEqual(self.flash._started, phase)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
+from PySide6.QtCore import QRectF, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import QDialog, QInputDialog, QMenu
 
@@ -30,11 +30,21 @@ WAIT_MS = 200  #: repaint interval while every bar waits at full (nothing moves)
 MAX_WEAPON_DELAY = 999  #: input uses tenths of a second; zero selects automatic timing
 
 
+def saved_weapon_delay(settings: QSettings) -> int:
+    """Read the existing preference, treating invalid backups as automatic timing."""
+    try:
+        delay = int(settings.value(f"{SETTINGS_GROUP}/weapon_delay", 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return delay if 0 <= delay <= MAX_WEAPON_DELAY else 0
+
+
 class AttackBar(DockedPanel):
     """The auto-attack window (see module docstring)."""
 
     SETTINGS_GROUP = SETTINGS_GROUP
     TITLE = "PNUT M&M Auto Attack"
+    weapon_delay_changed = Signal(int)
 
     def __init__(self, owner: "OverlayWindow", settings: QSettings, flags: Qt.WindowType) -> None:
         super().__init__(owner, settings, flags)
@@ -70,11 +80,8 @@ class AttackBar(DockedPanel):
 
     def reload_preferences(self) -> None:
         """Adopt a restored delay preference without clearing the observed swings."""
-        try:
-            delay = int(self._settings.value(f"{SETTINGS_GROUP}/weapon_delay", 0))
-        except (TypeError, ValueError, OverflowError):
-            delay = 0
-        self._weapon_delay = delay if 0 <= delay <= MAX_WEAPON_DELAY else 0
+        previous = self._weapon_delay
+        self._weapon_delay = saved_weapon_delay(self._settings)
         self.tracker.set_weapon_delay(self._weapon_delay / 10 if self._weapon_delay else None)
         self._tick()
         # A new seed can make an unlearned, idle bar active again. _tick picks the
@@ -82,6 +89,19 @@ class AttackBar(DockedPanel):
         now = time.time()
         if self.isVisible() and any(not hand.idle(now) for hand in self._hands):
             self._timer.start()
+        if previous != self._weapon_delay:
+            self.weapon_delay_changed.emit(self._weapon_delay)
+
+    @property
+    def weapon_delay(self) -> int:
+        """Starting estimate in weapon-stat units (tenths of a second); zero is automatic."""
+        return self._weapon_delay
+
+    def set_weapon_delay(self, delay: int) -> None:
+        if type(delay) is not int or not 0 <= delay <= MAX_WEAPON_DELAY:
+            raise ValueError("Weapon delay must be between 0 and 999")
+        self._settings.setValue(f"{SETTINGS_GROUP}/weapon_delay", delay)
+        self.reload_preferences()
 
     def set_font_px(self, px: float) -> None:
         self._px = px
@@ -89,8 +109,7 @@ class AttackBar(DockedPanel):
         self._resize_for(max(1, len(self._hands)))
 
     def _settings_gear_changed(self) -> None:
-        """Leave a permanent label inset and enough height for the hover gear."""
-        self._resize_for(max(1, len(self._hands)))
+        """The hover gear floats above the bar without enlarging its rows."""
         self.update()
 
     def sync(self) -> None:
@@ -120,8 +139,7 @@ class AttackBar(DockedPanel):
         try:
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
-            self._settings.setValue(f"{SETTINGS_GROUP}/weapon_delay", dialog.intValue())
-            self.reload_preferences()
+            self.set_weapon_delay(dialog.intValue())
         finally:
             dialog.deleteLater()
 
@@ -145,15 +163,13 @@ class AttackBar(DockedPanel):
 
     def _resize_for(self, rows: int) -> None:
         row_h = int(round(self._px * 1.45))
-        minimum = 30 if getattr(self, "_settings_gear", None) is not None else 0
-        self.set_rows_height(max(minimum, 8 + rows * row_h + (rows - 1) * 3))
+        self.set_rows_height(8 + rows * row_h + (rows - 1) * 3)
 
     def _row_rect(self, index: int, rows: int) -> QRectF:
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         row_h = (r.height() - 8 - (rows - 1) * 3) / rows
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        return QRectF(r.left() + 8 + inset, r.top() + 4 + index * (row_h + 3),
-                      max(0, r.width() - 16 - inset), row_h)
+        return QRectF(r.left() + 8, r.top() + 4 + index * (row_h + 3),
+                      max(0, r.width() - 16), row_h)
 
     # -- painting --------------------------------------------------------------------------
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802

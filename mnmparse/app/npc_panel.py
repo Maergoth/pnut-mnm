@@ -233,8 +233,8 @@ class NpcPanel(DockedPanel):
             self._present_item()
 
     def _settings_gear_changed(self) -> None:
-        """Reflow the title when the shared settings gear is registered."""
-        self._refresh()
+        """The hover gear floats over the unchanged title and information."""
+        self.update()
 
     def wants_visible(self) -> bool:
         return bool(self._name) and any(self._fields.values()) and not self._lifetime.expired
@@ -366,7 +366,7 @@ class NpcPanel(DockedPanel):
         common = getattr(self._details, "common_drops", ()) or ()
         unique = unique_drops_excluding_common(common, getattr(self._details, "unique_drops", ()) or ())
         for key, label in (("unique_drops", "Unique drops"), ("common_drops", "Common drops"),
-                           ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
+                           ("quests", "Quests"), ("reputation", "Reputation gained / lost")):
             if not self._fields[key]:
                 continue
             values = unique if key == "unique_drops" else getattr(self._details, key, ()) or ()
@@ -393,8 +393,6 @@ class NpcPanel(DockedPanel):
         try:
             margin = 10
             title_h = int(QFontMetricsF(self._title_font).height()) + 13
-            if getattr(self, "_settings_gear", None) is not None:
-                title_h = max(title_h, 30)
             note_h = int(QFontMetricsF(self._note_font).height()) + 8 if self._status else 0
             area = self._available_area()
             available_h = area.height()
@@ -496,8 +494,7 @@ class NpcPanel(DockedPanel):
         return next((row.item for rect, row in self._row_rects if row.item and rect.contains(point)), "")
 
     def _title_rect(self) -> QRectF:
-        left = 32 if getattr(self, "_settings_gear", None) is not None else 10
-        return QRectF(left, 5, max(0, self.width() - left - 10), self._body.top() - 7)
+        return QRectF(10, 5, max(0, self.width() - 20), self._body.top() - 7)
 
     def _name_rect(self) -> QRectF:
         rect = self._title_rect()

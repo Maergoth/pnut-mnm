@@ -44,6 +44,15 @@ runs at **4× speed**; timer colors and warning thresholds are customizable.
 **Map overlay.** A compact header provides zone and map selectors, a drag grip when unlocked,
 and fullscreen. The map follows zone changes and remembers its last state.
 
+**Zones in the main app.** Open **Zones** to browse the same maps and notable-NPC
+menu in a normal window. Its selected zone, map floor and zoom are saved separately
+from the live map. The first known game zone fills an empty browser once; later game
+zone changes leave your browsing choice alone. Selecting a notable NPC shows its
+details beside the map, including cached item hover tooltips and wiki links, even
+when overlays are hidden or the NPC overlay is disabled. The detail pane uses your
+**Settings > Considered NPC** field choices. Cached maps and NPC details appear first;
+new information loads in the background. Map updates in Settings refresh both views.
+
 ![PNUT map overlay with its compact header expanded](docs/images/map-overlay.png)
 
 Map artwork: [Shaded Dunes Map, Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/File:Shaded_Dunes_Map.jpg).
@@ -264,7 +273,7 @@ past without being captured cannot be recovered.
   of every fight in that visit** (all damage, healing, taken and utility added up; duration =
   time in combat; it keeps updating while you fight there). Select a fight for that fight. The
   view follows the newest fight until you pick something else. A zone change ends the open
-  fight; fights from before the first zone line sit under "Unknown zone". **Reset encounter**
+  fight; fights from before the first zone line sit under "Unknown zone". **End Encounter**
   closes the open fight; **Export CSV / JSON** writes the selection (a summary too) under
   `logs\exports\`. **Import log...** re-parses any `combat_*.log` or `events_*.jsonl` file
   (yours or a friend's) into the same tree, tagged with the file name; fights already listed
@@ -304,7 +313,7 @@ past without being captured cannot be recovered.
 Log imports run in the background and can be canceled; a canceled import is not added.
 Carebear Mode also filters individual performance in historical and imported views and exports.
 
-**Mini stats.** Settings > Mini stat window can read your visible Health and XP bar.
+**Mini stats.** Settings > Mini stat window can read your visible Health, Weight and XP bar.
 New setups default to **Separate stats region**. In setup step 2, use **Select area** to
 choose Combat chat or optional Mini stats from the same frame. Select the stat panel,
 including its XP bar; readings begin after its rectangle is chosen. Keep it clear of chat,
@@ -321,6 +330,33 @@ HP reading reaches the threshold again; an unreadable value does not count as re
 Reduced motion shows a steady glow. Hiding overlays, pausing or stopping capture also
 hides the warning. The threshold defaults to **10%**. Choose the threshold, sound, volume
 and flash in the same section; **Preview sound** plays the selected tone and volume.
+Two fresh weight readings above maximum capacity pulse the screen edges gray until a
+valid reading returns to capacity or below. **Overburdened warning** in the same section
+disables this display independently of health alerts. Red low-health warnings take
+priority when both are active; gray returns if health recovers while weight remains high.
+Hover the combat-chat or mini-stat screen read area to reveal its top-left gear and open
+the relevant highlighted settings. The gears follow the captured game window.
+
+**Leaderboard.** Open **Ranks** in the main navigation to view the **Leaderboard**.
+It shows your anonymous three-word name, current maximum HP/Mana, and lifetime personal
+kills, deaths, highest hit and corpse coin looted. Coin is shown in copper before party
+splitting. Session resets and imported logs do not change these totals. New totals are
+collected from live **Window Capture** only; desktop capture does not contribute.
+
+**Copy** places the current anonymous summary on your clipboard and never submits it.
+It works with a fresh mini-stat reading from either capture backend. **Submit** publishes
+one anonymous snapshot per UTC day and requires a fresh reading from **Window Capture**.
+The same separate Copy and Submit icons appear beside the mini-stat read area while
+hovering. Submissions run in the background through the hosted service without an
+external sign-in. If the service is unavailable, your local totals remain available to retry.
+No character name is included. The public table sorts numbers numerically and capture
+times chronologically; **Refresh public entries** checks the public file while keeping
+cached entries visible during an outage. Opening PNUT does not contact the leaderboard.
+
+An optional **secret phrase** restores the same anonymous name on another installation.
+Use 8–1024 characters, preserve letter case and keep the phrase private. Changing to a
+different identity starts new local totals; refreshing public entries restores that
+identity's previously submitted totals once. The phrase itself is never saved or uploaded.
 
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
@@ -383,7 +419,8 @@ one countdown immediately. The duration is pre-filled with the last one you conf
 any mob in that encounter's zone, including after restarting PNUT. All mobs in a zone share
 that default; each zone remembers its own duration. The first timer in a zone defaults to
 five minutes.
-Each countdown runs once in the timer panel. When an NPC timer expires, a **circular arrow**
+Each countdown runs once in the timer panel, with the map's monster icon inside its radial ring.
+When an NPC timer expires, a **circular arrow**
 to restart and an **X** to dismiss replace its time counter. Hover for the action's tooltip.
 It stays until you dismiss it; restarting uses the same duration. Scroll the timer panel
 when more than eight timers are listed. It does not add an automatic chat trigger. Turn off
@@ -451,7 +488,8 @@ damage; **Hit%** shows its hit accuracy.
 bar). It learns your swing delay from the gaps between your own swings ("You crush ...",
 including misses), so it normally needs a few swings first. Same-hand hits within the same
 instant, including Double Attack, count as one swing for timing; their damage still counts.
-Right-click the bar and choose **Weapon Delay** to enter a starting estimate in tenths of a
+Use **Settings > Overlay > Weapon delay**, or right-click the bar and choose **Weapon Delay**,
+to enter a starting estimate in tenths of a
 second: **36 means 3.6 seconds**, and **0** selects automatic timing. The value contributes
 one initial interval sample only when that hand has no timing reference. Real swings replace
 it as the rolling estimate develops; changing the setting never overrides learned timing.
@@ -563,6 +601,7 @@ merge encoded characters; if a code is not detected, change the font or paste th
 Corrupted codes are rejected rather than imported with changed settings.
 "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
+Fresh installations also include **Resist**, which says “resist” when a target resists your spell.
 Invis Break matches **You begin to feel yourself appearing**. Version 0.1.6 corrects the old
 default match once while preserving customized patterns, other settings, and deleted presets.
 New installs use an immediate Falling sound with no Invis Break countdown or delayed alerts.
@@ -649,16 +688,31 @@ size, class and race where the wiki supplies them. Click the mob or item name to
 its wiki page. Unique drops are shown before common drops. An item listed as both appears only under common,
 and unavailable fields do not add empty headings.
 
-Hover any persistent overlay panel to reveal its top-left gear. Click it to open
-the main app at that panel's settings; the timer panel opens Triggers. The gear
+Hover any persistent overlay panel to reveal its top-left gear, floating over the existing
+content without a separate column or extra padding. Click it to open
+the main app at that panel's settings and briefly outline the destination; the timer panel
+opens Triggers and highlights its timer list. Reduced motion uses a steady brief outline. The gear
 respects click-through and hides when the pointer leaves the panel.
 
 The map header's **monster icon** opens notable NPCs for its selected zone. Choosing
 one displays the same card and respects the same field settings as considering it.
+Known levels appear before each name. A sparkled sword marks unique loot, and a feather
+marks NPCs that offer quests or are needed by quests. Cached details appear immediately;
+missing details fill in through background wiki requests.
+When you, your party or an owned pet slay a notable NPC in your current captured zone,
+PNUT plays a short synthesized victory fanfare and opens that NPC's cached card to inspect
+its drops. **Settings > Considered NPC > Notable NPC victory fanfare** toggles the sound;
+**Preview sound** beside it samples the cue without enabling it or opening an NPC card.
+master volume, output device and mute still apply. The card respects **Show NPC details**
+and the selected fields. Zone membership comes from that zone's wiki list, not the zone
+you happen to be browsing on the map. Old logs, imports, demos and startup chat do not
+celebrate past kills. Cached notable lists work offline; a first lookup needs the wiki.
 NPC records, notable lists and item stats are saved in `npc_cache/` beside the app.
 Cached records display immediately, then a background check compares wiki revisions
-and template modification timestamps before fetching changed content. Successful
-lookups are rechecked at most every five minutes; failed requests retry after a minute.
+and template modification timestamps before fetching changed content. Recent references
+are automatically rechecked about every five minutes, without another consider or hover;
+failed requests retry after a minute. Checks share a bounded queue, and an outage pauses
+automatic batches while cached details remain available.
 The app warms tooltip data for displayed loot. An unavailable wiki preserves cached
 records; a first lookup without a cache needs the wiki to recover. Public page-title
 requests can include the considered target's name; see the [Privacy Policy](legal/privacy.md).
