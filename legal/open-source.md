@@ -25,10 +25,14 @@ Copyright (c) 2026 PNUT M&M contributors. PNUT is available under the [MIT Licen
 | windows-capture | 2.0.1 | MIT; [full license](licenses/windows-capture-2.0.1.txt) and [native Rust dependency notices](licenses/windows-capture-2.0.1-Rust-dependencies.txt) |
 | PyWinRT runtime and Windows Foundation, Foundation.Collections, Globalization, Graphics.Imaging, Media.Ocr, and Storage.Streams projections | 3.2.1 | MIT; [full license](licenses/PyWinRT-3.2.1.txt) |
 | typing_extensions | 4.16.0 | PSF-2.0; [full license](licenses/typing_extensions-4.16.0.txt) |
+| cryptography and its bundled Rust code | 50.0.2 | Apache-2.0 OR BSD-3-Clause, with separate Rust dependency licenses; [full wheel licenses](licenses/cryptography-50.0.2.txt) and [native Rust dependency notices](licenses/cryptography-50.0.2-Rust-dependencies.txt) |
+| CFFI and its Windows libffi code | 2.1.1 | MIT-0 and libffi's MIT-style license; [full wheel license](licenses/cffi-2.1.1.txt) and [bundled libffi source notices](licenses/cffi-2.1.1-native-notices.txt) |
+| pycparser | 3.11 | BSD-3-Clause; [full license](licenses/pycparser-3.11.txt) |
 | PyInstaller bootloader and runtime support | 6.22.3 | GPL-2.0-or-later with the Bootloader Distribution Exception; [full license and exception](licenses/pyinstaller-6.22.3.txt) |
-| OpenSSL | 3.0.18 | Apache-2.0; [full license and upstream authors](licenses/OpenSSL-3.0.18.txt) |
+| OpenSSL used by CPython | 3.0.18 | Apache-2.0; [full license and upstream authors](licenses/OpenSSL-3.0.18.txt) |
+| OpenSSL statically linked in cryptography's Windows wheel | 4.0.3 | Apache-2.0; [full license and upstream authors](licenses/OpenSSL-4.0.3.txt) and [binary version and source](licenses/cryptography-OpenSSL-build.txt) |
 
-The Qt archives, OpenCV wheel and Rust lockfile contain notices for some upstream components and build tools that are not used by PNUT. Their inclusion preserves upstream notices and does not apply their licenses to unrelated PNUT code. GPL-only Qt Virtual Keyboard and the unused Qt PDF, Quick, QML and WebEngine components are excluded from the Windows build. The unused OpenCV FFmpeg video backend DLL is also excluded; Qt's FFmpeg audio backend remains included. Optional RapidOCR/ONNX is not included in that build.
+The Qt archives, OpenCV wheel and Rust lockfiles contain notices for some upstream components and build tools that are not used by PNUT. Their inclusion preserves upstream notices and does not apply their licenses to unrelated PNUT code. GPL-only Qt Virtual Keyboard and the unused Qt PDF, Quick, QML and WebEngine components are excluded from the Windows build. The unused OpenCV FFmpeg video backend DLL is also excluded; Qt's FFmpeg audio backend remains included. Optional RapidOCR/ONNX is not included in that build.
 
 ## Qt and FFmpeg: source, modification and replacement
 

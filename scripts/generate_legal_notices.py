@@ -35,14 +35,18 @@ VERSIONS = {
     "winrt-Windows.Globalization": "3.2.1", "winrt-Windows.Graphics.Imaging": "3.2.1",
     "winrt-Windows.Media.Ocr": "3.2.1", "winrt-Windows.Storage.Streams": "3.2.1",
     "typing_extensions": "4.16.0", "pyinstaller": "6.22.3",
+    "cryptography": "50.0.2", "cffi": "2.1.1", "pycparser": "3.11",
 }
 PYTHON_VERSION = "3.14.3"
 OPENSSL_VERSION = "OpenSSL 3.0.18 30 Sep 2025"
+CRYPTOGRAPHY_OPENSSL_VERSION = "OpenSSL 4.0.3 29 Sep 2026"
 FFMPEG_VERSION = "7.1.5"
 QT_MODULES = ("qtbase", "qtsvg", "qtmultimedia", "qtspeech", "pyside-setup")
 STATIC_FILES = tuple(f"Qt-6.11.2-{m}.txt" for m in QT_MODULES) + (
     "FFmpeg-7.1.5.txt", "OpenSSL-3.0.18.txt", "PyWinRT-3.2.1.txt",
     "windows-capture-2.0.1-Rust-dependencies.txt",
+    "cryptography-50.0.2-Rust-dependencies.txt", "OpenSSL-4.0.3.txt",
+    "cffi-2.1.1-native-notices.txt",
 )
 
 
@@ -134,14 +138,18 @@ def archive_notices(name: str, version: str, url: str) -> tuple[str, bytes, str,
     return f"{name}-{version}.txt", combine(f"{name} {version} upstream notices", selected), url, digest(data)
 
 
-def rust_notices() -> tuple[str, bytes, str, str]:
-    index_url = "https://pypi.org/pypi/windows-capture/2.0.1/json"
+def pypi_source(name: str, version: str) -> tuple[dict[str, bytes], str, str]:
+    index_url = f"https://pypi.org/pypi/{name}/{version}/json"
     index = json.loads(download(index_url))
     sdist = next(item for item in index["urls"] if item["packagetype"] == "sdist")
     data = download(sdist["url"])
     if digest(data) != sdist["digests"]["sha256"]:
-        raise RuntimeError("windows-capture sdist checksum mismatch")
-    files = source_files(data)
+        raise RuntimeError(f"{name} sdist checksum mismatch")
+    return source_files(data), sdist["url"], digest(data)
+
+
+def rust_notices(name: str = "windows-capture", version: str = "2.0.1") -> tuple[str, bytes, str, str]:
+    files, source, source_hash = pypi_source(name, version)
     lock_name = next(name for name in files if name.endswith("Cargo.lock"))
     lock = tomllib.loads(files[lock_name].decode())
     packages = [p for p in lock["package"] if p.get("source", "").startswith("registry+")]
@@ -183,9 +191,29 @@ def rust_notices() -> tuple[str, bytes, str, str]:
     with ThreadPoolExecutor(max_workers=6) as pool:
         for notices in pool.map(crate_notices, packages):
             selected.update(notices)
-    return "windows-capture-2.0.1-Rust-dependencies.txt", combine(
-        "windows-capture 2.0.1 Rust dependency notices (entire upstream lockfile; includes build-only dependencies)", selected
-    ), sdist["url"], digest(data)
+    return f"{name}-{version}-Rust-dependencies.txt", combine(
+        f"{name} {version} Rust dependency notices (entire upstream lockfile; includes build-only dependencies)", selected
+    ), source, source_hash
+
+
+def cffi_native_notices() -> tuple[str, bytes, str, str]:
+    files, source, source_hash = pypi_source("cffi", "2.1.1")
+    # The Windows wheel incorporates libffi sources whose notices are embedded
+    # in source headers, rather than in the wheel's top-level MIT-0 license.
+    selected = {name: contents for name, contents in files.items()
+                if name.startswith("src/c/libffi_x86_x64/")
+                and PurePosixPath(name).suffix.lower() in (".c", ".h", ".asm")}
+    if not selected or not any(b"Permission is hereby granted" in data for data in selected.values()):
+        raise RuntimeError("CFFI Windows libffi source notices are missing")
+    selected["setup.py"] = files["setup.py"]
+    return "cffi-2.1.1-native-notices.txt", combine(
+        "CFFI 2.1.1 Windows x86/x64 libffi source notices and build selection (source headers preserved in full)", selected
+    ), source, source_hash
+
+
+def cryptography_openssl_version() -> str:
+    from cryptography.hazmat.backends.openssl.backend import backend
+    return backend.openssl_version_text()
 
 
 def refresh_upstream() -> None:
@@ -193,7 +221,10 @@ def refresh_upstream() -> None:
     jobs.extend((
         lambda: archive_notices("FFmpeg", "7.1.5", "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n7.1.5"),
         lambda: archive_notices("OpenSSL", "3.0.18", "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.0.18"),
+        lambda: archive_notices("OpenSSL", "4.0.3", "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-4.0.3"),
         rust_notices,
+        lambda: rust_notices("cryptography", "50.0.2"),
+        cffi_native_notices,
     ))
     results = []
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -226,12 +257,15 @@ def generated_notices() -> dict[str, bytes]:
             raise RuntimeError(f"Notice audit requires {name}=={expected}; installed {installed}. Update and review notices before shipping.")
     if platform.python_version() != PYTHON_VERSION or ssl.OPENSSL_VERSION != OPENSSL_VERSION:
         raise RuntimeError("Python/OpenSSL version changed; update and review the native notices before shipping")
+    if cryptography_openssl_version() != CRYPTOGRAPHY_OPENSSL_VERSION:
+        raise RuntimeError("cryptography OpenSSL version changed; update and review the native notices before shipping")
     outputs = {"PNUT-MIT.txt": (ROOT / "LICENSE").read_bytes()}
     python_license = Path(sys.base_prefix) / "LICENSE.txt"
     outputs[f"CPython-{PYTHON_VERSION}.txt"] = python_license.read_bytes()
     if b"Python Software Foundation" not in outputs[f"CPython-{PYTHON_VERSION}.txt"]:
         raise RuntimeError("CPython license file is incomplete")
-    for name in ("numpy", "opencv-python", "pillow", "mss", "regex", "windows-capture", "typing_extensions", "pyinstaller"):
+    for name in ("numpy", "opencv-python", "pillow", "mss", "regex", "windows-capture", "typing_extensions", "pyinstaller",
+                 "cryptography", "cffi", "pycparser"):
         distribution = metadata.distribution(name)
         notices = {}
         for file in distribution.files or []:
@@ -244,6 +278,17 @@ def generated_notices() -> dict[str, bytes]:
             raise RuntimeError("OpenCV native third-party notices are missing")
         filename = f"{name}-{VERSIONS[name]}.txt"
         outputs[filename] = combine(f"{name} {VERSIONS[name]} installed wheel notices", notices)
+    outputs["cryptography-OpenSSL-build.txt"] = (
+        "cryptography's statically linked OpenSSL in the official Windows wheel\n"
+        f"cryptography version: {VERSIONS['cryptography']}\n"
+        f"Version reported by binary: {CRYPTOGRAPHY_OPENSSL_VERSION}\n"
+        "License: Apache-2.0; full license and authors are in OpenSSL-4.0.3.txt.\n"
+        "Corresponding upstream source: https://github.com/openssl/openssl/tree/openssl-4.0.3\n"
+        "Windows wheel build: https://cryptography.io/en/50.0.2/installation/#building-cryptography-on-windows\n"
+        "Wheel source and release files: https://pypi.org/project/cryptography/50.0.2/#files\n"
+        "Rust dependency licenses: cryptography-50.0.2-Rust-dependencies.txt\n"
+        "This is separate from CPython's OpenSSL 3.0.18 dependency.\n"
+    ).encode()
     distribution = metadata.distribution("PySide6")
     lib_path = Path(distribution.locate_file("PySide6/avutil-59.dll"))
     ffmpeg = ctypes.CDLL(str(lib_path.resolve()))

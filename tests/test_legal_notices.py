@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -64,6 +65,49 @@ class LegalNoticesTests(unittest.TestCase):
     def test_normal_release_verification_never_downloads(self):
         with patch.object(notices, "download", side_effect=AssertionError("Build attempted network access")):
             self.assertEqual(notices.main(["--check"]), 0)
+
+    def test_cryptography_and_transitive_versions_are_pinned_and_noticed(self):
+        requirements = (notices.ROOT / "requirements.txt").read_text(encoding="utf-8")
+        for name, version in (("cryptography", "50.0.2"), ("cffi", "2.1.1"), ("pycparser", "3.11")):
+            with self.subTest(name=name):
+                self.assertIn(f"{name}=={version}", requirements)
+                self.assertEqual(notices.VERSIONS[name], version)
+                wheel_notice = (notices.DEST / f"{name}-{version}.txt").read_text(encoding="utf-8")
+                self.assertIn("installed wheel notices", wheel_notice)
+                self.assertIn("LICENSE", wheel_notice)
+        crypto = (notices.DEST / "cryptography-50.0.2.txt").read_text(encoding="utf-8")
+        self.assertIn("===== licenses/LICENSE.APACHE =====", crypto)
+        self.assertIn("===== licenses/LICENSE.BSD =====", crypto)
+
+    def test_cryptography_rust_notices_cover_entire_verified_lockfile(self):
+        text = (notices.DEST / "cryptography-50.0.2-Rust-dependencies.txt").read_text(encoding="utf-8")
+        lock_text = text.split("===== Cargo.lock =====\n", 1)[1].split("\n===== ", 1)[0]
+        packages = [package for package in tomllib.loads(lock_text)["package"]
+                    if package.get("source", "").startswith("registry+")]
+        self.assertGreaterEqual(len(packages), 30)
+        for package in packages:
+            name, version = package["name"], package["version"]
+            with self.subTest(name=name, version=version):
+                self.assertIn(f"===== {name}-{version}/PROVENANCE.txt =====", text)
+                self.assertIn(f"SHA-256: {package['checksum']}", text)
+                self.assertRegex(text, rf"===== {re.escape(name)}-{re.escape(version)}/(?:[^\n/]*/)*(?:LICENSE|COPYING|NOTICE)")
+
+    def test_distinct_openssl_binaries_and_cffi_native_notices_are_bundled(self):
+        build = (notices.DEST / "cryptography-OpenSSL-build.txt").read_text(encoding="utf-8")
+        self.assertIn(notices.CRYPTOGRAPHY_OPENSSL_VERSION, build)
+        self.assertIn("separate from CPython's OpenSSL 3.0.18", build)
+        openssl = (notices.DEST / "OpenSSL-4.0.3.txt").read_text(encoding="utf-8")
+        self.assertIn("===== AUTHORS.md =====", openssl)
+        self.assertIn("Apache License", openssl)
+        cffi = (notices.DEST / "cffi-2.1.1-native-notices.txt").read_text(encoding="utf-8")
+        self.assertIn("===== src/c/libffi_x86_x64/ffi.c =====", cffi)
+        self.assertIn("Permission is hereby granted", cffi)
+        self.assertIn("===== setup.py =====", cffi)
+
+    def test_cryptography_openssl_update_requires_native_notice_review(self):
+        with patch.object(notices, "cryptography_openssl_version", return_value="OpenSSL changed"):
+            with self.assertRaisesRegex(RuntimeError, "cryptography OpenSSL version changed"):
+                notices.generated_notices()
 
 
 if __name__ == "__main__":

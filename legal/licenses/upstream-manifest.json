@@ -9,6 +9,11 @@
     "source": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.0.18",
     "source_sha256": "8037cdcb2a932d2db4f2fad79eda7e379c10bf17c5b3c8cb4ce9d084ad269a67"
   },
+  "OpenSSL-4.0.3.txt": {
+    "notice_sha256": "5e6efce1407e14bad0a79780cb25a1b8ea48e6ac332cf594d2a773493c5ede95",
+    "source": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-4.0.3",
+    "source_sha256": "29cbaaabad1f3b0e8f28274eb8445a1cb0c54af21a6f845882ee018763df7159"
+  },
   "PyWinRT-3.2.1.txt": {
     "notice_sha256": "6e898069e8b3c6d8d23dc70ac7067cc2b7c9db14c36df873026758db82c0891d",
     "source": "https://raw.githubusercontent.com/pywinrt/pywinrt/v3.2.1/LICENSE",
@@ -38,6 +43,16 @@
     "notice_sha256": "afc399ef3a7f1beccc0e53198496ddab7a323d85b480043e4fdf83d45c203a4d",
     "source": "https://codeload.github.com/qt/qtsvg/tar.gz/refs/tags/v6.11.2",
     "source_sha256": "52a89c4efcb0cbe57bf85c71f5db50ef59184eeadf9972351202a9261a9bfa6e"
+  },
+  "cffi-2.1.1-native-notices.txt": {
+    "notice_sha256": "b384fd0895bc4d7b2a2b3dfa614b19f79f50e13c83482370e1e43fe0cd4d8e91",
+    "source": "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz",
+    "source_sha256": "dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be"
+  },
+  "cryptography-50.0.2-Rust-dependencies.txt": {
+    "notice_sha256": "6b5047810b9b5671c8caf7bc856e69d5f551ace09d7cff9fe91db614fa4ac4f9",
+    "source": "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz",
+    "source_sha256": "7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5"
   },
   "windows-capture-2.0.1-Rust-dependencies.txt": {
     "notice_sha256": "ffafd7f570cee0eea4b201ed494c9871b858f3ffb5bf51751e5defe285f8fb00",
