@@ -328,6 +328,26 @@ priority when both are active; gray returns if health recovers while weight rema
 Hover the combat-chat or mini-stat screen read area to reveal its top-left gear and open
 the relevant highlighted settings. The gears follow the captured game window.
 
+**Leaderboard.** Open **Ranks** in the main navigation to view the **Leaderboard**.
+It shows your anonymous three-word name, current maximum HP/Mana, and lifetime personal
+kills, deaths, highest hit and corpse coin looted. Coin is shown in copper before party
+splitting. Session resets and imported logs do not change these totals. New totals are
+collected from live **Window Capture** only; desktop capture does not contribute.
+
+**Copy** places the current anonymous summary on your clipboard and never submits it.
+It works with a fresh mini-stat reading from either capture backend. **Submit** publishes
+one anonymous snapshot per UTC day and requires a fresh reading from **Window Capture**.
+The same separate Copy and Submit icons appear beside the mini-stat read area while
+hovering. If the submission service is not configured, Submit stays disabled with a reason.
+No character name is included. The public table sorts numbers numerically and capture
+times chronologically; **Refresh public entries** checks the public file while keeping
+cached entries visible during an outage. Opening PNUT does not contact the leaderboard.
+
+An optional **secret phrase** restores the same anonymous name on another installation.
+Use 8–1024 characters, preserve letter case and keep the phrase private. Changing to a
+different identity starts new local totals; refreshing public entries restores that
+identity's previously submitted totals once. The phrase itself is never saved or uploaded.
+
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
 The reader supports the fill animation's darker shades; small detection jitter and briefly

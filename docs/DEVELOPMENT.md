@@ -9,6 +9,30 @@ Weapon delay remains the existing `attack_bar/weapon_delay` QSettings preference
 editors use `AttackBar.set_weapon_delay`, and restores call `reload_preferences` without
 clearing the swing tracker. Typed values commit once on Enter or focus loss.
 
+### Anonymous leaderboard
+
+`leaderboard.py` whitelists and validates Ed25519-signed public JSONL snapshots.
+`protected_stats.py` stores identity keys, live personal counters and cached history in
+Windows-user DPAPI envelopes with no plaintext temporary files. The engine accepts
+leaderboard counter/stat evidence only from its actual fresh WGC source; it never seeds
+from session totals, imports, demo data or alternate capture. Local Copy separately
+uses the fresh stat reader from either backend without producing a submission.
+
+`app/leaderboard_client.py` uses one bounded plain-Python daemon worker, a queue and a
+GUI-owned active-only polling timer. Opening the page reads the encrypted disk cache;
+only explicit Refresh or Submit accesses the network. ACKs are delivered to the ledger
+before public rows. Timed-out submissions remain pending in the cache, and retries use
+fresh signed evidence with the same identity/UTC-day idempotency key. Shutdown discards
+late completions without a worker-owned QObject. The public cache is stored beside the
+selected config in `leaderboard-cache.bin`; local counters use `leaderboard-state.bin`.
+
+The desktop includes no GitHub write credential. The separately deployable
+`leaderboard_service` owns the write token and fixed repository/file. Until an approved
+service is configured, Submit reports unavailable. For development, set
+`PNUT_LEADERBOARD_SUBMIT_URL=https://YOUR-SERVICE/snapshots`; HTTP is accepted only on
+localhost/loopback for local service tests. Redirects, credentials and query-string
+secrets are rejected. Server deployment and public-branch creation are separate steps.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL

@@ -13,17 +13,19 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QRegion
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QPainter, QPen, QRegion
 from PySide6.QtWidgets import QWidget
 
 from mnmparse.app.overlay_settings import OverlaySettingsGear
+from mnmparse.app import theme
 from mnmparse.app.window_identity import window_title
 
 log = logging.getLogger(__name__)
 Rect = tuple[int, int, int, int]
-TARGETS = ("crop_picker", "player_status_enabled")
-_LABELS = {"crop_picker": "combat chat reader", "player_status_enabled": "mini-stat reader"}
+TARGETS = ("crop_picker", "player_status_enabled", "copy_stats", "submit_stats")
+_LABELS = {"crop_picker": "combat chat reader", "player_status_enabled": "mini-stat reader",
+           "copy_stats": "copy anonymous stats", "submit_stats": "submit anonymous stats"}
 
 
 def _rect(value: Any) -> Rect | None:
@@ -211,9 +213,16 @@ class _AreaButton(OverlaySettingsGear):
     def _can_show(self) -> bool:
         return self._host.isVisible() and self._host.isEnabled() and bool(self._area_allowed())
 
+    def sync(self) -> None:
+        super().sync()
+        enabled = getattr(self, "_read_action_enabled", None)
+        if enabled is not None:
+            self.setEnabled(self.isEnabled() and bool(enabled()))
+
 
 class _GearWindow(QWidget):
-    def __init__(self, callback: Callable[[], None], allowed: Callable[[], bool], label: str, role: str):
+    def __init__(self, callback: Callable[[], None], allowed: Callable[[], bool], label: str, role: str,
+                 enabled: Callable[[], bool]):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setWindowTitle(window_title("reader-settings-" + role))
@@ -222,7 +231,9 @@ class _GearWindow(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setFixedSize(30, 30)
         self.excluded: bool | None = None
-        self.button = _AreaButton(self, callback, allowed, label)
+        button_class = _CopyButton if role == "copy_stats" else _SubmitButton if role == "submit_stats" else _AreaButton
+        self.button = button_class(self, callback, allowed, label)
+        self.button._read_action_enabled = enabled
         self.button.setToolTip("")
         self.setMask(QRegion(QRect(4, 4, 22, 22)))
 
@@ -232,15 +243,57 @@ class _GearWindow(QWidget):
         return self.excluded
 
 
+class _CopyButton(_AreaButton):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setAccessibleName("Copy anonymous stats")
+        self.setAccessibleDescription("Copy anonymous stats locally. Requires fresh mini stats.")
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(theme.qcolor(theme.ACCENT if self.underMouse() else theme.MUTED), 1))
+        painter.setBrush(theme.qcolor(theme.BG2))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
+        painter.setPen(QPen(theme.qcolor(theme.TEXT if self.isEnabled() else theme.MUTED), 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(6, 5, 9, 11), 1, 1)
+        painter.setBrush(theme.qcolor(theme.BG2))
+        painter.drawRoundedRect(QRectF(9, 8, 8, 10), 1, 1)
+
+
+class _SubmitButton(_CopyButton):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setAccessibleName("Submit anonymous stats")
+        self.setAccessibleDescription("Publish one anonymous daily snapshot. Requires fresh mini stats from Window Capture.")
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(theme.qcolor(theme.ACCENT if self.underMouse() else theme.MUTED), 1))
+        painter.setBrush(theme.qcolor(theme.BG2))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
+        painter.setPen(QPen(theme.qcolor(theme.TEXT if self.isEnabled() else theme.MUTED), 1.5))
+        painter.drawLine(11, 15, 11, 5)
+        painter.drawLine(11, 5, 7, 9)
+        painter.drawLine(11, 5, 15, 9)
+        painter.drawLine(5, 14, 5, 18)
+        painter.drawLine(5, 18, 17, 18)
+        painter.drawLine(17, 18, 17, 14)
+
+
 class ReadAreaGears(QObject):
     """Poll read-only geometry and hover; only the tiny visible gear accepts input."""
     activated = Signal(str)
 
     def __init__(self, provider: Callable[[], Mapping[str, Any]], *,
-                 input_enabled: Callable[[], bool] | None = None, parent: QObject | None = None):
+                 input_enabled: Callable[[], bool] | None = None, parent: QObject | None = None,
+                 action_enabled: Callable[[str], bool] | None = None):
         super().__init__(parent)
         self._provider = provider
         self._input_enabled = input_enabled or (lambda: True)
+        self._action_enabled = action_enabled or (lambda _key: True)
         self._running = self._closed = False
         self._hwnd = 0
         self._desktop_capture = False
@@ -249,7 +302,8 @@ class ReadAreaGears(QObject):
         self._button_rects: dict[str, Rect] = {}
         self._revealed: set[str] = set()
         self._windows = {key: _GearWindow(lambda key=key: self._activate(key),
-                                         lambda key=key: self._allowed(key), _LABELS[key], key) for key in TARGETS}
+                                         lambda key=key: self._allowed(key, action=False), _LABELS[key], key,
+                                         lambda key=key: self._action_enabled(key)) for key in TARGETS}
         self._geometry_timer = QTimer(self)
         self._geometry_timer.setInterval(250)
         self._geometry_timer.timeout.connect(self.refresh)
@@ -298,32 +352,41 @@ class ReadAreaGears(QObject):
             self._hwnd = int(snapshot.get("hwnd", 0))
             self._desktop_capture = snapshot.get("capture_backend") == "mss"
             self._areas = resolve_read_areas(snapshot)
+            if "player_status_enabled" in self._areas:
+                self._areas["copy_stats"] = self._areas["player_status_enabled"]
+                self._areas["submit_stats"] = self._areas["player_status_enabled"]
             self._screens = _screen_mappings() if self._areas else ()
         except Exception:
             log.debug("Read-area shortcut geometry unavailable", exc_info=True)
             self._areas = {}
         self._poll_hover()
 
-    def _allowed(self, key: str) -> bool:
-        if self._closed or not self._running or key not in self._revealed or not self._input_enabled() or not _is_foreground(self._hwnd):
+    def _allowed(self, key: str, *, action: bool = True) -> bool:
+        if (self._closed or not self._running or key not in self._revealed or not self._input_enabled()
+                or action and not self._action_enabled(key) or not _is_foreground(self._hwnd)):
             return False
         point = _cursor_position()
         return (point is not None and key in self._areas and key in self._button_rects
                 and _hover_contains(self._areas[key], self._button_rects[key], point))
 
-    def _placement(self, area: Rect, screens: tuple[ScreenMapping, ...]) -> tuple[QPoint, Rect, bool] | None:
-        screen = next((screen for screen in screens if _contains(screen.physical, area[:2])), None)
+    def _placement(self, area: Rect, screens: tuple[ScreenMapping, ...], *, copy: bool = False,
+                   submit: bool = False) -> tuple[QPoint, Rect, bool] | None:
+        anchor = (area[2] - 1, area[1]) if copy else area[:2]
+        screen = next((screen for screen in screens if _contains(screen.physical, anchor)), None)
         if screen is None:
             return None
         dpr = screen.scale
-        candidates = ((area[0] - round(30 * dpr), area[1]), (area[0], area[1] - round(30 * dpr))) if self._desktop_capture else ()
-        for origin in (*candidates, area[:2]):
+        offset = 30 if submit else 60
+        inside = (area[2] - round(offset * dpr), area[1]) if copy else area[:2]
+        candidates = (((area[2] + round((30 if submit else 0) * dpr), area[1]), (inside[0], area[1] - round(30 * dpr))) if copy else
+                      ((area[0] - round(30 * dpr), area[1]), (area[0], area[1] - round(30 * dpr)))) if self._desktop_capture else ()
+        for origin in (*candidates, inside):
             button = (origin[0] + round(4 * dpr), origin[1] + round(4 * dpr),
                       origin[0] + round(26 * dpr), origin[1] + round(26 * dpr))
             if (screen.physical[0] <= button[0] < button[2] <= screen.physical[2]
                     and screen.physical[1] <= button[1] < button[3] <= screen.physical[3]):
                 outside = not any(_intersects(button, crop) for crop in self._areas.values())
-                if origin == area[:2] or outside:
+                if origin == inside or outside:
                     return screen.qt_point(origin), button, outside
         return None
 
@@ -335,7 +398,7 @@ class ReadAreaGears(QObject):
         screens = self._screens if ready else ()
         placements = {}
         for key, area in self._areas.items():
-            placement = self._placement(area, screens)
+            placement = self._placement(area, screens, copy=key in {"copy_stats", "submit_stats"}, submit=key == "submit_stats")
             if placement is not None:
                 placements[key] = placement
         # Keep a previously revealed outside-crop button reachable while moving
@@ -360,6 +423,7 @@ class ReadAreaGears(QObject):
                 continue
             occupied.append(button)
             window.move(position)
+            window.button.setEnabled(bool(self._action_enabled(key)))
             window.show()
             window.button.sync()
 

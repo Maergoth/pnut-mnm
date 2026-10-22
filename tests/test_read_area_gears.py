@@ -149,6 +149,39 @@ class ReadAreaGearTests(unittest.TestCase):
         stats.button.click()
         self.assertEqual(self.opened, ["player_status_enabled"])
 
+    def test_copy_and_submit_are_separate_adjacent_shortcuts_with_disabled_state(self):
+        self.gears.start()
+        self.hover((100, 150))
+        copy = self.gears._windows["copy_stats"]
+        submit = self.gears._windows["submit_stats"]
+        self.assertTrue(copy.button.isVisible())
+        self.assertTrue(submit.button.isVisible())
+        self.assertEqual(submit.x() - copy.x(), 30)
+        self.assertEqual(submit.y(), copy.y())
+        self.hover((copy.x() + 10, copy.y() + 10))
+        copy.button.click()
+        self.assertEqual(self.opened, ["copy_stats"])
+        self.hover((submit.x() + 10, submit.y() + 10))
+        submit.button.click()
+        self.assertEqual(self.opened, ["copy_stats", "submit_stats"])
+        self.gears._action_enabled = lambda key: key != "submit_stats"
+        self.gears.refresh()
+        self.assertTrue(submit.button.isVisible())
+        self.assertFalse(submit.button.isEnabled())
+        submit.button.click()
+        self.assertEqual(self.opened, ["copy_stats", "submit_stats"])
+
+    def test_right_edge_stats_keep_both_shortcuts_on_screen_in_order(self):
+        self.current = snapshot(stats_crop=(800, 100, 1000, 250))
+        self.screens = (ScreenMapping((0, 0, 1000, 800), (0, 0, 1000, 800), 1.0),)
+        self.gears.start()
+        self.hover((900, 150))
+        copy = self.gears._windows["copy_stats"]
+        submit = self.gears._windows["submit_stats"]
+        self.assertTrue(copy.isVisible() and submit.isVisible())
+        self.assertLess(copy.x(), submit.x())
+        self.assertLessEqual(submit.geometry().right(), 999)
+
     def test_changed_input_or_foreground_hides_and_rejects_queued_click(self):
         self.gears.start()
         self.hover((110, 410))

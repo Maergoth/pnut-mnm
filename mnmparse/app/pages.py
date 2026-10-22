@@ -98,6 +98,7 @@ from mnmparse.export import actor_export_name
 from mnmparse.privacy import (AVERAGE_UNAVAILABLE_TEXT, casual_enabled, metric_available,
                              project_encounter, project_session)
 from mnmparse.app.morality import MoralityPanel
+from mnmparse.app.leaderboard_page import LeaderboardPage
 
 if TYPE_CHECKING:
     from mnmparse.app.engine import Engine
@@ -165,6 +166,7 @@ __all__ = [
     "FeedPage",
     "HistoryPage",
     "LivePage",
+    "LeaderboardPage",
     "METRIC_TABS",
     "SettingsPage",
     "export_csv",
@@ -2819,6 +2821,14 @@ class SettingsPage(QWidget):
         self.fps = self._dspin(0.5, 30.0, 0.5, 1, " fps")
         self._row(form, "Window title", self.window_title)
         self._row(form, "Backend", self.capture_backend)
+        self.leaderboard_capture_warning = _label(
+            "Leaderboard Submit and personal counter tracking require Window Capture. "
+            "Desktop capture readings are not eligible for submission; Copy stays local.", "Muted")
+        self.leaderboard_capture_warning.setWordWrap(True)
+        form.addRow(self.leaderboard_capture_warning)
+        self.capture_backend.currentTextChanged.connect(
+            lambda value: self.leaderboard_capture_warning.setVisible(value != "wgc"))
+        self.leaderboard_capture_warning.setVisible(self.capture_backend.currentText() != "wgc")
         self._row(form, "Capture rate", self.fps, "Frames read per second; 6 keeps up with a busy chat")
 
     def _build_ocr(self) -> None:

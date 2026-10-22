@@ -114,7 +114,7 @@ _engine_mod = _optional_import("mnmparse.app.engine", ["Engine"])
 _overlay_mod = _optional_import("mnmparse.app.overlay", ["OverlayWindow"])
 _widgets_mod = _optional_import("mnmparse.app.widgets", ["StatusChip", "ToggleSwitch"])
 _pages_mod = _optional_import(
-    "mnmparse.app.pages", ["LivePage", "SessionPage", "FeedPage", "TriggersPage", "SettingsPage", "AboutPage"]
+    "mnmparse.app.pages", ["LivePage", "SessionPage", "FeedPage", "TriggersPage", "LeaderboardPage", "SettingsPage", "AboutPage"]
 )
 
 LOG_FILE_BYTES = 1_000_000
@@ -135,6 +135,7 @@ PAGES: tuple[tuple[str, str], ...] = (
     ("session", "Session"),
     ("feed", "Feed"),
     ("triggers", "Triggers"),
+    ("leaderboard", "Leaderboard"),
     ("settings", "Settings"),
     ("about", "About"),
 )
@@ -423,6 +424,9 @@ def _paint_nav_glyph(painter: QPainter, name: str, size: float, color: QColor) -
         painter.drawLine(QPointF(m + inner * 0.32, m + inner * 0.3), QPointF(m + inner * 0.42, m + inner * 0.06))
         painter.drawLine(QPointF(m + inner * 0.68, m + inner * 0.3), QPointF(m + inner * 0.58, m + inner * 0.06))
         painter.drawLine(QPointF(m + inner * 0.36, m + inner * 0.3), QPointF(m + inner * 0.64, m + inner * 0.3))
+    elif name == "leaderboard":
+        for offset, height in ((.05, .45), (.36, .85), (.67, .63)):
+            painter.drawRect(QRectF(m + inner * offset, m + inner * (1 - height), inner * .24, inner * height))
     elif name == "settings":
         radius = inner / 2
         painter.save()
@@ -495,7 +499,8 @@ class _NavButton(QToolButton):
     def __init__(self, key: str, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.key = key
-        self.setText(label)
+        self.setText("Ranks" if key == "leaderboard" else label)
+        self.setAccessibleName(label)
         self.setIcon(nav_icon(key))
         self.setIconSize(QSize(22, 22))
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
@@ -1361,6 +1366,17 @@ class App(QApplication):
         app_icon.ensure_icon_file(project_path("assets") / "icon.ico")
         self.engine = self._make_engine(cfg)
         self.engine.config_path = self.config_path
+        self._leaderboard_ledger = None
+        self._leaderboard_client = None
+        if selftest_seconds is None:
+            from mnmparse.protected_stats import ProtectedLedger, EncryptedFile
+            from mnmparse.app.leaderboard_client import LeaderboardClient
+            self._leaderboard_ledger = ProtectedLedger(self.config_path.parent / "leaderboard-state.bin")
+            setter = getattr(self.engine, "set_protected_ledger", None)
+            if callable(setter):
+                setter(self._leaderboard_ledger)
+            self._leaderboard_client = LeaderboardClient(
+                EncryptedFile(self.config_path.parent / "leaderboard-cache.bin"), self)
         self.overlay = self._make_overlay(cfg)
         from mnmparse.app.map_overlay import MapOverlay
         from mnmparse.app.map_downloads import MapDownloadController
@@ -1378,6 +1394,9 @@ class App(QApplication):
         from mnmparse.app.revenge import RevengeController, RevengePopoutWindow
         self.revenge = RevengeController(cfg, self.config_path.parent / "revenge.json", self if isinstance(self, QObject) else None)
         self.window = MainWindow(self.engine, self.overlay, cfg, self.settings)
+        leaderboard = self.window.page("leaderboard")
+        if self._leaderboard_client is not None and callable(getattr(leaderboard, "bind", None)):
+            leaderboard.bind(self._leaderboard_ledger, self._leaderboard_client)
         self.revenge_popout = RevengePopoutWindow(self.revenge, self.settings)
         self.tray = TrayIcon(self.icon, self)
         self._wire()
@@ -1702,14 +1721,40 @@ class App(QApplication):
         self._read_area_gears = ReadAreaGears(
             self._read_area_snapshot,
             input_enabled=lambda: not bool(getattr(self.overlay, "click_through", False)),
+            action_enabled=self._read_area_action_enabled,
             parent=self.window,
         )
-        self._read_area_gears.activated.connect(self._open_overlay_settings)
+        self._read_area_gears.activated.connect(self._on_read_area_action)
         self._sync_read_area_gears()
 
     def _read_area_snapshot(self) -> dict[str, Any]:
+        page = self.window.page("leaderboard") if self.window is not None else None
+        if callable(getattr(page, "refresh_status", None)):
+            page.refresh_status()
         snapshot = getattr(self.engine, "read_area_snapshot", None)
         return snapshot() if callable(snapshot) else {}
+
+    def _on_read_area_action(self, target: str) -> None:
+        if target not in {"copy_stats", "submit_stats"}:
+            self._open_overlay_settings(target)
+            return
+        if self.window is None or self._shut_down or self._selftest or self.__dict__.get("_demo_active", False):
+            return
+        page = self.window.page("leaderboard")
+        action = getattr(page, "copy_stats" if target == "copy_stats" else "submit_stats", None)
+        if callable(action):
+            action()
+            self.window.show_message(page.message.text())
+
+    def _read_area_action_enabled(self, target: str) -> bool:
+        if target not in {"copy_stats", "submit_stats"}:
+            return True
+        if self._selftest or self._shut_down or self.__dict__.get("_demo_active", False) or self.window is None:
+            return False
+        page = self.window.page("leaderboard")
+        if not callable(getattr(page, "refresh_status", None)):
+            return False
+        return page.copy_button.isEnabled() if target == "copy_stats" else page.submit_button.isEnabled()
 
     def _sync_read_area_gears(self) -> None:
         gears = self.__dict__.get("_read_area_gears")
@@ -2521,6 +2566,9 @@ class App(QApplication):
         live._json.setEnabled(False)
         self.window.on_session(bundle.session)
         self.window.page("session").set_demo_active(True)
+        leaderboard = self.window.page("leaderboard")
+        if callable(getattr(leaderboard, "set_demo_active", None)):
+            leaderboard.set_demo_active(True)
         if self.overlay is not None:
             self.overlay.set_new_session_enabled(False)
             self.overlay.set_config(presentation)
@@ -2541,6 +2589,9 @@ class App(QApplication):
         self.window.set_config(self.cfg)
         self.window.page("live")._demo_active = False
         self.window.page("session").set_demo_active(False)
+        leaderboard = self.window.page("leaderboard")
+        if callable(getattr(leaderboard, "set_demo_active", None)):
+            leaderboard.set_demo_active(False)
         self.window.page("live").set_history([])
         self.window.on_session(self.engine.session_snapshot())
         self.window.on_state(getattr(self.engine, "state", "stopped"))
@@ -2633,6 +2684,9 @@ class App(QApplication):
         read_area_gears = self.__dict__.get("_read_area_gears")
         if read_area_gears is not None:
             read_area_gears.shutdown()
+        leaderboard_client = self.__dict__.get("_leaderboard_client")
+        if leaderboard_client is not None:
+            leaderboard_client.shutdown()
         log.info("Shutting down")
         if self._selftest and self._last_status:
             log.info("Self-test status at exit: %s", self._last_status)

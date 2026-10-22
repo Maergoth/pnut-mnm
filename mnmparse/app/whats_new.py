@@ -34,6 +34,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Weapon delay is now in Settings. Reset encounter is now End Encounter.",
             "Right-click spawn timers show monster icons, including after expiration and restart.",
             "Overburdened mini stats pulse gray screen edges. Hover the mini-stat or combat-chat read area to open its settings.",
+            "Ranks opens an anonymous Leaderboard. Copy stays local; separate Submit shares daily Window Capture stats. Both have mini-stat hover shortcuts.",
         ),
         settings_label="Overlay settings",
         settings_target="overlay_enabled",
