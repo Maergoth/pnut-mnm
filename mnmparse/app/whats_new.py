@@ -34,7 +34,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "NPC respawn timers created from the right-click menu show the map's monster icon inside their countdown ring, including when an expired timer is restarted.",
             "The notable NPC menu shows levels before names, a sparkled sword for unique loot and a feather for NPCs offering or needed by quests.",
             "Notable NPC victories play a short fanfare and open cached drops. Toggle the sound under Considered NPC.",
-            "Open Zones in the main app to browse maps and NPC details independently of the live overlay, including when overlays are hidden or disabled.",
+            "Browse maps and NPC details independently in Zones, even with overlays hidden or disabled.",
         ),
         settings_label="Overlay settings",
         settings_target="overlay_enabled",
