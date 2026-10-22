@@ -352,13 +352,18 @@ one anonymous snapshot per UTC day and requires a fresh reading from **Window Ca
 The same separate Copy and Submit icons appear beside the mini-stat read area while
 hovering. Submissions run in the background through the hosted service without an
 external sign-in. If the service is unavailable, your local totals remain available to retry.
-No character name is included. Public entries use three lines, with the bold gold anonymous
+No character name is added automatically. Public entries use three lines, with the bold gold anonymous
 name repeated on each line. Sort by any stat without separating an entry's lines, and hover
 an entry to see its capture time. **Fresh reading** shows the current values; **Local best**
 keeps each stat's highest observed value and its capture time. Best totals come from one
 complete reading, rather than adding individual records reached at different times.
 Submitting uses the fresh reading. **Refresh public entries** checks the public file while keeping
 cached entries visible during an outage. Opening PNUT does not contact the leaderboard.
+
+Add an optional message of up to 160 characters before submitting. Common English swear
+words are replaced with asterisks. Hover a public entry to see its message in a chat bubble
+above the capture timestamp. The first accepted snapshot and message for that UTC day
+remain the same on a retry. Messages are public; include only text you want to share.
 
 An optional **secret phrase** restores the same anonymous name on another installation.
 Use 8–1024 characters, preserve letter case and keep the phrase private. Changing to a
