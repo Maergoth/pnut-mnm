@@ -340,6 +340,8 @@ class _MissingEngine(QObject):
     """Stand-in with the Engine's signals when ``mnmparse.app.engine`` is unavailable."""
 
     message = Signal(object, object)
+    live_group_kill = Signal(object, str)
+    live_group_activity = Signal(object, str)
     snapshot = Signal(object)
     encounter_closed = Signal(object)
     low_health = Signal(float)
@@ -1548,6 +1550,21 @@ class App(QApplication):
             npc_details = self.__dict__.get("npc_details")
             if npc_details is not None:
                 engine.message.connect(npc_details.on_message)
+                from mnmparse.app.notable_kills import NotableKillController
+
+                self.notable_kills = NotableKillController(
+                    npc_details,
+                    current_zone=lambda: getattr(self.engine, "current_zone", ""),
+                    active=lambda: (self.engine.state == "running" and not self._shut_down
+                                    and not self.__dict__.get("_quit_pending", False)
+                                    and not self.__dict__.get("_demo_active", False)
+                                    and not self._selftest),
+                    parent=window)
+                self._connect_optional(engine, "live_group_kill", self.notable_kills.on_kill)
+                self._connect_optional(engine, "live_group_activity", self.notable_kills.on_activity)
+                self._connect_optional(engine, "zone_changed", self.notable_kills.set_zone)
+                engine.state_changed.connect(self.notable_kills.on_state)
+                self.notable_kills.celebrated.connect(self._on_notable_kill)
             self._connect_optional(overlay, "copy_requested", self.copy_snapshot)
             self._connect_optional(overlay, "group_override_requested", self.set_group_override)
             self._connect_optional(overlay, "pet_owner_requested", self.set_pet_owner)
@@ -2103,6 +2120,12 @@ class App(QApplication):
         except Exception:  # noqa: BLE001 - sound is a nicety
             log.debug("could not play %s", name, exc_info=True)
 
+    def _on_notable_kill(self, _name: str) -> None:
+        """The controller already checked live ownership, zone membership and duplicate notices."""
+        if (self.triggers is not None and not self.triggers.muted
+                and self.settings.value("npc/celebration_sound", self.cfg.npc_celebration_sound, type=bool)):
+            self.play_sound("Victory fanfare")
+
     def _on_message_for_overlay(self, msg: Any, ev: Any) -> None:
         if self.overlay is None:
             return
@@ -2190,6 +2213,10 @@ class App(QApplication):
     def _on_overlay_setting(self, key: str, value: Any) -> None:
         """A Settings > Overlay control changed: apply it to the overlay right away."""
         overlay = self.overlay
+        if key == "npc_celebration_sound":
+            self.settings.setValue("npc/celebration_sound", bool(value))
+            self._sync_overlay_settings()
+            return
         if key in {f"npc_{part}" for part in
                    ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")}:
             self.settings.setValue("npc/" + key[4:], bool(value))
@@ -2234,6 +2261,8 @@ class App(QApplication):
         sync = getattr(page, "sync_overlay", None)
         if not callable(sync):
             return
+        sync(npc_celebration_sound=self.settings.value(
+            "npc/celebration_sound", self.cfg.npc_celebration_sound, type=bool))
         if overlay is None:
             sync(locked=self._current_overlay_lock(),
                  opacity=self.settings.value("overlay/opacity", self.cfg.overlay_opacity, type=float),
@@ -2567,6 +2596,9 @@ class App(QApplication):
         npc_details = self.__dict__.get("npc_details")
         if npc_details is not None:
             npc_details.shutdown()
+        notable_kills = self.__dict__.get("notable_kills")
+        if notable_kills is not None:
+            notable_kills.shutdown()
         if self.map_overlay is not None:
             self.map_overlay.shutdown()
         if self.overlay is not None:
