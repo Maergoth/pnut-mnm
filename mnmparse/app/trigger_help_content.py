@@ -319,7 +319,8 @@ validation can reject it; use the copied data or shared file through <b>Import t
 automatically in triggers.json. Disable a trigger to stop live matches while keeping its
 settings. Duplicate is useful for adapting a spell rank; change the pattern and label, not
 only the name. Export your collection for a portable backup.</p>
-<p>Every installation includes Gatekick, Healkick and Invis Break. Healkick starts disabled;
+<p>Every installation includes Gatekick, Healkick and Invis Break. Fresh installations also
+include Resist, which speaks “resist” when a target resists your spell. Healkick starts disabled;
 enable it when you want that warning. Invis Break watches
 <code>You begin to feel yourself appearing</code> and plays an immediate Falling sound on a
 fresh install, without a countdown or delayed warning. Existing installations keep their

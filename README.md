@@ -601,6 +601,7 @@ merge encoded characters; if a code is not detected, change the font or paste th
 Corrupted codes are rejected rather than imported with changed settings.
 "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
+Fresh installations also include **Resist**, which says “resist” when a target resists your spell.
 Invis Break matches **You begin to feel yourself appearing**. Version 0.1.6 corrects the old
 default match once while preserving customized patterns, other settings, and deleted presets.
 New installs use an immediate Falling sound with no Invis Break countdown or delayed alerts.
