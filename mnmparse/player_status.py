@@ -35,6 +35,7 @@ class PlayerStatusReading:
     xp_resolution_points: float | None = None
     weight_current: int | None = None
     weight_max: int | None = None
+    mana_max: int | None = None
 
     @property
     def hp_percent(self) -> float | None:
@@ -251,10 +252,12 @@ def read_player_status(lines: Sequence[OcrLine], bgr: np.ndarray | None = None, 
             bar = _find_bar(image, panel, weight_bottom, height)
         measured = _read_xp(image, bar) if image is not None and bar is not None and (xp_bar_confirmed or calibrated) else None
         hp = value[0] if value is not None else (None, None)
+        mana = [ratio[0][1] for _index, kind, ratio in resource if kind == "MANA" and ratio is not None]
         panels.append(PlayerStatusReading(hp[0], hp[1], panel, panel_indices,
                                          measured[0] if measured else None, bar,
                                          measured[1] if measured else None,
-                                         weight_ratio[0][0], weight_ratio[0][1]))
+                                         weight_ratio[0][0], weight_ratio[0][1],
+                                         mana[0] if len(mana) == 1 else None))
     return panels[0] if len(panels) == 1 else None
 
 

@@ -351,6 +351,9 @@ class Engine(QObject):
         self._player_telemetry_owner: Any = None
         self._player_panel_key: Any = None
         self._player_panel_valid_until: float | None = None
+        self._stat_snapshot: dict[str, Any] | None = None
+        self._stat_snapshot_valid_until: float | None = None
+        self._protected_ledger: Any = None
         self._player_crop_warned = False
         self._player_reader_warned = False
         self._low_health_alert_at = float("-inf")
@@ -479,6 +482,96 @@ class Engine(QObject):
                     "source_rect": tuple(source_rect) if source_rect is not None else None}
         finally:
             self._lock.release()
+
+    def player_stat_snapshot(self) -> dict[str, Any] | None:
+        """Return fresh maximum stats only, never character names or current values."""
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            if (self._state != "running" or self._paused or self._stop_event.is_set()
+                    or not self._cfg.player_status_enabled or self._stat_snapshot is None
+                    or self._stat_snapshot_valid_until is None or time.time() > self._stat_snapshot_valid_until):
+                return None
+            return dict(self._stat_snapshot)
+        finally:
+            self._lock.release()
+
+    def set_protected_ledger(self, ledger: Any) -> None:
+        """Attach only for normal live capture; existing logs never seed this ledger."""
+        with self._lock:
+            self._protected_ledger = ledger
+            ledger.set_capture_eligible(False)
+
+    def _leaderboard_capture_eligible(self) -> bool:
+        from mnmparse.capture import WgcWindowSource
+        return (self._cfg.capture_backend == "wgc" and isinstance(self._source, WgcWindowSource)
+                and self._state == "running" and self._window_found and not self._paused
+                and not self._stop_event.is_set())
+
+    def leaderboard_status(self) -> dict[str, Any]:
+        if not self._lock.acquire(blocking=False):
+            return {"eligible": False, "reason": "Waiting for the screen reader"}
+        try:
+            ledger = self._protected_ledger
+            if ledger is None:
+                return {"eligible": False, "reason": "Leaderboard tracking is unavailable"}
+            eligible = self._leaderboard_capture_eligible()
+            ledger.set_capture_eligible(eligible)
+            result = ledger.status()
+            fresh = self.player_stat_snapshot() is not None
+            result["eligible"] = bool(result.get("eligible") and eligible and fresh)
+            from mnmparse.capture import MssRegionSource, WgcWindowSource
+            result["copy_eligible"] = bool(fresh and not result.get("error")
+                                          and isinstance(self._source, (MssRegionSource, WgcWindowSource)))
+            result["reason"] = (result.get("error") or
+                                ("Leaderboard submission requires Window Capture" if self._cfg.capture_backend != "wgc"
+                                 else "Read current mini stats using Window Capture" if not result["eligible"] else ""))
+            return result
+        finally:
+            self._lock.release()
+
+    def leaderboard_copy_text(self) -> str:
+        if not self._lock.acquire(blocking=False):
+            raise ValueError("Waiting for the screen reader; try again")
+        try:
+            status = self.leaderboard_status()
+            stats = self.player_stat_snapshot()
+            if not status.get("copy_eligible") or stats is None:
+                raise ValueError("Read fresh mini stats before copying")
+            from mnmparse.leaderboard import local_clipboard_text
+            return local_clipboard_text(stats, status)
+        finally:
+            self._lock.release()
+
+    def leaderboard_submission(self) -> dict[str, Any]:
+        if not self._lock.acquire(blocking=False):
+            raise ValueError("Waiting for the screen reader; try again")
+        try:
+            if not self.leaderboard_status().get("eligible"):
+                raise ValueError(self.leaderboard_status().get("reason") or "Read current mini stats using Window Capture")
+            return self._protected_ledger.prepare_submission()
+        finally:
+            self._lock.release()
+
+    def _protect_live_stats(self, stats: dict[str, Any]) -> None:
+        ledger = self._protected_ledger
+        if ledger is not None:
+            try:
+                ledger.set_capture_eligible(self._leaderboard_capture_eligible())
+                ledger.record_stats(stats)
+            except (OSError, ValueError) as exc:
+                ledger.error = str(exc)
+
+    def _protect_live_event(self, msg: Message, event: Event) -> None:
+        ledger = self._protected_ledger
+        if ledger is None:
+            return
+        try:
+            ledger.set_capture_eligible(self._leaderboard_capture_eligible())
+            if not (msg.backlog or msg.fragment or event.estimated or event.estimated_ts):
+                ledger.record_event(event, self._cfg.player_name)
+        except (OSError, ValueError) as exc:
+            ledger.error = str(exc)
 
     @property
     def is_running(self) -> bool:
@@ -1484,6 +1577,8 @@ class Engine(QObject):
         with self._lock:
             self._pause_player_status()
             self._player_panel_key = None
+            self._stat_snapshot = None
+            self._stat_snapshot_valid_until = None
             self._player_panel_valid_until = None
             self._player_crop_warned = False
             self._player_reader_warned = False
@@ -1727,6 +1822,8 @@ class Engine(QObject):
         self._set_low_health_active(False)
         self._reset_overburdened()
         self._player_panel_valid_until = None
+        self._stat_snapshot = None
+        self._stat_snapshot_valid_until = None
         if self._player_telemetry is not None:
             self._telemetry().pause()
             self._save_player_status()
@@ -1801,6 +1898,8 @@ class Engine(QObject):
             self._set_low_health_active(False)
             self._reset_overburdened()
             self._player_panel_valid_until = None
+            self._stat_snapshot = None
+            self._stat_snapshot_valid_until = None
             self._player_panel_key = key
         previous_sample = telemetry.snapshot().get("last_seen")
         measurement = {}
@@ -1815,6 +1914,18 @@ class Engine(QObject):
         # A slow cadence plus one missed frame needs room for ordinary OCR
         # scheduling jitter, while the existing ten-second ceiling still applies.
         max_gap = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2 * cadence + .25))
+        maximum = getattr(reading, "hp_max", None)
+        if (reading is not None and type(maximum) is int and maximum > 0
+                and (self._weight_sample_at is None or now > self._weight_sample_at)):
+            from datetime import datetime, timezone
+            from mnmparse.leaderboard import utc_stamp
+            mana = getattr(reading, "mana_max", None)
+            self._stat_snapshot = {"max_health": maximum,
+                                   "max_mana": mana if type(mana) is int and mana > 0 else None,
+                                   "captured_at": utc_stamp(datetime.fromtimestamp(now, timezone.utc)),
+                                   "capture_backend": "window" if self._leaderboard_capture_eligible() else "screen"}
+            self._stat_snapshot_valid_until = now + max_gap
+            self._protect_live_stats(self._stat_snapshot)
         if reading is not None and (self._weight_sample_at is None or now > self._weight_sample_at):
             self._player_panel_valid_until = now + max_gap
         self._observe_weight(reading, cfg, now, max_gap)
@@ -2116,6 +2227,7 @@ class Engine(QObject):
                 ev = guess
         self._names.observe(ev)
         ev.estimated_ts = bool(getattr(msg, "estimated_ts", False))
+        self._protect_live_event(msg, ev)
         self._record_timing("parsing", parsing_started)
         unreadable = ev.kind in UNREADABLE_KINDS or ev.estimated
         self._recent_kinds.append("unreadable" if unreadable else ev.kind)
