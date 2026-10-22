@@ -89,6 +89,7 @@ hiddenimports += [
 
 if ICON.is_file():
     datas.append((str(ICON), "assets"))
+datas.append((str(ROOT / "assets" / "bundled_sounds"), "assets/bundled_sounds"))
 example = ROOT / "config.example.json"
 if example.is_file():
     datas.append((str(example), "."))

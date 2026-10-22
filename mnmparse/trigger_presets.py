@@ -10,7 +10,8 @@ INVIS_BREAK_PATTERN_REVISION = f"{INVIS_BREAK_ID}:full-phrase-v1"
 INVIS_BREAK_ALERT_REVISION = f"{INVIS_BREAK_ID}:immediate-alert-v1"
 RESIST_ID = "e3b4c8a912"
 RESIST_PATTERN = r"\bresists\s+your\b"
-FIRST_INSTALL_ONLY = frozenset({RESIST_ID})
+FIZZLE_ID = "4ea8536527"
+FIRST_INSTALL_ONLY = frozenset({RESIST_ID, FIZZLE_ID})
 
 PRESETS: tuple[dict, ...] = (
     {
@@ -31,5 +32,10 @@ PRESETS: tuple[dict, ...] = (
         "id": RESIST_ID, "name": "Resist", "pattern": RESIST_PATTERN,
         "mode": "regex", "fuzzy": False, "enabled": True, "action": "speak", "speech": "resist",
         "timer": False, "timer_warn_action": "none", "timer_end_action": "none",
+    },
+    {
+        "id": FIZZLE_ID, "name": "Fizzle", "pattern": "Your spell fizzles!",
+        "mode": "contains", "fuzzy": True, "enabled": True,
+        "action": "sound", "sound": "Fizzle", "volume": 80, "cooldown_s": 0.0, "timer": False,
     },
 )

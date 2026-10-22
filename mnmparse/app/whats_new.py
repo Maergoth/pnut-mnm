@@ -34,6 +34,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Mini-stat Copy and Submit shortcuts appear on monitors whose display names differ between Windows and Qt.",
             "Ranks includes all attributes, AC and resists, separate Stat Total and Resist Total, and local best records.",
             "Leaderboard entries use three rows with gold anonymous names. Hover for the capture time and optional message; common swear words are censored.",
+            "Fresh installs include Fizzle with its bundled sound. Use Restore starter triggers in Triggers to add missing starters to an existing profile.",
         ),
         settings_label="Screen reader settings",
         settings_target="crop_picker",

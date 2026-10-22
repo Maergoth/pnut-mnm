@@ -8,4 +8,12 @@
 - Each public snapshot uses three rows, repeating its bold gold anonymous name on every row. Sort by any stat while keeping each entry together. Hover an entry to see its capture timestamp.
 - Add an optional message of up to 160 characters before submitting. Common English swear words are replaced with asterisks. The message appears in a chat bubble above the timestamp on hover. The first accepted snapshot and message remain unchanged on same-day retries.
 
-Windows regression, frozen startup and extracted portable-package checks gate publication.
+- Fresh installations include **Fizzle**, matching **Your spell fizzles!** with the existing
+  Contains/OCR-forgiveness behavior. It immediately plays the bundled Fizzle recording at
+  trigger volume 80, with no timer or cooldown.
+- The supplied MP3 is included unchanged in portable packages and uses the configured
+  master volume and output device. No Downloads path is required.
+- Existing trigger profiles, edits and deleted starters are preserved. **Restore starter
+  triggers** can add the missing Fizzle starter explicitly.
+
+Windows regression, native startup and extracted portable-package checks gate publication.
