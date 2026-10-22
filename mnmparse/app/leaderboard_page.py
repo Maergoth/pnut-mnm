@@ -226,6 +226,7 @@ class LeaderboardPage(QWidget):
         best, self.best_totals = self._summary()
         self.local_tabs.addTab(fresh, "Fresh reading")
         self.local_tabs.addTab(best, "Local best")
+        self.local_tabs.setCurrentIndex(1)
         self.local_tabs.setTabToolTip(0, "Current mini stats and lifetime personal counters. Copy uses this reading.")
         self.local_tabs.setTabToolTip(1, "Submit shares these personal bests. Totals use one complete reading, not a sum of individual records.")
         self.local_tabs.setMinimumHeight(100)
@@ -363,7 +364,7 @@ class LeaderboardPage(QWidget):
             entry = records.get(field) or {}
             value = self._status.get(field) if field in {"personal_kills", "personal_deaths", "high_hit", "coin_looted"} else entry.get("value")
             label.setText(f"{LABELS[field]}: {_value(value)}")
-            label.setToolTip(FULL_LABELS[field] + (" · Captured (UTC): " + entry["captured_at"] if entry.get("captured_at") else ""))
+            label.setToolTip(FULL_LABELS[field] + (" · Recorded (UTC): " + entry["captured_at"] if entry.get("captured_at") else ""))
         reason = self.action_reason()
         copy_reason = self.action_reason(copy=True)
         service = self.client.submission_unavailable if self.client else "Leaderboard is unavailable in this mode."

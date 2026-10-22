@@ -366,13 +366,15 @@ cached entries visible during an outage. Opening PNUT does not contact the leade
 
 Add an optional message of up to 160 characters before submitting. Common English swear
 words are replaced with asterisks. Hover a public entry to see its message in a chat bubble
-above the capture timestamp. The first accepted snapshot and message for that UTC day
+above the update timestamp. The first accepted snapshot and message for that UTC day
 remain the same on a retry. Messages are public; include only text you want to share.
 
 An optional **secret phrase** restores the same anonymous name on another installation.
 Use 8–1024 characters, preserve letter case and keep the phrase private. Changing to a
 different identity starts new local totals; refreshing public entries restores that
-identity's previously submitted totals once. The phrase itself is never saved or uploaded.
+identity's previously submitted totals once and restores its published personal bests.
+Recovered record times refer to the published snapshot's update time. The phrase itself
+is never saved or uploaded.
 
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
