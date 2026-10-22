@@ -28,6 +28,14 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.25": ReleaseNotes(
+        changes=(
+            "Hover the combat-chat or mini-stat capture area to reveal its settings gear, even with other overlays hidden.",
+            "Mini-stat Copy and Submit shortcuts appear on monitors whose display names differ between Windows and Qt.",
+        ),
+        settings_label="Screen reader settings",
+        settings_target="crop_picker",
+    ),
     "1.0.24": ReleaseNotes(
         changes=(
             "Overlay gears float above content and highlight settings. Weapon delay is in Settings; Reset Encounter becomes End Encounter.",

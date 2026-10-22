@@ -335,7 +335,8 @@ valid reading returns to capacity or below. **Overburdened warning** in the same
 disables this display independently of health alerts. Red low-health warnings take
 priority when both are active; gray returns if health recovers while weight remains high.
 Hover the combat-chat or mini-stat screen read area to reveal its top-left gear and open
-the relevant highlighted settings. The gears follow the captured game window.
+the relevant highlighted settings. These shortcuts stay available during capture when
+the normal overlays are hidden. The gears follow the captured game window.
 
 **Leaderboard.** Open **Ranks** in the main navigation to view the **Leaderboard**.
 It shows your anonymous three-word name, current maximum HP/Mana, and lifetime personal
