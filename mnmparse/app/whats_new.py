@@ -32,6 +32,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Overlay gears float above content and highlight settings. Weapon delay is in Settings; Reset Encounter becomes End Encounter.",
             "Spawn timers show monster icons. Notable NPCs show levels, loot swords and quest feathers; victories play a fanfare and open drops.",
+            "Sample the victory fanfare under Considered NPC.",
             "Browse maps and NPCs in Zones. Caves of Irem's primary map and periodic wiki refresh work.",
             "Overburdened weight pulses gray edges; both screen read areas gain hover gears.",
             "Ranks adds daily anonymous Window Capture submissions; Copy stays local. Both have mini-stat shortcuts.",
