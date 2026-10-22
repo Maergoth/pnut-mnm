@@ -289,6 +289,8 @@ class Engine(QObject):
     """
 
     message = Signal(object, object)
+    live_group_kill = Signal(object, str)  #: eligible fresh kill and its captured zone
+    live_group_activity = Signal(object, str)  #: fresh group damage re-arms same-name kill pairing
     zone_changed = Signal(str)  #: navigation evidence; does not replay a captured chat message
     snapshot = Signal(object)
     encounter_closed = Signal(object)
@@ -317,6 +319,8 @@ class Engine(QObject):
         self._active_ocr_settings = (cfg.ocr_engine, float(cfg.ocr_scale))
         self._tracker: Tracker | None = None
         self._stats: Stats | None = None
+        self._kill_identity_zone = ""
+        self._kill_player_names: set[str] = set()
         self._stopped_stats: Stats | None = None  #: last capture's source events for ownership corrections
         self._writer: LogWriter | None = None
         self._history: list[EncounterSnapshot] = []
@@ -2066,11 +2070,43 @@ class Engine(QObject):
                     log.exception("session recovery fallback failed")
         self._observe_navigation(ev)
         self._messages += 1
+        self._emit_live_group_event(msg, ev, stats, cfg)
         self.message.emit(msg, ev)
         for closed in stats.history[before:]:
             self._emit_closed(closed)
         if stats.current() is not None:
             self._snapshot_dirty = True
+
+    def _emit_live_group_event(self, msg: Message, event: Event, stats: Stats, cfg: Config) -> None:
+        from mnmparse.app.notable_kills import eligible_group_event, name_key
+        from mnmparse.stats import DAMAGE_KINDS
+
+        if (self.state != "running"
+                or any(bool(getattr(msg, key, False)) for key in ("backlog", "fragment", "estimated_ts"))
+                or event.estimated or event.estimated_ts):
+            return
+        zone = self._current_zone()
+        if not zone:
+            return
+        if zone != self._kill_identity_zone:
+            self._kill_identity_zone = zone
+            self._kill_player_names.clear()
+        if event.kind == "consider" and event.target:
+            if event.outcome == "player":
+                if len(self._kill_player_names) < 512:
+                    self._kill_player_names.add(name_key(event.target))
+            elif event.outcome == "npc":
+                self._kill_player_names.discard(name_key(event.target))
+            return
+        if event.kind not in {"kill", *DAMAGE_KINDS}:
+            return
+        known = self._kill_player_names | stats.roster.seen()
+        if not eligible_group_event(event, cfg.player_name, stats.roster.members(), stats.roster.pet_owners(), known):
+            return
+        if event.kind == "kill":
+            self.live_group_kill.emit(event, zone)
+        else:
+            self.live_group_activity.emit(event, zone)
 
     def _expire(self, now: float) -> None:
         """Close a timed-out encounter (``stats.expire``) and announce it.

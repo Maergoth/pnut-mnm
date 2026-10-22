@@ -176,6 +176,26 @@ class ZonesPageTests(unittest.TestCase):
         self.assertNotIn("Quests", text)
         self.assertNotIn("Not available", text)
 
+    def test_live_kill_celebration_opens_overlay_without_replacing_browser_selection(self):
+        from mnmparse.app.notable_kills import NotableKillController
+        from mnmparse.parser import parse_line
+        browser_npc = self.reference.npcs["Fictional Keeper"] = NpcDetails("Fictional Keeper", "12")
+        self.reference.npcs["Live Champion"] = NpcDetails("Live Champion", "30")
+        self.reference.zones["Night Harbor"] = NotableNpcs("Night Harbor", ("Live Champion",))
+        self.panel.enabled = True
+        self.page.map.npc_selected.emit("Fictional Keeper")
+        self.page.map.set_zone("Shaded Dunes")
+        celebration = NotableKillController(self.controller, current_zone=lambda: "Night Harbor", active=lambda: True)
+        try:
+            celebration.on_kill(parse_line("You have slain Live Champion!", 100), "Night Harbor")
+            self.assertEqual(self.panel.name, "Live Champion")
+            self.assertEqual(self.page.map.current_zone, "Shaded Dunes")
+            self.assertEqual(self.page.details.selected_name, "Fictional Keeper")
+            self.assertIs(self.page.details._details, browser_npc)
+        finally:
+            celebration.shutdown()
+            celebration.deleteLater()
+
     def test_item_hover_is_lazy_cache_first_and_wiki_links_use_canonical_sources(self):
         self.reference.npcs["Fictional Keeper"] = NpcDetails("Fictional Keeper", "12", unique_drops=("Old Staff",))
         canonical = wiki_url("Canonical Staff")

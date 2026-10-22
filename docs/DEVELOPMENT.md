@@ -2,6 +2,16 @@
 
 [User guide](../README.md) · [File audit](FILE_AUDIT.md)
 
+Notable kill celebrations consume `Engine.live_group_kill` and `live_group_activity`,
+emitted only after fresh captured events have been parsed and roster ownership checked.
+Their zone is captured under the engine lock; GUI delivery also verifies the current
+zone and running state. Keep history/import/demo and encounter rebuild paths separate.
+The NPC controller warms zone lists through its bounded cache queue, while the kill
+controller keeps at most 16 unresolved kills for 30 seconds. Only complementary active
+and passive kill notices within two seconds are paired; fresh damage re-arms pairing,
+and distinct same-form kills remain separate. The victory cue is synthesized from the
+user-supplied two-bar score at 130 BPM; no external recording or MIDI is downloaded.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL

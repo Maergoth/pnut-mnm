@@ -669,6 +669,13 @@ one displays the same card and respects the same field settings as considering i
 Known levels appear before each name. A sparkled sword marks unique loot, and a feather
 marks NPCs that offer quests or are needed by quests. Cached details appear immediately;
 missing details fill in through background wiki requests.
+When you, your party or an owned pet slay a notable NPC in your current captured zone,
+PNUT plays a short synthesized victory fanfare and opens that NPC's cached card to inspect
+its drops. **Settings > Considered NPC > Notable NPC victory fanfare** toggles the sound;
+master volume, output device and mute still apply. The card respects **Show NPC details**
+and the selected fields. Zone membership comes from that zone's wiki list, not the zone
+you happen to be browsing on the map. Old logs, imports, demos and startup chat do not
+celebrate past kills. Cached notable lists work offline; a first lookup needs the wiki.
 NPC records, notable lists and item stats are saved in `npc_cache/` beside the app.
 Cached records display immediately, then a background check compares wiki revisions
 and template modification timestamps before fetching changed content. Successful
