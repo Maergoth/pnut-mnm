@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 Rect = tuple[int, int, int, int]
 TARGETS = ("crop_picker", "player_status_enabled", "copy_stats", "submit_stats")
 _LABELS = {"crop_picker": "combat chat reader", "player_status_enabled": "mini-stat reader",
-           "copy_stats": "copy anonymous stats", "submit_stats": "submit anonymous stats"}
+           "copy_stats": "copy current stats", "submit_stats": "submit personal bests"}
 
 
 def _rect(value: Any) -> Rect | None:
@@ -292,8 +292,8 @@ class _GearWindow(QWidget):
 class _CopyButton(_AreaButton):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setAccessibleName("Copy anonymous stats")
-        self.setAccessibleDescription("Copy anonymous stats locally. Requires fresh mini stats.")
+        self.setAccessibleName("Copy current stats")
+        self.setAccessibleDescription("Copy current mini stats locally without submitting. Requires a fresh reading.")
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -311,8 +311,8 @@ class _CopyButton(_AreaButton):
 class _SubmitButton(_CopyButton):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setAccessibleName("Submit anonymous stats")
-        self.setAccessibleDescription("Publish one anonymous daily snapshot. Requires fresh mini stats from Window Capture.")
+        self.setAccessibleName("Submit personal bests")
+        self.setAccessibleDescription("Publish your personal best stats and lifetime totals once per UTC day. Requires fresh Window Capture.")
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

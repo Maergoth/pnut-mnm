@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -14,7 +15,9 @@ def probe(directory: str, selftest: bool):
     from PySide6.QtCore import QSettings
     from mnmparse.app.main import App, _MissingPage
     from mnmparse.config import Config
-    from mnmparse.leaderboard import clipboard_text, make_snapshot, utc_stamp
+    from mnmparse.capture import WgcWindowSource
+    from mnmparse.leaderboard import READING_FIELDS, clipboard_text, make_snapshot, utc_stamp, validate_snapshot
+    from mnmparse.player_status import PlayerStatusReading
     from tests.test_layout import clipped_widgets
     root = Path(directory)
     settings = QSettings(str(root / "ui.ini"), QSettings.Format.IniFormat)
@@ -68,11 +71,43 @@ def probe(directory: str, selftest: bool):
             app._on_read_area_action("submit_stats")
             submit.assert_called_once_with(snapshot)
             app.engine.leaderboard_submission.assert_called_once_with(message="This **** is fun!")
+        # The same live engine reading feeds current Copy and independent best-value Submit.
+        # No network, capture source, installed profile or real game data is used.
+        for name in ("leaderboard_status", "leaderboard_submission", "leaderboard_copy_text"):
+            delattr(app.engine, name)
+        app.engine._source = object.__new__(WgcWindowSource)
+        app.engine._state = "running"
+        app.engine._window_found = True
+        first_fields = dict.fromkeys(READING_FIELDS, 1)
+        first_fields.update(strength=100, armor_class=500, resist_cold=100)
+        current_fields = dict.fromkeys(READING_FIELDS, 1)
+        current_fields.update(stamina=80, armor_class=20, resist_corruption=80)
+        now = time.time()
+        app.engine._observe_player_status(PlayerStatusReading(900, 900, (0, 0, 8, 8), (), mana_max=700,
+                                                              **first_fields), app.engine._cfg, now - 1, (8, 8, 3))
+        app.engine._observe_player_status(PlayerStatusReading(100, 100, (0, 0, 8, 8), (), mana_max=50,
+                                                              **current_fields), app.engine._cfg, now, (8, 8, 3))
+        with patch.object(app._leaderboard_client, "submit", return_value=True) as submit:
+            app._on_read_area_action("copy_stats")
+            local = app.clipboard().text()
+            for expected in ("Max Health: 100", "Max Mana: 50", "Strength: 1", "Stamina: 80",
+                             "Armor Class: 20", "Stat Total: 86", "Resist Total: 87"):
+                assert expected in local, expected
+            submit.assert_not_called()
+            app._on_read_area_action("submit_stats")
+            submit.assert_called_once()
+            personal_bests = validate_snapshot(submit.call_args.args[0])
+            for field, expected in dict(schema_version=3, max_health=900, max_mana=700, strength=100,
+                                        stamina=80, armor_class=500, stat_total=106, resist_total=107).items():
+                assert personal_bests[field] == expected, field
+            assert personal_bests["message"] == "This **** is fun!"
+        app.engine._source = None
+        app.engine._state = "stopped"
         app.show_demo()
         assert not page.copy_button.isEnabled()
         assert not page.submit_button.isEnabled()
         app._leave_demo()
-        assert page.copy_button.isEnabled()
+        assert not page.copy_button.isEnabled()
         fetch.assert_not_called()
         app.shutdown()
         assert app._leaderboard_client._closed

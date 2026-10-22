@@ -230,6 +230,8 @@ class ReadAreaGearTests(unittest.TestCase):
         self.hover((100, 150))
         copy = self.gears._windows["copy_stats"]
         submit = self.gears._windows["submit_stats"]
+        self.assertEqual(copy.button.accessibleName(), "Copy current stats")
+        self.assertEqual(submit.button.accessibleName(), "Submit personal bests")
         self.assertTrue(copy.button.isVisible())
         self.assertTrue(submit.button.isVisible())
         self.assertEqual(submit.x() - copy.x(), 30)

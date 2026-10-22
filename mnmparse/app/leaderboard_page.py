@@ -55,7 +55,8 @@ def record_lines(record):
 
 def record_tooltip(record):
     stamp = record.get("captured_at")
-    timestamp = "Captured (UTC): " + stamp.replace("T", " ").removesuffix("Z") if stamp else "Capture time unavailable"
+    title = "Personal bests as of (UTC): " if record.get("schema_version") == 3 else "Captured (UTC): "
+    timestamp = title + stamp.replace("T", " ").removesuffix("Z") if stamp else "Snapshot time unavailable"
     message = record.get("message")
     if not message:
         return "<qt>" + escape(timestamp) + "</qt>"
@@ -204,8 +205,8 @@ class LeaderboardPage(QWidget):
         title = QLabel("Leaderboard")
         title.setObjectName("Heading")
         root.addWidget(title)
-        intro = QLabel("Share an anonymous daily snapshot of your current mini stats and lifetime personal totals. "
-                       "Copy stays on your clipboard. Submit publishes to the public leaderboard.")
+        intro = QLabel("Copy your current mini stats locally. Submit your personal best stats and lifetime personal "
+                       "totals to the anonymous public leaderboard once per UTC day.")
         intro.setWordWrap(True)
         root.addWidget(intro)
         identity = QHBoxLayout()
@@ -225,8 +226,8 @@ class LeaderboardPage(QWidget):
         best, self.best_totals = self._summary()
         self.local_tabs.addTab(fresh, "Fresh reading")
         self.local_tabs.addTab(best, "Local best")
-        self.local_tabs.setTabToolTip(0, "Current mini stats and lifetime personal counters. Submit shares this reading.")
-        self.local_tabs.setTabToolTip(1, "Highest observed values. Totals use one complete reading, not a sum of individual records.")
+        self.local_tabs.setTabToolTip(0, "Current mini stats and lifetime personal counters. Copy uses this reading.")
+        self.local_tabs.setTabToolTip(1, "Submit shares these personal bests. Totals use one complete reading, not a sum of individual records.")
         self.local_tabs.setMinimumHeight(100)
         self.local_tabs.setMaximumHeight(145)
         root.addWidget(self.local_tabs)
@@ -244,8 +245,8 @@ class LeaderboardPage(QWidget):
         message_row.addWidget(self.message_input, 1)
         root.addLayout(message_row)
         controls = QHBoxLayout()
-        self.copy_button = QPushButton("Copy")
-        self.submit_button = QPushButton("Submit")
+        self.copy_button = QPushButton("Copy current")
+        self.submit_button = QPushButton("Submit personal bests")
         self.refresh_button = QPushButton("Refresh public entries")
         for button in (self.copy_button, self.submit_button, self.refresh_button):
             button.setObjectName("Chip")
@@ -366,13 +367,13 @@ class LeaderboardPage(QWidget):
         reason = self.action_reason()
         copy_reason = self.action_reason(copy=True)
         service = self.client.submission_unavailable if self.client else "Leaderboard is unavailable in this mode."
-        self.eligibility.setText((reason + (" Copy is available locally." if not copy_reason else "")) if reason else ("Already submitted today (UTC). Copy remains available." if self.submitted_today()
-                                 else "Ready to copy. " + service if service else "Ready to copy or submit once per UTC day."))
+        self.eligibility.setText((reason + (" Copy current is available locally." if not copy_reason else "")) if reason else ("Already submitted today (UTC). Copy current remains available." if self.submitted_today()
+                                 else "Ready to copy current values. " + service if service else "Ready to copy current values or submit personal bests once per UTC day."))
         busy = self.client is not None and self.client.busy
         self.copy_button.setEnabled(not copy_reason)
-        self.copy_button.setToolTip(copy_reason or "Copy locally without submitting.")
+        self.copy_button.setToolTip(copy_reason or "Copy current mini stats locally without submitting.")
         self.submit_button.setEnabled(not reason and not service and not busy and not self.submitted_today())
-        self.submit_button.setToolTip(reason or service or ("Already submitted today (UTC)." if self.submitted_today() else "Publish this anonymous snapshot."))
+        self.submit_button.setToolTip(reason or service or ("Already submitted today (UTC)." if self.submitted_today() else "Publish your personal best stats and lifetime totals. Requires fresh Window Capture."))
         self.phrase_button.setEnabled(self.ledger is not None and not busy and not self._demo)
         self.message_input.setEnabled(self.ledger is not None and not busy and not self._demo)
         self.refresh_button.setEnabled(self.client is not None and not busy and not self._demo)
@@ -407,7 +408,7 @@ class LeaderboardPage(QWidget):
             self.message.setText("Read fresh mini stats before copying.")
             return ""
         QApplication.clipboard().setText(text)
-        self.message.setText("Copied locally. Nothing was submitted.")
+        self.message.setText("Copied current values locally. Nothing was submitted.")
         return text
 
     def submit_stats(self):
@@ -428,7 +429,7 @@ class LeaderboardPage(QWidget):
             return False
         if self.client is None or not self.client.submit(record):
             return False
-        self.message.setText("Submitting anonymous snapshot…")
+        self.message.setText("Submitting personal bests…")
         return True
 
     def refresh_public(self):

@@ -105,6 +105,14 @@ class StatCardTests(unittest.TestCase):
         self.assertEqual(self.page.totals["strength"].text(), "STR: —")
         self.assertEqual(self.page.best_totals["strength"].text(), "STR: —")
 
+    def test_copy_and_submit_labels_distinguish_current_values_from_personal_bests(self):
+        self.page.refresh_status()
+        self.assertEqual(self.page.copy_button.text(), "Copy current")
+        self.assertEqual(self.page.submit_button.text(), "Submit personal bests")
+        self.assertIn("Copy uses this reading", self.page.local_tabs.tabToolTip(0))
+        self.assertIn("Submit shares these personal bests", self.page.local_tabs.tabToolTip(1))
+        self.assertIn("current mini stats", self.page.copy_button.toolTip())
+
     def test_paint_repeats_full_alias_bold_and_gold_on_each_line(self):
         class RecordingPainter(QPainter):
             def drawText(self, *args):
@@ -232,6 +240,16 @@ class StatCardTests(unittest.TestCase):
         unsafe_stamp = record_tooltip({"captured_at": "<b>not a real timestamp</b>"})
         self.assertIn("&lt;b&gt;", unsafe_stamp)
         self.assertNotIn("<b>", unsafe_stamp)
+
+    def test_personal_best_tooltip_does_not_claim_simultaneous_capture(self):
+        best = record_tooltip(sample(10, schema_version=3, message="A fictional record update"))
+        self.assertIn("Personal bests as of (UTC): 2026-10-22 14:00:00", best)
+        self.assertNotIn("Captured (UTC)", best)
+        self.assertLess(best.index("fictional"), best.index("Personal bests as of"))
+        for version in (None, 2):
+            legacy = record_tooltip(sample(10, schema_version=version))
+            self.assertIn("Captured (UTC)", legacy)
+            self.assertNotIn("Personal bests as of", legacy)
 
     def test_long_word_and_emoji_tooltips_wrap_without_changing_message(self):
         for message in ("W" * 160, "\U0001f389" * 160, "a\u0301" * 80):
