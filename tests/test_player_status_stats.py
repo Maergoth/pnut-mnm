@@ -163,6 +163,31 @@ class MiniStatSpatialTests(unittest.TestCase):
         self.assertEqual(reading.strength, VALUES["strength"])
         self.assertTrue(all(index not in reading.panel_line_indices for index in range(len(lines) - 3, len(lines))))
 
+    def test_a_broken_resource_number_cannot_become_a_missing_attribute(self):
+        lines = [line for line in fictional_panel() if line.text not in ("63", "402/645")]
+        lines.append(OcrLine(208, 100, 22, "402"))
+        reading = read_player_status(lines)
+        self.assertIsNone(reading.hp_max)
+        self.assertIsNone(reading.stamina)
+        self.assertEqual(reading.strength, VALUES["strength"])
+
+    def test_stat_names_in_the_central_resource_column_are_not_side_stats(self):
+        lines = fictional_panel() + [OcrLine(218, 185, 18, "STR 9999"),
+                                    OcrLine(218, 200, 18, "INT 9999")]
+        reading = read_player_status(lines)
+        self.assertEqual(reading.strength, VALUES["strength"])
+        self.assertEqual(reading.intelligence, VALUES["intelligence"])
+
+    def test_a_lone_or_scrambled_side_label_cannot_establish_an_attribute_group(self):
+        for remove in (("STA", "AGI", "DEX"), ("INT", "WIS")):
+            lines = [line for line in fictional_panel() if line.text not in remove]
+            reading = read_player_status(lines)
+            field = "strength" if "STA" in remove else "charisma"
+            self.assertIsNone(getattr(reading, field))
+        lines = fictional_panel()
+        next(line for line in lines if line.text == "STA").y = 170
+        self.assertIsNone(read_player_status(lines).strength)
+
     def test_attribute_boxes_above_resource_padding_exclude_only_verified_side_boxes(self):
         lines = fictional_panel()
         # Move only resource rows downward: the upper attribute boxes now lie
@@ -172,16 +197,18 @@ class MiniStatSpatialTests(unittest.TestCase):
         # Keep Weight below every resource and make the resource stack compact.
         lines[6].y = lines[7].y = 390
         lines.extend((OcrLine(220, 70, 16, "STR"), OcrLine(280, 71, 16, "999"),
-                      OcrLine(5, 90, 16, "STR 999")))
+                      OcrLine(5, 90, 16, "STR 999"), OcrLine(218, 250, 18, "STR 9999")))
         reading = read_player_status(lines)
         self.assertIsNotNone(reading)
         self.assertLess(next(line.y for line in lines if line.text == "STR"), reading.panel_rect[1])
         self.assertEqual(reading.strength, VALUES["strength"])
         self.assertEqual(reading.intelligence, VALUES["intelligence"])
-        for index, line in enumerate(lines[:-3]):
+        for index, line in enumerate(lines[:-4]):
             if line.text in ("STR", "71", "INT", "31"):
                 self.assertIn(index, reading.panel_line_indices)
-        self.assertTrue(all(index not in reading.panel_line_indices for index in range(len(lines) - 3, len(lines))))
+        # The lower central row remains under the resource panel's existing
+        # exclusion rectangle, but none of these rows may supply Strength.
+        self.assertTrue(all(index not in reading.panel_line_indices for index in range(len(lines) - 4, len(lines) - 1)))
 
 
 class MiniStatFocusedOcrTests(unittest.TestCase):

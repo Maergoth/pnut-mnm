@@ -156,11 +156,48 @@ def _stat_labels(lines: Sequence[OcrLine], rect: Rect) -> list[tuple[int, str, s
     return result
 
 
+def _coherent_side_fields(lines: Sequence[OcrLine], labels: list[tuple[int, str, str | None]]) -> set[str]:
+    """A lone chat-like stat label cannot establish a character side box."""
+    fields = {"armor_class"}
+    for group in _STAT_GROUPS:
+        unique = [item for item in labels if item[1] in group
+                  and sum(other[1] == item[1] for other in labels) == 1]
+        if len(unique) < 2:
+            continue
+        unique.sort(key=lambda item: group.index(item[1]))
+        height = float(median(lines[index].h for index, _field, _inline in unique))
+        xs = [lines[index].x for index, _field, _inline in unique]
+        steps = [(lines[right[0]].y - lines[left[0]].y) / (group.index(right[1]) - group.index(left[1]))
+                 for left, right in zip(unique, unique[1:])]
+        step = float(median(steps))
+        if (max(xs) - min(xs) <= height * 1.5 and height * .75 <= step <= height * 2
+                and all(abs(value - step) <= height * .4 for value in steps)):
+            fields.update(group)
+    return fields
+
+
 def _stat_values(lines: Sequence[OcrLine], rect: Rect) -> dict[str, int | None]:
     """Accept explicit labels and unique local numbers, never a guessed grid cell."""
     labels = _stat_labels(lines, rect)
+    health = [line for line in lines if _inside(line, rect)
+              and (match := _LABEL.fullmatch(line.text.strip())) is not None and match[1].upper() == "HEALTH"]
+
+    def in_column(line: OcrLine, field: str) -> bool:
+        if len(health) != 1:
+            return True  # A focused side-box crop already excludes the central resources.
+        anchor = health[0]
+        if field == "armor_class":
+            return abs(line.x - anchor.x) <= anchor.h * 4
+        if field in (*_STAT_GROUPS[0], *_STAT_GROUPS[2]):
+            return line.x <= anchor.x - anchor.h * 2
+        return line.x >= anchor.x + anchor.h * 4
+
+    labels = [item for item in labels if in_column(lines[item[0]], item[1])]
+    coherent = _coherent_side_fields(lines, labels)
     proposals: dict[str, list[tuple[int, int]]] = {}
     for index, field, inline in labels:
+        if field not in coherent:
+            continue
         candidates = []
         if inline is not None:
             value = _integer(inline)
@@ -170,7 +207,8 @@ def _stat_values(lines: Sequence[OcrLine], rect: Rect) -> dict[str, int | None]:
             anchor = lines[index]
             height = anchor.h
             for other_index, line in enumerate(lines):
-                if not _inside(line, rect) or not .5 * height <= line.h <= 1.8 * height:
+                if (not _inside(line, rect) or not in_column(line, field)
+                        or not .5 * height <= line.h <= 1.8 * height):
                     continue
                 value = _integer(line.text)
                 if value is None:
