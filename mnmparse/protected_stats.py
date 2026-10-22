@@ -274,13 +274,13 @@ class ProtectedLedger:
         Editable session history is never accepted here. Exact snapshots prepared
         by this ledger are already included locally, including timeout/restart
         retries, so discovering those publicly must not add their totals again.
+        Verified version-3 personal bests can be max-merged on later refreshes;
+        their public timestamp is a known-as-of date, not an original read date.
         """
         from mnmparse.leaderboard import validate_snapshot
         with self._lock:
             self._check()
             value = self._load()
-            if value["history_restored"]:
-                return False
             own_key = public_key(bytes.fromhex(value["key"])).hex()
             matching = []
             for record in records:
@@ -294,6 +294,20 @@ class ProtectedLedger:
                     continue
             if not matching:
                 return False
+            records_changed = False
+            for record in matching:
+                if record.get("schema_version") != 3:
+                    continue  # Earlier schemas describe current readings, not personal bests.
+                for field in RECORD_FIELDS:
+                    number = record.get(field)
+                    previous = value["records"].get(field)
+                    if number is not None and (previous is None or number > previous["value"]):
+                        value["records"][field] = {"value": number, "captured_at": record["captured_at"]}
+                        records_changed = True
+            if value["history_restored"]:
+                if records_changed:
+                    self.file.save(value)
+                return records_changed
             baseline = {field: max(record[field] for record in matching) for field in COUNTERS}
             floor = max(record["sequence"] for record in matching)
             prepared = set(value["prepared_signatures"])
