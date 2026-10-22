@@ -1,8 +1,8 @@
 # PNUT M&M Privacy Policy
 
-Effective date: October 21, 2026
+Effective date: October 22, 2026
 
-PNUT M&M processes captured game text on your computer. PNUT has no built-in telemetry or automatic upload of screenshots, combat logs, settings, or diagnostic reports to the project maintainers. Some features download maps or updates from external services, as described below.
+PNUT M&M processes captured game text on your computer. PNUT has no built-in telemetry or automatic upload of screenshots, combat logs, settings, or diagnostic reports to the project maintainers. Some features download maps or updates from external services. The optional leaderboard publishes an anonymous stat snapshot only when you choose Submit, as described below.
 
 ## Capture and local processing
 
@@ -14,11 +14,11 @@ Frames and text are used locally for calibration previews, combat summaries, ses
 
 PNUT saves configuration, raw recognized combat messages, parsed event logs, learned names and vocabulary, party information, and session or OCR tracking state. Application logs can contain copied combat summaries, errors, and file paths. Trigger definitions may include custom text and sound-file paths. Display preferences, map state, and remembered respawn durations are saved in native application settings, including the Windows registry through Qt QSettings.
 
-Files normally reside beside the application or in its configured log folder. Downloaded maps are cached locally; update packages are staged in a local application-data or temporary folder. These files are not encrypted by PNUT. Access by other users, software, backup tools, or cloud-synced folders depends on your computer and storage choices.
+Files normally reside beside the application or in its configured log folder. Downloaded maps are cached locally; update packages are staged in a local application-data or temporary folder. Ordinary configuration and log files can be read by other software with access to their folder. Access by other users, software, backup tools, or cloud-synced folders depends on your computer and storage choices. Leaderboard identity, local cumulative totals and cached public entries are stored separately beside the selected configuration.
 
 Combat and event logs are not automatically deleted. The application log rotates. Previous sessions are stored in a local database with a configurable retention period (30 days by default), and the recent editable window is bounded (100 fights by default). Update staging and owned old-install folders have bounded cleanup. You can stop capture, change the capture area or log folder, and remove saved files or native settings with PNUT closed.
 
-Carebear Mode is on by default. Performance views and exports show your own information and eligible rounded group averages, hiding other members' individual results to prevent direct comparisons. Ordinary tools still show captured chat, trigger definitions and matches, timer labels, and Revenge List entries. Carebear does not change capture, OCR or parsing input. Switching into Elitist Scumbag Mode requires a deliberate switch gesture and confirmation. Original local logs and recovery data remain available on disk and are not encrypted. Turning Carebear on cannot recall information already copied, exported, spoken, or shared outside PNUT.
+Carebear Mode is on by default. Performance views and exports show your own information and eligible rounded group averages, hiding other members' individual results to prevent direct comparisons. Ordinary tools still show captured chat, trigger definitions and matches, timer labels, and Revenge List entries. Carebear does not change capture, OCR or parsing input. Switching into Elitist Scumbag Mode requires a deliberate switch gesture and confirmation. Original local logs and recovery data remain available on disk. Turning Carebear on cannot recall information already copied, exported, spoken, or shared outside PNUT.
 
 Each damage/DPS average requires at least three active damage contributors whose damage is at least their healing. Each healing/HPS average requires at least three active healing contributors whose healing is at least their damage. Positive ties count in both; inactive members count in neither, and assigned pets count with their owners. Unavailable role averages show — and are omitted from exports.
 
@@ -37,6 +37,18 @@ NPC reference features request public page titles from the same wiki: a consider
 Update checks and downloads contact GitHub and its release-file hosts for the `Maergoth/pnut-mnm` repository. The request includes the PNUT version in its User-Agent. Startup checks run when that option is enabled.
 
 These services receive your IP address and normal request metadata, and apply their own privacy practices. PNUT's map and update requests do not upload combat logs, screenshots, or settings. Links opened in your browser are also subject to the destination's practices.
+
+## Optional public leaderboard
+
+The Ranks page and mini-stat reader offer separate Copy and Submit actions. Copy only places your current anonymous summary on the system clipboard. Submit publishes one snapshot per anonymous identity per UTC day. It requires a fresh mini-stat reading from Window Capture. Desktop Capture can be used for local copying but does not contribute leaderboard totals or eligible submissions. Opening PNUT or the Ranks page does not submit data or refresh the public file automatically.
+
+A submitted snapshot contains your persistent three-word anonymous name and identity, capture timestamp, maximum health, maximum mana when available, cumulative personal kills and deaths, highest personal hit, and gross corpse coin looted in copper before party splitting. Weight, endurance, current health and mana, character names, screenshots, chat messages and combat logs are not included. Public records also include identifiers used to recognize the same identity and daily submission. The same identity links your snapshots across days.
+
+Submit contacts the hosted service at `pnut-leaderboard-upload.maergoth.chatgpt.site`, running through Sites on Cloudflare. That service publishes the record to the public `Maergoth/pnut-mnm` GitHub repository's `leaderboard-data` branch. Refresh public entries reads that public file from GitHub; cached entries remain available locally. These providers receive the connection's IP address and normal request metadata under their own practices. No external player sign-in is required.
+
+An optional secret phrase recreates your anonymous identity on another installation. PNUT does not save or upload the phrase. Reusing a phrase recreates the same identity; changing identity starts new local totals. Refreshing public entries can restore that identity's previously published totals. Session resets do not erase the local lifetime totals or previously published snapshots.
+
+Submitted records are public and have no automatic expiry. Anyone can read, copy or redistribute them. Removing an entry from the current leaderboard does not remove GitHub history or copies held by others. You can choose not to submit, and can remove local leaderboard files with PNUT closed; that does not recall already published records. Contact the project through the support channels below for a public-entry removal request.
 
 ## Clipboard, exports, and audio
 
