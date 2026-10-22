@@ -65,7 +65,8 @@ class NpcDetailsController(QObject):
         self._map_views = [existing for existing in self._map_views if existing is not view]
         if not isValid(self) or isinstance(view, QObject) and not isValid(view):
             return
-        for name, callback in (("npc_selected", self.show_npc), ("npc_zone_requested", self.show_notables)):
+        for name, callback in (("npc_selected", self.show_npc), ("npc_zone_requested", self.show_notables),
+                               ("destroyed", self._map_destroyed)):
             try:
                 getattr(view, name).disconnect(callback)
             except (RuntimeError, TypeError):
@@ -327,8 +328,19 @@ class NpcDetailsController(QObject):
 
     def shutdown(self) -> None:
         with self._condition:
+            if self._closed:
+                return
             self._closed = True
             self._queue.clear()
             self._pending.clear()
             self._enrichment.clear()
             self._condition.notify_all()
+        # Native destruction must not call back into a Python ownership cycle
+        # that is already being collected. Disconnect while both sides live.
+        for view in tuple(self._map_views):
+            self.detach_map(view)
+        if isValid(self) and (not isinstance(self.panel, QObject) or isValid(self.panel)):
+            try:
+                self.panel.item_hovered.disconnect(self.show_item)
+            except (RuntimeError, TypeError):
+                pass

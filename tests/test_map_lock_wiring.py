@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QRect, QSettings, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QRect, QSettings, Signal, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -122,6 +122,11 @@ class MapLockWiringTests(unittest.TestCase):
     def tearDown(self):
         if self.host is not None:
             self.host._shut_down = True
+            for name in ("notable_kills", "npc_details"):
+                controller = self.host.__dict__.get(name)
+                if controller is not None:
+                    controller.shutdown()
+                    controller.deleteLater()
             self.host.window.prepare_quit()
             for widget in (self.host.window, self.host.overlay, self.host.map_overlay, self.host.revenge_popout):
                 if widget is not None:
@@ -137,6 +142,8 @@ class MapLockWiringTests(unittest.TestCase):
                 self.host.triggers.audio.stop()
                 self.host.triggers.deleteLater()
         self.qt_app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.host = None
         self.temp.cleanup()
 
     def bootstrap(self, cfg=None, *, combat_available=True, trigger_runner=None, map_factory=_MapWindow):

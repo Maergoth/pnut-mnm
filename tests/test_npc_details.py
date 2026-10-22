@@ -1,5 +1,6 @@
 """Cache-first presentation, request deduplication and stale asynchronous results."""
 import os
+import gc
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from types import SimpleNamespace
@@ -149,6 +150,29 @@ class NpcDetailsTests(unittest.TestCase):
         self.assertEqual(additional.receivers("2destroyed(QObject*)"), 0)
         additional.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_shutdown_disconnects_native_view_and_panel_callbacks_before_collection(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from shiboken6 import isValid
+
+        for _ in range(6):
+            panel, view = Panel(), Map()
+            controller = NpcDetailsController(self.repo, panel, view)
+            self.assertEqual(view.receivers("2destroyed(QObject*)"), 1)
+            self.assertEqual(panel.receivers("2item_hovered(QString)"), 1)
+            controller.shutdown()
+            controller.shutdown()  # Repeated teardown must not disconnect twice.
+            self.assertEqual(controller._map_views, [])
+            self.assertEqual(view.receivers("2destroyed(QObject*)"), 0)
+            self.assertEqual(view.receivers("2npc_selected(QString)"), 0)
+            self.assertEqual(view.receivers("2npc_zone_requested(QString)"), 0)
+            self.assertEqual(panel.receivers("2item_hovered(QString)"), 0)
+            for obj in (controller, view, panel):
+                obj.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            self.assertFalse(isValid(controller))
+            del obj, controller, view, panel
+            gc.collect()
 
     def wait_done(self):
         self.repo.release.set()
