@@ -23,9 +23,10 @@ try:
 except ImportError:
     HAVE_QT = False
 
-from mnmparse.triggers import TriggerStore
+from mnmparse.triggers import Trigger, TriggerStore
 
 if HAVE_QT:
+    from mnmparse.app.monster_icon import monster_icon
     from mnmparse.app.timer_panel import MAX_ROWS, TimerPanel, timer_color
     from mnmparse.app.triggers_runtime import TriggerRunner
     from mnmparse.app.theme import apply_theme
@@ -84,9 +85,10 @@ class RespawnTimerControlsTests(unittest.TestCase):
         self.clock_patch.stop()
         self.tmp.cleanup()
 
-    def countdown(self, label="a skeletal warrior respawn", *, seconds=30, ended=True, retained=True):
+    def countdown(self, label="a skeletal warrior respawn", *, seconds=30, ended=True, retained=True, respawn=False):
         start = self.clock.return_value - seconds if ended else self.clock.return_value
-        timer = self.runner.start_one_time_timer(label, seconds, now=start, keep_until_dismissed=retained)
+        timer = self.runner.start_one_time_timer(label, seconds, now=start,
+                                                 keep_until_dismissed=retained, respawn=respawn)
         self.runner._tick()
         self.runner._clock.stop()
         self.app.processEvents()
@@ -115,6 +117,64 @@ class RespawnTimerControlsTests(unittest.TestCase):
         QTest.mouseClick(button, Qt.MouseButton.LeftButton, pos=button.rect().center())
         self.app.processEvents()
         self.panel.grab()
+
+    def test_only_explicit_respawn_timers_render_monster_icon(self):
+        marked = self.countdown("a rat respawn", ended=False, respawn=True)
+        self.countdown("a rat respawn", ended=False, retained=False)
+        self.countdown("a rat respawn", ended=False, retained=True)
+        trigger = Trigger(name="a rat respawn", pattern="automatic", action="none", timer=True, timer_seconds=30)
+        self.runner.store.triggers.append(trigger)
+        self.runner.observe("automatic", now=self.clock.return_value)
+        with patch("mnmparse.app.timer_panel.monster_icon", wraps=monster_icon) as draw_icon:
+            self.panel.grab()
+        draw_icon.assert_called_once_with(timer_color(marked, self.clock.return_value).name())
+        self.assertEqual(len(self.panel.timers()), 4)
+
+    def test_respawn_glyph_fits_inside_ring_at_all_scales_after_expiry_and_restart(self):
+        timer = self.countdown(ended=False, respawn=True)
+        timer.color, timer.low_color = "#40c98a", "#ed5162"
+        for state in ("running", "expired", "restarted"):
+            if state == "expired":
+                self.clock.return_value = timer.start + timer.duration + 1000
+                self.runner._tick()
+                self.assertTrue(timer.ended)
+                self.assertIn(timer, self.runner.board.timers)
+            elif state == "restarted":
+                self.click(self.panel._expired_buttons[timer.id][0])
+                self.assertFalse(timer.ended)
+            for px in (7.8, 13, 26):
+                with self.subTest(state=state, px=px):
+                    self.panel.set_font_px(px)
+                    drawn = []
+
+                    def recording_icon(color):
+                        shared = monster_icon(color)
+
+                        class Icon:
+                            def paint(self, painter, rect):
+                                drawn.append((color, QRectF(rect)))
+                                shared.paint(painter, rect)
+
+                        return Icon()
+
+                    with patch("mnmparse.app.timer_panel.monster_icon", side_effect=recording_icon):
+                        rendered = self.panel.grab().toImage()
+                    self.assertEqual(len(drawn), 1)
+                    color, rect = drawn[0]
+                    self.assertEqual(color, timer_color(timer, self.clock.return_value).name())
+                    row = self.panel._row_rect(0)
+                    diameter = self.panel._row_h() - 6
+                    ring = QRectF(row.left() + 1, row.center().y() - diameter / 2, diameter, diameter)
+                    stroke = max(2.5, diameter * 0.16)
+                    self.assertTrue(ring.adjusted(stroke, stroke, -stroke, -stroke).contains(rect))
+                    self.assertGreater(rect.width(), 0)
+                    self.assertEqual(rect.width(), rect.height())
+                    timer.respawn = False
+                    plain = self.panel.grab().toImage()
+                    timer.respawn = True
+                    self.assertNotEqual(rendered.copy(rect.toRect()), plain.copy(rect.toRect()),
+                                        "The glyph must have visible strokes even at the smallest scale")
+                    self.assertTrue(timer.respawn)
 
     def test_expired_npc_replaces_counter_with_static_no_focus_buttons(self):
         timer = self.countdown()

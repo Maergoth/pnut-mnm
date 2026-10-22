@@ -28,6 +28,14 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.24": ReleaseNotes(
+        changes=(
+            "Hover settings gears now float over overlay content without reserving a separate column or enlarging the panel.",
+            "NPC respawn timers created from the right-click menu show the map's monster icon inside their countdown ring, including when an expired timer is restarted.",
+        ),
+        settings_label="Overlay settings",
+        settings_target="overlay_enabled",
+    ),
     "1.0.23": ReleaseNotes(
         changes=(
             "Downloaded updates install automatically after a 10-second countdown. Choose Later to postpone; restart from Settings or the tray.",

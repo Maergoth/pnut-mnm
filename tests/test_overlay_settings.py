@@ -8,12 +8,13 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QEnterEvent
+from PySide6.QtGui import QColor, QEnterEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 from shiboken6 import isValid
 
 from mnmparse.app.overlay_settings import OverlaySettingsGear
+from mnmparse.app import theme
 
 
 class OverlaySettingsGearTests(unittest.TestCase):
@@ -120,6 +121,42 @@ class OverlaySettingsGearTests(unittest.TestCase):
         self.assertFalse(self.gear.isVisible())
         self.enter(self.host)
         self.assertTrue(self.gear.isVisible())
+
+    def test_compact_bar_fits_gear_without_resizing_host_and_remains_clickable(self):
+        for height in (12, 18, 24, 28):
+            with self.subTest(height=height):
+                self.host.resize(240, height)
+                self.enter(self.host)
+                self.assertTrue(self.gear.isVisible())
+                self.assertEqual(self.host.height(), height)
+                self.assertEqual(self.host.width(), 240)
+                self.assertTrue(self.host.rect().contains(self.gear.geometry()))
+                self.assertLessEqual(self.gear.height(), 22)
+                self.assertEqual(self.gear.x(), 4)
+                self.enter(self.gear)
+                QTest.mouseClick(self.gear, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.callback.call_count, 4)
+        self.enabled = False
+        self.gear.sync()
+        self.assertFalse(self.gear.isVisible())
+        self.gear.click()
+        self.assertEqual(self.callback.call_count, 4)
+        self.host.resize(240, 120)
+        self.enabled = True
+        self.enter(self.host)
+        self.assertEqual((self.gear.x(), self.gear.y(), self.gear.width(), self.gear.height()), (4, 4, 22, 22))
+
+    def test_compact_glyph_is_scaled_inside_its_button(self):
+        self.host.resize(240, 14)
+        self.enter(self.host)
+        with patch.object(self.gear, "underMouse", return_value=False):
+            rendered = self.gear.grab().toImage()
+        foreground = QColor(theme.TEXT).rgba()
+        glyph = [(x, y) for y in range(rendered.height()) for x in range(rendered.width())
+                 if rendered.pixel(x, y) == foreground]
+        self.assertTrue(glyph, "The compact shortcut must still draw a readable glyph")
+        self.assertTrue(all(0 < x < rendered.width() - 1 and 0 < y < rendered.height() - 1
+                            for x, y in glyph), "The glyph must not clip at the button's edge")
 
     def test_other_windows_do_not_reveal_this_hosts_gear(self):
         other = QWidget()

@@ -29,8 +29,6 @@ class OverlaySettingsGear(QToolButton):
         self._syncing = False
         self._watching_application = False
         self.setObjectName("OverlaySettingsGear")
-        self.setFixedSize(22, 22)
-        self.move(4, 4)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAutoRaise(True)
@@ -71,7 +69,13 @@ class OverlaySettingsGear(QToolButton):
         try:
             self._watch_application(self._host.isVisible() and not self._host.window().isMinimized())
             visible = self._can_show()
-            self.move(4, 4)
+            # Short bars keep their natural height; fit the floating shortcut
+            # inside them instead of imposing its usual 30px outer footprint.
+            width, height = self._host.width(), self._host.height()
+            extent = min(22, max(1, min(width, height) - 2))
+            self.setFixedSize(extent, extent)
+            self.move(min(4, max(0, (width - extent) // 2)),
+                      min(4, max(0, (height - extent) // 2)))
             self.setEnabled(visible)
             self.setVisible(visible)
             if visible:
@@ -101,10 +105,12 @@ class OverlaySettingsGear(QToolButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         active = self.underMouse() or self.isDown()
+        scale = self.width() / 22
         painter.setBrush(QColor(theme.BG1 if self.isDown() else theme.BG2))
         painter.setPen(QPen(QColor(theme.ACCENT if active else theme.MUTED), 1))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5 * scale, 5 * scale)
         painter.translate(QPointF(self.width() / 2, self.height() / 2))
+        painter.scale(scale, scale)
         gear = QPainterPath()
         for index in range(32):
             angle = index * math.tau / 32

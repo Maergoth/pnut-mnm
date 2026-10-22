@@ -502,8 +502,8 @@ class TriggerRunner(QObject):
 
     # -- timers ------------------------------------------------------------------------
     def start_one_time_timer(self, label: str, seconds: float, now: float | None = None, *,
-                             keep_until_dismissed: bool = False) -> ActiveTimer:
-        """Start an independent, silent countdown without adding a chat trigger."""
+                             keep_until_dismissed: bool = False, respawn: bool = False) -> ActiveTimer:
+        """Start a silent countdown; only the NPC action explicitly marks it as a respawn."""
         if not isinstance(label, str) or not label.strip():
             raise ValueError("A one-time timer needs a label")
         try:
@@ -525,7 +525,7 @@ class TriggerRunner(QObject):
             self.board.cancel(obsolete.id)
             ordinary.remove(obsolete)
         timer = self.board.start(trigger, trigger.name, now,
-                                 keep_until_dismissed=keep_until_dismissed)
+                                 keep_until_dismissed=keep_until_dismissed, respawn=respawn)
         assert timer is not None  # A fresh stack timer cannot retain an older instance.
         for old in previous:
             if old not in self.board.timers:

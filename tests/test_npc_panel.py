@@ -210,29 +210,31 @@ class NpcPanelTests(unittest.TestCase):
         opened.assert_called_once()
         self.assertTrue(self.panel.docked)
 
-    def test_settings_gear_reserves_space_in_both_title_painting_and_link_hit_test(self):
+    def test_settings_gear_does_not_shift_title_painting_or_link_hit_test(self):
         self.panel.show_npc("Sample Keeper")
         self.panel.set_details(self.details())
+        title, name, body = self.panel._title_rect(), self.panel._name_rect(), self.panel._body
         self.panel._settings_gear = object()
         self.panel._settings_gear_changed()
-        self.assertEqual(self.panel._title_rect().left(), 32)
-        self.assertEqual(self.panel._name_rect().left(), 32)
-        self.assertIsNone(self.panel._link_at(QPoint(16, 16)))
+        self.assertEqual(self.panel._title_rect(), title)
+        self.assertEqual(self.panel._name_rect(), name)
+        self.assertEqual(self.panel._body, body)
+        self.assertEqual(self.panel._title_rect().left(), 10)
         self.assertEqual(self.panel._link_at(self.panel._name_rect().center().toPoint()), ("npc", "Sample Keeper"))
 
-    def test_small_font_keeps_first_data_row_below_the_settings_gear(self):
+    def test_small_font_gear_floats_over_existing_content_without_adding_height(self):
         from mnmparse.app.overlay_settings import OverlaySettingsGear
 
         self.panel.show_npc("Sample Keeper")
         self.panel.set_details(self.details())
+        self.panel.set_font_px(7.8)
+        before = self.panel.height(), self.panel._body, self.panel._title_rect()
         gear = OverlaySettingsGear(self.panel, lambda: None, label="Considered NPC")
         self.panel._settings_gear = gear
         self.panel._settings_gear_changed()
-        self.panel.set_font_px(7.8)
         first_row = self.panel._row_rects[0][0].translated(0, self.panel._body.top())
-        self.assertGreater(first_row.top(), gear.geometry().bottom())
-        self.assertFalse(first_row.intersects(gear.geometry()))
-        self.assertGreater(self.panel._title_rect().left(), gear.geometry().right())
+        self.assertEqual((self.panel.height(), self.panel._body, self.panel._title_rect()), before)
+        self.assertTrue(first_row.intersects(gear.geometry()))
         self.assertEqual(self.panel._link_at(self.panel._name_rect().center().toPoint()), ("npc", "Sample Keeper"))
 
     def test_preferences_filter_sections_without_discarding_cached_details(self) -> None:

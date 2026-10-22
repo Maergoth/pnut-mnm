@@ -1197,21 +1197,17 @@ class RevengePopoutWindow(QWidget):
 
     def _fit_chrome(self, area: QRect | None) -> None:
         """Keep the list reachable when restoring onto a smaller monitor."""
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        minimum = max(240, round(240 * self._font_scale)) + inset
+        minimum = max(240, round(240 * self._font_scale))
         self.setMinimumWidth(min(minimum, area.width()) if area is not None else minimum)
 
     def _settings_gear_changed(self) -> None:
-        """Reserve room before the popout's heading and name rows."""
-        self._restore_geometry(self.geometry())
-        self._position_chrome()
+        """The hover gear floats over the unchanged list and heading."""
         self.update()
 
     def _position_chrome(self) -> None:
         # Share the heading row with Close, reserving space only in its header.
         # The name rows retain the full width and do not need a blank top strip.
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        self.layout().setContentsMargins(2 + inset, 2, 2, 8)
+        self.layout().setContentsMargins(2, 2, 2, 8)
         self.list._guild_header_controls.setContentsMargins(0, 0, self.close_button.width() + 6, 0)
         self.layout().activate()
         self.close_button.move(self.width() - self.close_button.width() - 4, 2)

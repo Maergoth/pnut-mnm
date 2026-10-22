@@ -528,6 +528,7 @@ class ActiveTimer:
     low_s: float = 5.0
     keep_until_dismissed: bool = False
     template_values: dict[str, str] = field(default_factory=dict)  #: matched values available to timer alerts
+    respawn: bool = False  #: explicitly created by the NPC respawn action
 
     def remaining(self, now: float) -> float:
         return max(0.0, self.start + self.duration - now)
@@ -547,7 +548,7 @@ class TimerBoard:
         self.timers: list[ActiveTimer] = []
 
     def start(self, trigger: Trigger, label: str, now: float | None = None, *,
-              keep_until_dismissed: bool = False) -> ActiveTimer | None:
+              keep_until_dismissed: bool = False, respawn: bool = False) -> ActiveTimer | None:
         """Start a fresh timer; ``None`` means retain an unexpired timer and ignore the match."""
         now = time.time() if now is None else now
         running = [t for t in self.timers if t.trigger_id == trigger.id and not t.ended and t.remaining(now) > 0]
@@ -559,7 +560,8 @@ class TimerBoard:
         timer = ActiveTimer(uuid.uuid4().hex[:8], trigger.id, label, now, float(trigger.timer_seconds),
                             float(trigger.timer_warn_s), color=trigger.timer_color,
                             warn_color=trigger.timer_warn_color, low_color=trigger.timer_low_color,
-                            low_s=trigger.timer_low_s, keep_until_dismissed=keep_until_dismissed)
+                            low_s=trigger.timer_low_s, keep_until_dismissed=keep_until_dismissed,
+                            respawn=respawn)
         self.timers.append(timer)
         ordinary = [t for t in self.timers if not t.keep_until_dismissed]
         if len(ordinary) > self.MAX_TIMERS:

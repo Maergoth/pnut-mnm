@@ -383,7 +383,8 @@ one countdown immediately. The duration is pre-filled with the last one you conf
 any mob in that encounter's zone, including after restarting PNUT. All mobs in a zone share
 that default; each zone remembers its own duration. The first timer in a zone defaults to
 five minutes.
-Each countdown runs once in the timer panel. When an NPC timer expires, a **circular arrow**
+Each countdown runs once in the timer panel, with the map's monster icon inside its radial ring.
+When an NPC timer expires, a **circular arrow**
 to restart and an **X** to dismiss replace its time counter. Hover for the action's tooltip.
 It stays until you dismiss it; restarting uses the same duration. Scroll the timer panel
 when more than eight timers are listed. It does not add an automatic chat trigger. Turn off
@@ -649,7 +650,8 @@ size, class and race where the wiki supplies them. Click the mob or item name to
 its wiki page. Unique drops are shown before common drops. An item listed as both appears only under common,
 and unavailable fields do not add empty headings.
 
-Hover any persistent overlay panel to reveal its top-left gear. Click it to open
+Hover any persistent overlay panel to reveal its top-left gear, floating over the existing
+content without a separate column or extra padding. Click it to open
 the main app at that panel's settings; the timer panel opens Triggers. The gear
 respects click-through and hides when the pointer leaves the panel.
 

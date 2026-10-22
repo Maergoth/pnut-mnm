@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from mnmparse.app import theme
+from mnmparse.app.monster_icon import monster_icon as _monster_icon
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
 from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title, zone_from_who
@@ -79,28 +80,6 @@ def _wiki_icon() -> QIcon:
     painter.drawLine(18, 22, 32, 8)
     painter.drawLine(22, 8, 32, 8)
     painter.drawLine(32, 8, 32, 18)
-    painter.end()
-    pixmap.setDevicePixelRatio(2)
-    return QIcon(pixmap)
-
-
-def _monster_icon() -> QIcon:
-    """A small horned face, drawn crisply at the same scale as the header icons."""
-    pixmap = QPixmap(40, 40)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(theme.qcolor(theme.MUTED), 2.6, Qt.PenStyle.SolidLine,
-                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-    face = QPainterPath()
-    face.moveTo(10, 15)
-    for x, y in ((8, 6), (16, 12), (24, 12), (32, 6), (30, 15),
-                 (32, 21), (28, 31), (20, 35), (12, 31), (8, 21), (10, 15)):
-        face.lineTo(x, y)
-    painter.drawPath(face)
-    painter.drawLine(13, 20, 17, 22)
-    painter.drawLine(23, 22, 27, 20)
-    painter.drawLine(16, 28, 24, 28)
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return QIcon(pixmap)
@@ -784,11 +763,7 @@ class MapOverlay(QWidget):
             self.view.setMask(QRegion(clip.toFillPolygon().toPolygon()))
 
     def _settings_gear_changed(self) -> None:
-        """Keep floating header controls to the right of the independent gear."""
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        self.header.layout().setContentsMargins(6 + inset, 6, 6, 6)
-        self._position_chrome()
-        self.header.layout().activate()
+        """The hover gear floats above the unchanged map header."""
         self.update()
 
     def paintEvent(self, event: Any) -> None:  # noqa: N802

@@ -29,6 +29,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QMenu, QPushButton, QScrollBar
 
 from mnmparse.app.docked_panel import DockedPanel
+from mnmparse.app.monster_icon import monster_icon
 from mnmparse.app.widgets import make_font, qcolor, token
 from mnmparse.triggers import ActiveTimer, Match, fill_placeholders
 
@@ -149,8 +150,7 @@ class TimerPanel(DockedPanel):
         self._anim.setInterval(FRAME_MS)
         self._anim.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim.timeout.connect(self._frame)
-        self.setToolTip("Running timers and recent triggers. Expired NPC timers can be restarted or dismissed. "
-                        "Right-click a timer to cancel it.")
+        self.setToolTip("Running timers and recent triggers. Right-click a timer to cancel it.")
         self._resize_for(1)
 
     # -- wiring --------------------------------------------------------------------------
@@ -263,7 +263,7 @@ class TimerPanel(DockedPanel):
         self.update()
 
     def _settings_gear_changed(self) -> None:
-        """Keep the settings button clear of every timer row, even while hidden."""
+        """Refresh the floating gear without reserving space in the timer rows."""
         self.refresh()
 
     def sync(self) -> None:
@@ -287,8 +287,7 @@ class TimerPanel(DockedPanel):
 
     def _resize_for(self, rows: int) -> None:
         row_h = self._row_h()
-        minimum = 30 if getattr(self, "_settings_gear", None) is not None else 0
-        self.set_rows_height(max(minimum, 10 + rows * row_h + (rows - 1) * 4))
+        self.set_rows_height(10 + rows * row_h + (rows - 1) * 4)
 
     def _row_h(self) -> int:
         return int(round(self._px * 2.3))
@@ -310,9 +309,8 @@ class TimerPanel(DockedPanel):
     def _row_rect(self, index: int) -> QRectF:
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         scroll_space = 14 if self._scroll.maximum() > 0 else 0
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        return QRectF(r.left() + 8 + inset, r.top() + 5 + index * (self._row_h() + 4),
-                      max(0, r.width() - 16 - scroll_space - inset), self._row_h())
+        return QRectF(r.left() + 8, r.top() + 5 + index * (self._row_h() + 4),
+                      max(0, r.width() - 16 - scroll_space), self._row_h())
 
     def _sync_expired_buttons(self) -> None:
         expired = {timer.id: timer for timer in self._visible_timers()
@@ -458,8 +456,7 @@ class TimerPanel(DockedPanel):
         if not timers and not self._popups and not candidates:
             p.setFont(self._f_label)
             p.setPen(qcolor(token("MUTED")))
-            inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-            p.drawText(r.adjusted(10 + inset, 0, -10, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            p.drawText(r.adjusted(10, 0, -10, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                        "Timers: none running")
             p.end()
             return
@@ -485,6 +482,11 @@ class TimerPanel(DockedPanel):
             span = int(-360 * 16 * frac)
             if span:
                 p.drawArc(ring.adjusted(width / 2, width / 2, -width / 2, -width / 2), 90 * 16, span)
+            if t.respawn:
+                # Leave the track and countdown arc clear at every font scale.
+                side = max(1, math.floor(d - 2 * (width + 1)))
+                icon_rect = QRectF(ring.center().x() - side / 2, ring.center().y() - side / 2, side, side)
+                monster_icon(color.name()).paint(p, icon_rect.toRect())
             # label and counter
             text_left = ring.right() + 8
             controls = self._expired_buttons.get(t.id)

@@ -89,8 +89,7 @@ class AttackBar(DockedPanel):
         self._resize_for(max(1, len(self._hands)))
 
     def _settings_gear_changed(self) -> None:
-        """Leave a permanent label inset and enough height for the hover gear."""
-        self._resize_for(max(1, len(self._hands)))
+        """The hover gear floats above the bar without enlarging its rows."""
         self.update()
 
     def sync(self) -> None:
@@ -145,15 +144,13 @@ class AttackBar(DockedPanel):
 
     def _resize_for(self, rows: int) -> None:
         row_h = int(round(self._px * 1.45))
-        minimum = 30 if getattr(self, "_settings_gear", None) is not None else 0
-        self.set_rows_height(max(minimum, 8 + rows * row_h + (rows - 1) * 3))
+        self.set_rows_height(8 + rows * row_h + (rows - 1) * 3)
 
     def _row_rect(self, index: int, rows: int) -> QRectF:
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         row_h = (r.height() - 8 - (rows - 1) * 3) / rows
-        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
-        return QRectF(r.left() + 8 + inset, r.top() + 4 + index * (row_h + 3),
-                      max(0, r.width() - 16 - inset), row_h)
+        return QRectF(r.left() + 8, r.top() + 4 + index * (row_h + 3),
+                      max(0, r.width() - 16), row_h)
 
     # -- painting --------------------------------------------------------------------------
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
