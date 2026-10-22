@@ -125,6 +125,10 @@ class MapLockWiringTests(unittest.TestCase):
             read_area_gears = self.host.__dict__.get("_read_area_gears")
             if read_area_gears is not None:
                 read_area_gears.shutdown()
+            leaderboard_client = self.host.__dict__.get("_leaderboard_client")
+            if leaderboard_client is not None:
+                leaderboard_client.shutdown()
+                leaderboard_client.deleteLater()
             self.host.window.prepare_quit()
             for widget in (self.host.window, self.host.overlay, self.host.map_overlay, self.host.revenge_popout):
                 if widget is not None:
@@ -158,12 +162,20 @@ class MapLockWiringTests(unittest.TestCase):
         host = self.host
         self.assertEqual(host.map_overlay.locked, locked)
         self.assertEqual(host.revenge_popout.locked, locked)
+
         if host.overlay is not None:
             self.assertEqual(host.overlay.locked, locked)
         self.assertEqual(host.window._lock_switch.isChecked(), locked)
         self.assertEqual(host.window.page("settings").overlay_locked.isChecked(), locked)
         self.assertEqual(host.tray._overlay_locked, locked)
         self.assertEqual(self.settings.value("overlay/locked", type=bool), locked)
+
+    def test_non_qobject_bootstrap_keeps_leaderboard_client_without_invalid_parent(self):
+        host = self.bootstrap()
+        self.assertIsNotNone(host._leaderboard_client)
+        self.assertIsNone(host._leaderboard_client.parent())
+        self.assertIs(host.window.page("leaderboard").client, host._leaderboard_client)
+        self.assertFalse(host._leaderboard_client.busy)
 
     def test_download_ready_is_wired_to_global_countdown_and_tray_action(self):
         host = self.bootstrap()

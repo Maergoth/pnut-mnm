@@ -1376,7 +1376,8 @@ class App(QApplication):
             if callable(setter):
                 setter(self._leaderboard_ledger)
             self._leaderboard_client = LeaderboardClient(
-                EncryptedFile(self.config_path.parent / "leaderboard-cache.bin"), self)
+                EncryptedFile(self.config_path.parent / "leaderboard-cache.bin"),
+                self if isinstance(self, QObject) else None)
         self.overlay = self._make_overlay(cfg)
         from mnmparse.app.map_overlay import MapOverlay
         from mnmparse.app.map_downloads import MapDownloadController
