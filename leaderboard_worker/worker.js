@@ -188,7 +188,7 @@ class GitHubStore {
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 10_000);
     try {
-      const response = await this.fetch(url, { method, redirect: "error", signal: abort.signal,
+      const response = await this.fetch(url, { method, redirect: "manual", signal: abort.signal,
         headers: { Authorization: `Bearer ${this.token}`, Accept: accept, "Content-Type": "application/json",
           "User-Agent": "PNUT-Leaderboard-Worker", "X-GitHub-Api-Version": "2022-11-28" },
         ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) });

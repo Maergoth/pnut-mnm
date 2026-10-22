@@ -41,7 +41,7 @@ test("new publication matches adapter contract and fixed GitHub path", async () 
   assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [R.other, R.current]);
   for (const { url, options } of github.calls) {
     assert.ok(url.startsWith(API_ROOT));
-    assert.equal(options.redirect, "error");
+    assert.equal(options.redirect, "manual");
     assert.equal(options.headers.Authorization, "Bearer " + environment.GITHUB_TOKEN);
   }
   const write = github.calls.at(-1);
@@ -207,6 +207,20 @@ test("upstream failure is generic and does not leak token or private response", 
   const body = await response.text();
   assert.ok(!body.includes(environment.GITHUB_TOKEN));
   assert.ok(!body.includes("private detail"));
+});
+
+test("upstream redirects are not followed and never forward credentials to their target", async () => {
+  const calls = [];
+  const worker = createWorker({ now: () => NOW, fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    assert.equal(options.redirect, "manual");
+    return new Response(null, { status: 302, headers: { Location: "https://untrusted.invalid/redirect-target" } });
+  } });
+  const response = await worker.fetch(request(R.current), environment);
+  assert.equal(response.status, 503);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${CONTENTS_URL}?ref=${BRANCH}`);
+  assert.ok(!JSON.stringify(await response.json()).includes(environment.GITHUB_TOKEN));
 });
 
 test("built artifact is one import-free standard Worker ESM with same behavior", async () => {
