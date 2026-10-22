@@ -9,10 +9,11 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QPointF, QSettings, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, QSettings, Qt
 from PySide6.QtGui import QCursor, QEnterEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 from mnmparse.app.map_overlay import MapOverlay
 from mnmparse.app.notable_npc_menu import NotableNpcMenu
@@ -43,6 +44,24 @@ class MapNotableNPCTests(unittest.TestCase):
 
     def rows(self):
         return [a.text() for a in self.window.notable_npcs_menu.actions() if not a.isSeparator()]
+
+    def narrow_screen(self, menu):
+        """Exercise overflow even when CI provides a wide desktop."""
+        area = QRect(self.app.primaryScreen().availableGeometry())
+        area.setWidth(min(800, area.width()))
+        screen = Mock()
+        screen.availableGeometry.return_value = area
+        self.enterContext(patch.object(menu, "screen", return_value=screen))
+        return area
+
+    @staticmethod
+    def close_popup(menu):
+        # deleteLater alone leaves a failed standalone popup grabbing input
+        # until DeferredDelete runs, which processEvents does not guarantee.
+        if isValid(menu):
+            menu.close()
+            menu.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_hidden_zone_changes_defer_request_until_map_is_opened(self):
         self.assertFalse(self.window.notable_npcs.isEnabled())
@@ -268,13 +287,13 @@ class MapNotableNPCTests(unittest.TestCase):
     def test_long_valid_level_growth_stays_on_screen_after_native_popup_layout(self):
         # Exercise the native popup inset as well as the themed map menu.
         native = NotableNpcMenu()
-        self.addCleanup(native.deleteLater)
+        self.addCleanup(self.close_popup, native)
         font = native.font()
         font.setPixelSize(24)
         native.setFont(font)
         action = native.addAction("Fictional Keeper")
         action.setData("Fictional Keeper")
-        area = self.app.primaryScreen().availableGeometry()
+        area = self.narrow_screen(native)
         native.popup(QPoint(area.right() - 3, area.bottom() - 3))
         self.app.processEvents()
         native.setActiveAction(action)
@@ -304,7 +323,7 @@ class MapNotableNPCTests(unittest.TestCase):
                                      levels={"Fictional Keeper": level},
                                      unique_loot=["Fictional Keeper"], quests=["Fictional Keeper"])
         menu = self.window.notable_npcs_menu
-        area = self.app.primaryScreen().availableGeometry()
+        area = self.narrow_screen(menu)
         menu.popup(QPoint(area.right() - 3, area.bottom() - 3))
         self.app.processEvents()
         self.assertTrue(area.contains(menu.geometry()))
