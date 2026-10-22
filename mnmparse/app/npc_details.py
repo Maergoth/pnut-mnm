@@ -23,6 +23,7 @@ MAX_QUEUED = 64
 
 class NpcDetailsController(QObject):
     _ready = Signal(str, str, object, str)
+    notables_updated = Signal(str, object)
 
     def __init__(self, repository: Any, panel: Any, map_overlay: Any, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -34,6 +35,7 @@ class NpcDetailsController(QObject):
         self._last_errors: dict[tuple[str, str], str] = {}
         self._notable_records: dict[str, Any] = {}
         self._notable_status: dict[str, str] = {}
+        self._map_views: list[Any] = []
         self._npc_metadata: dict[str, Any] = {}
         self._enrichment: set[tuple[str, str]] = set()
         self._enrichment_retry_at = 0.0
@@ -43,8 +45,28 @@ class NpcDetailsController(QObject):
         self._started = False
         self._ready.connect(self._finished, Qt.ConnectionType.QueuedConnection)
         panel.item_hovered.connect(self.show_item)
-        map_overlay.npc_selected.connect(self.show_npc)
-        map_overlay.npc_zone_requested.connect(self.show_notables)
+        self.attach_map(map_overlay)
+
+    def attach_map(self, view: Any) -> None:
+        """Share cached notable details with another map without changing hunting zone."""
+        if self._closed or any(view is existing for existing in self._map_views):
+            return
+        self._map_views.append(view)
+        view.npc_selected.connect(self.show_npc)
+        view.npc_zone_requested.connect(self.show_notables)
+        destroyed = getattr(view, "destroyed", None)
+        if destroyed is not None:
+            destroyed.connect(lambda *_args, attached=view: self.detach_map(attached))
+        for zone, record in tuple(self._notable_records.items()):
+            self._present_notables(zone, record, self._notable_status[zone], enrich=False)
+
+    def detach_map(self, view: Any) -> None:
+        self._map_views = [existing for existing in self._map_views if existing is not view]
+        for name, callback in (("npc_selected", self.show_npc), ("npc_zone_requested", self.show_notables)):
+            try:
+                getattr(view, name).disconnect(callback)
+            except (RuntimeError, TypeError):
+                pass  # A QObject can already be in its native destructor.
 
     @staticmethod
     def _key(name: str) -> str:
@@ -95,6 +117,12 @@ class NpcDetailsController(QObject):
         for name in getattr(cached, "names", ()):
             self._request("npc", name, background=True)
 
+    def ensure_notables(self, zone: str) -> None:
+        """Warm the current hunting zone without changing the map's selected zone."""
+        zone = zone_title(zone)
+        if zone and not self._closed:
+            self._request("notables", zone)
+
     @staticmethod
     def _positive_values(values: Any) -> tuple[str, ...]:
         """Unavailable placeholders never claim that loot or quests exist."""
@@ -136,8 +164,13 @@ class NpcDetailsController(QObject):
                     unique_loot.append(name)
                 if self._positive_values(getattr(details, "quests", ())):
                     quests.append(name)
-        self.map_overlay.set_notable_npcs(zone, names, status, levels=levels,
-                                         unique_loot=unique_loot, quests=quests)
+        for view in tuple(self._map_views):
+            try:
+                view.set_notable_npcs(zone, names, status, levels=levels,
+                                      unique_loot=unique_loot, quests=quests)
+            except RuntimeError:
+                self.detach_map(view)
+        self.notables_updated.emit(zone, record)
         if enrich:
             for name in names:
                 self._request("npc", name, background=True)

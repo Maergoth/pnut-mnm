@@ -105,6 +105,39 @@ class NpcDetailsTests(unittest.TestCase):
         self.repo.release.set()
         self.app.processEvents()
 
+    def test_attached_maps_share_retained_metadata_and_route_selection_once(self):
+        from unittest.mock import Mock
+
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", ("Guard Amber",), levels=(("Guard Amber", "12"),))
+        self.repo.npcs["Guard Amber"] = NpcDetails("Guard Amber", unique_drops=("Sample staff",), quests=("Sample quest",))
+        self.controller._started = True  # No network work is needed to prove cache presentation.
+        self.controller.show_notables("Night Harbor")
+        additional = Map()
+        self.controller.attach_map(additional)
+        self.controller.attach_map(additional)
+        self.assertIs(self.controller.map_overlay, self.map)
+        self.assertEqual(additional.zones, self.map.zones)
+        self.assertEqual(additional.metadata, self.map.metadata)
+        self.assertEqual(additional.metadata["Night Harbor"], ({"Guard Amber": "12"}, ("Guard Amber",), ("Guard Amber",)))
+        self.panel.show_npc = Mock(wraps=self.panel.show_npc)
+        additional.npc_selected.emit("Guard Amber")
+        self.panel.show_npc.assert_called_once_with("Guard Amber")
+        self.controller.detach_map(additional)
+        self.panel.show_npc.reset_mock()
+        additional.npc_selected.emit("Guard Amber")
+        self.panel.show_npc.assert_not_called()
+
+    def test_attached_map_destruction_removes_it_before_background_updates(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        additional = Map()
+        self.controller.attach_map(additional)
+        additional.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(self.controller._map_views, [self.map])
+        self.controller._present_notables("Night Harbor", NotableNpcs("Night Harbor", ("Guard Amber",)), "")
+        self.assertEqual(self.map.zones["Night Harbor"][0], ("Guard Amber",))
+
     def wait_done(self):
         self.repo.release.set()
         deadline = time.monotonic() + 3
