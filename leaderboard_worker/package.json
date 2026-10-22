@@ -1,0 +1,9 @@
+{
+  "name": "pnut-leaderboard-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "benchmark": "node benchmark.js"
+  }
+}
