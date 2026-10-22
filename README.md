@@ -338,7 +338,8 @@ collected from live **Window Capture** only; desktop capture does not contribute
 It works with a fresh mini-stat reading from either capture backend. **Submit** publishes
 one anonymous snapshot per UTC day and requires a fresh reading from **Window Capture**.
 The same separate Copy and Submit icons appear beside the mini-stat read area while
-hovering. If the submission service is not configured, Submit stays disabled with a reason.
+hovering. Submissions run in the background through the hosted service without an
+external sign-in. If the service is unavailable, your local totals remain available to retry.
 No character name is included. The public table sorts numbers numerically and capture
 times chronologically; **Refresh public entries** checks the public file while keeping
 cached entries visible during an outage. Opening PNUT does not contact the leaderboard.

@@ -1,6 +1,6 @@
-# Anonymous leaderboard service — undeployed draft
+# Anonymous leaderboard Python adapter
 
-This Python service accepts `POST /snapshots` and appends validated JSONL to the fixed `Maergoth/pnut-mnm` repository, `leaderboard-data` branch, `leaderboard.jsonl` path. It does not create a branch, choose a path from a request, or accept a client-supplied credential. The desktop reads the public JSONL directly; it never receives the write token. No infrastructure, branch, token, or public endpoint has been provisioned by this draft.
+This optional Python adapter accepts `POST /snapshots` and appends validated JSONL to the fixed `Maergoth/pnut-mnm` repository, `leaderboard-data` branch, `leaderboard.jsonl` path. The hosted deployment uses the equivalent [Cloudflare Worker](../leaderboard_worker/README.md); this Python listener is not deployed. The desktop reads the public JSONL directly. The data branch and hosted endpoint have been configured and verified separately from the held desktop release.
 
 The shared `mnmparse.leaderboard.validate_snapshot` function defines the complete allowed payload. Only the exact `window` capture backend is eligible. Names, logs, window titles and extra fields are rejected. The service additionally requires a UTC timestamp on the current UTC day and within five minutes of server time. Request bodies are capped at 4 KiB; public history is capped at the shared byte and record limits. Existing malformed history causes an unavailable response and is never overwritten.
 
@@ -30,7 +30,7 @@ Run with a runtime secret supplied by the deployment platform and bind the publi
 
 Keep this service behind a TLS reverse proxy; never publish the plain HTTP listener directly. Set an explicit hostname, trusted TLS certificate, a 4 KiB request limit, read/upstream timeouts, connection limits and a modest rate limit for `/snapshots`. Expose only `POST /snapshots` and, if useful to infrastructure, `GET /health`. `/health` reports that the process is alive, not GitHub availability. Disable proxy request-body logging and avoid retaining client IPs. The service itself does not log payloads, IP addresses or tokens.
 
-Provisioning the data branch, creating the least-privilege secret, deploying infrastructure and selecting a production desktop endpoint require a separate approved deployment. Confirm the public data and retention policy, token rotation, abuse controls and capacity monitoring then. When the shared file limit is reached, writes stop with `503`; the service does not silently discard old records.
+Publishing this optional Python listener is a separate deployment from the configured Worker. When the shared file limit is reached, writes stop with `503`; the service does not silently discard old records.
 
 Tests use an in-memory fake GitHub transport and a loopback HTTP server, never a live GitHub write:
 

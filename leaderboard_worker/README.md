@@ -2,7 +2,9 @@
 
 This optional Worker adapter supports the desktop's anonymous daily leaderboard submissions without a player sign-in. Copy remains local; Submit publishes a daily record. It serves JSON at `GET /health` and `POST /snapshots`. The health route checks that the Worker is running; it does not confirm that publication is available.
 
-Deployment and its public endpoint are configured separately. This folder contains no credentials, and running its checks never contacts or writes to the public leaderboard. The desktop release remains a separate review and approval step.
+The trial is deployed through Sites on Cloudflare Workers at [the service health endpoint](https://pnut-leaderboard-upload.maergoth.chatgpt.site/health). PNUT submits to `/snapshots` without an external sign-in. An actual desktop-client probe confirmed a new GitHub record, a duplicate retry returning the original record, and a public read; the synthetic entry was then removed. The initial submit took 1.21 seconds and its retry 0.48 seconds from the test machine. These are observed round trips, not latency guarantees.
+
+This folder contains no credentials, and running its checks never contacts or writes to the public leaderboard. Hosted settings are maintained separately. The desktop release remains a separate review and approval step. The current host is the managed Sites runtime, not a provisioned direct Cloudflare Free account; its limits must be checked independently.
 
 Use a current Node.js runtime with built-in WebCrypto. No npm install is needed:
 

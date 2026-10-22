@@ -25,12 +25,22 @@ fresh readings with the same identity/UTC-day submission ID. Shutdown discards
 late completions without a worker-owned QObject. The public cache is stored beside the
 selected config in `leaderboard-cache.bin`; local counters use `leaderboard-state.bin`.
 
-The desktop includes no GitHub write credential. The separately deployable
-`leaderboard_service` owns the write token and fixed repository/file. Until an approved
-service is configured, Submit reports unavailable. For development, set
-`PNUT_LEADERBOARD_SUBMIT_URL=https://YOUR-SERVICE/snapshots`; HTTP is accepted only on
-localhost/loopback for local service tests. Redirects, credentials and query-string
-secrets are rejected. Server deployment and public-branch creation are separate steps.
+The desktop defaults to the anonymous hosted Worker at
+`https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
+`leaderboard_worker`; the public JSONL is on the `leaderboard-data` branch. The Worker
+was verified with the actual desktop HTTP client, including a GitHub write, duplicate
+retry, public read and removal of the synthetic test entry. Hosting uses the Sites
+Cloudflare runtime; no separate player account or sign-in is required. Worker publication
+and a desktop app release are separate operations. The Python `leaderboard_service`
+remains an optional local/reference adapter.
+
+For development, set `PNUT_LEADERBOARD_SUBMIT_URL=https://YOUR-SERVICE/snapshots`;
+an empty override disables Submit. HTTP is accepted only on localhost/loopback for
+local service tests. Redirects, credentials and query-string secrets are rejected.
+The Worker uses manual redirect handling and rejects upstream 3xx responses because
+the deployed runtime does not support fetch's `error` redirect mode. Its Node
+conformance tests run in PR CI. Large-history capacity needs measurement on the
+actual host; the local Node benchmark does not prove compatibility with a 10 ms tier.
 
 ### Building and publishing Windows releases
 
