@@ -4,10 +4,10 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from queue import Empty, Queue
+from queue import Empty, Queue, SimpleQueue
 from typing import TypeVar
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from mnmparse.maps import MapImage, MapRepository, ZONES
 
@@ -145,32 +145,24 @@ def _download_maps(repository: MapRepository, zones: Iterable[str],
     return result
 
 
-class _Signals(QObject):
-    progress = Signal(str)
-    finished = Signal(str)
-
-
 class _DownloadWorker:
     def __init__(self, repository: MapRepository) -> None:
         self.repository = repository
         self.cancelled = threading.Event()
-        self.signals = _Signals()
+        self.messages: SimpleQueue[tuple[str, str]] = SimpleQueue()
 
-    def _emit(self, signal: Signal, message: str) -> None:
+    def _post(self, kind: str, message: str) -> None:
         if not self.cancelled.is_set():
-            try:
-                signal.emit(message)
-            except RuntimeError:
-                pass  # The Qt application may have exited during a request.
+            self.messages.put((kind, message))
 
     def run(self) -> None:
         try:
             result = _download_maps(self.repository, ZONES, self.cancelled,
-                                    lambda message: self._emit(self.signals.progress, message))
+                                    lambda message: self._post("progress", message))
         except Exception:
             log.exception("Unexpected map download failure")
             result = "Could not finish downloading maps. Existing cached maps are still available."
-        self._emit(self.signals.finished, result)
+        self._post("finished", result)
 
 
 class MapDownloadController(QObject):
@@ -185,6 +177,11 @@ class MapDownloadController(QObject):
         self.repository = repository
         self._worker: _DownloadWorker | None = None
         self._closed = False
+        # Only the GUI owns Qt objects. A canceled daemon may finish after its
+        # controller is deleted, so workers publish plain Python queue records.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(20)
+        self._poll_timer.timeout.connect(self._drain)
 
     @property
     def is_running(self) -> bool:
@@ -196,13 +193,29 @@ class MapDownloadController(QObject):
             return False
         worker = _DownloadWorker(self.repository)
         self._worker = worker
-        worker.signals.progress.connect(self._on_progress)
-        worker.signals.finished.connect(self._on_finished)
+        self._poll_timer.start()
         self.started.emit()
         # A stalled wiki request is bounded by the HTTP timeout and cannot delay
         # application exit. Cancellation is checked between every page/image.
         threading.Thread(target=worker.run, name="map-downloads", daemon=True).start()
         return True
+
+    @Slot()
+    def _drain(self) -> None:
+        worker = self._worker
+        if self._closed or worker is None:
+            self._poll_timer.stop()
+            return
+        while not self._closed and self._worker is worker:
+            try:
+                kind, message = worker.messages.get_nowait()
+            except Empty:
+                return
+            if kind == "progress":
+                self._on_progress(message)
+            elif kind == "finished":
+                self._on_finished(message)
+                return
 
     @Slot(str)
     def _on_progress(self, message: str) -> None:
@@ -211,12 +224,14 @@ class MapDownloadController(QObject):
 
     @Slot(str)
     def _on_finished(self, message: str) -> None:
+        self._poll_timer.stop()
         self._worker = None
         if not self._closed:
             self.finished.emit(message)
 
     def shutdown(self) -> None:
         self._closed = True
+        self._poll_timer.stop()
         if self._worker is not None:
             self._worker.cancelled.set()
             self._worker = None

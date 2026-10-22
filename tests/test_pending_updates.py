@@ -108,6 +108,7 @@ class PendingUpdateTests(unittest.TestCase):
             self.assertFalse(controller.start())
             thread.assert_called_once()
             controller._worker.run()
+            controller._drain()
             process.assert_not_called()
         self.assertFalse(controller.is_running)
         return messages, ready

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from pathlib import Path, PurePosixPath
+from queue import Empty, SimpleQueue
 import re
 import stat
 import subprocess
@@ -25,7 +26,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 import zipfile
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from mnmparse.app import APP_VERSION
 from mnmparse.app.launch_identity import EXECUTABLE, _guard_name, is_session_executable
@@ -780,28 +781,20 @@ def _prune_receipts(install: Path, protected_token: str) -> None:
             continue
 
 
-class _Signals(QObject):
-    progress = Signal(str)
-    completed = Signal(object, str)
-
-
 class _Worker:
     def __init__(self, installation: Path | None = None, retained: tuple[str, Path] | None = None) -> None:
         self.installation = installation
         self.retained = retained
         self.cancelled = threading.Event()
-        self.signals = _Signals()
+        self.messages: SimpleQueue[tuple[str, tuple]] = SimpleQueue()
 
-    def _emit(self, signal, *args) -> None:
+    def _post(self, kind: str, *args) -> None:
         if not self.cancelled.is_set():
-            try:
-                signal.emit(*args)
-            except RuntimeError:
-                pass
+            self.messages.put((kind, args))
 
     def run(self) -> None:
         try:
-            result = download_update(self.cancelled, lambda message: self._emit(self.signals.progress, message),
+            result = download_update(self.cancelled, lambda message: self._post("progress", message),
                                      installation=self.installation,
                                      retained_version=self.retained[0] if self.retained else "")
             if result is None and self.retained is not None:
@@ -813,10 +806,10 @@ class _Worker:
                            "restart from Settings or the tray to retry.")
             else:
                 message = f"PNUT {result[0]} is ready. Restart now or quit and reopen to install." if result else f"PNUT {APP_VERSION} is up to date."
-            self._emit(self.signals.completed, result, message)
+            self._post("completed", result, message)
         except Exception as exc:
             log.warning("Application update failed: %s", exc)
-            self._emit(self.signals.completed, None, f"Could not update PNUT: {exc}")
+            self._post("completed", None, f"Could not update PNUT: {exc}")
 
 
 class AppUpdateController(QObject):
@@ -832,6 +825,11 @@ class AppUpdateController(QObject):
         self._ready_package: Path | None = None
         self._ready_version = ""
         self._restart_prepared = False
+        # Daemon workers own only Python objects. Creating/emitting or deleting
+        # their Qt signal wrappers during GUI shutdown can race native teardown.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(20)
+        self._poll_timer.timeout.connect(self._drain)
 
     @property
     def is_running(self) -> bool:
@@ -905,15 +903,32 @@ class AppUpdateController(QObject):
             self.restore_pending()
         if self._ready_package is not None and self.automatic_restart_allowed(self._ready_version):
             self.finished.emit(f"PNUT {self._ready_version} is ready. Restart now or quit and reopen to install.")
-            self.ready.emit(self._ready_version)
+            if not self._closed:
+                self.ready.emit(self._ready_version)
             return False
         retained = (self._ready_version, self._ready_package) if self._ready_package is not None else None
         self._worker = worker = _Worker(install, retained)
-        worker.signals.progress.connect(self._on_progress)
-        worker.signals.completed.connect(self._on_completed)
+        self._poll_timer.start()
         self.started.emit()
         threading.Thread(target=worker.run, name="app-update", daemon=True).start()
         return True
+
+    @Slot()
+    def _drain(self) -> None:
+        worker = self._worker
+        if self._closed or worker is None:
+            self._poll_timer.stop()
+            return
+        while not self._closed and self._worker is worker:
+            try:
+                kind, args = worker.messages.get_nowait()
+            except Empty:
+                return
+            if kind == "progress":
+                self._on_progress(*args)
+            elif kind == "completed":
+                self._on_completed(*args)
+                return  # A finished callback may have started a new worker.
 
     @Slot(str)
     def _on_progress(self, message: str) -> None:
@@ -922,13 +937,14 @@ class AppUpdateController(QObject):
 
     @Slot(object, str)
     def _on_completed(self, result, message: str) -> None:
+        self._poll_timer.stop()
         self._worker = None
         if self._closed:
             return
         if result is not None:
             self._ready_version, self._ready_package = result
         self.finished.emit(message)
-        if result is not None:
+        if result is not None and not self._closed:
             self.ready.emit(self._ready_version)
 
     def prepare_restart(self, arguments: list[str] | None = None) -> bool:
@@ -1057,6 +1073,7 @@ class AppUpdateController(QObject):
 
     def shutdown(self) -> None:
         self._closed = True
+        self._poll_timer.stop()
         if self._worker:
             self._worker.cancelled.set()
             self._worker = None
