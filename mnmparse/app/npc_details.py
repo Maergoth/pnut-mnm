@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, Signal
+from shiboken6 import isValid
 
 from mnmparse.maps import zone_title
 from mnmparse.npc_wiki import ItemDetails, WikiPageMissing, unique_drops_excluding_common
@@ -56,17 +57,25 @@ class NpcDetailsController(QObject):
         view.npc_zone_requested.connect(self.show_notables)
         destroyed = getattr(view, "destroyed", None)
         if destroyed is not None:
-            destroyed.connect(lambda *_args, attached=view: self.detach_map(attached))
+            destroyed.connect(self._map_destroyed)
         for zone, record in tuple(self._notable_records.items()):
             self._present_notables(zone, record, self._notable_status[zone], enrich=False)
 
     def detach_map(self, view: Any) -> None:
         self._map_views = [existing for existing in self._map_views if existing is not view]
+        if not isValid(self) or isinstance(view, QObject) and not isValid(view):
+            return
         for name, callback in (("npc_selected", self.show_npc), ("npc_zone_requested", self.show_notables)):
             try:
                 getattr(view, name).disconnect(callback)
             except (RuntimeError, TypeError):
                 pass  # A QObject can already be in its native destructor.
+
+    def _map_destroyed(self, destroyed: QObject) -> None:
+        # A QObject-bound receiver is disconnected when this controller dies.
+        # The destroyed view no longer needs native signal operations.
+        self._map_views = [view for view in self._map_views
+                           if view is not destroyed and (not isinstance(view, QObject) or isValid(view))]
 
     @staticmethod
     def _key(name: str) -> str:

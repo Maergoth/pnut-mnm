@@ -138,6 +138,18 @@ class NpcDetailsTests(unittest.TestCase):
         self.controller._present_notables("Night Harbor", NotableNpcs("Night Harbor", ("Guard Amber",)), "")
         self.assertEqual(self.map.zones["Night Harbor"][0], ("Guard Amber",))
 
+    def test_map_destroyed_callback_is_disconnected_when_controller_is_deleted_first(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        additional = Map()
+        controller = NpcDetailsController(self.repo, self.panel, additional)
+        self.assertEqual(additional.receivers("2destroyed(QObject*)"), 1)
+        controller.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(additional.receivers("2destroyed(QObject*)"), 0)
+        additional.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
     def wait_done(self):
         self.repo.release.set()
         deadline = time.monotonic() + 3
