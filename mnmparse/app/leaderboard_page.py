@@ -236,7 +236,8 @@ class LeaderboardPage(QWidget):
         self.message_input.setAccessibleName("Message (optional)")
         self.message_input.setPlaceholderText("Share a short message…")
         self.message_input.setToolTip("Included only when you Submit. A submitted daily snapshot cannot be edited.")
-        self.message_input.setMaxLength(MAX_MESSAGE_CHARS)
+        # QLineEdit counts UTF-16 units; the protocol counts Unicode code points.
+        self.message_input.setMaxLength(MAX_MESSAGE_CHARS * 2)
         self.message_input.setClearButtonEnabled(True)
         message_label.setBuddy(self.message_input)
         message_row.addWidget(message_label)

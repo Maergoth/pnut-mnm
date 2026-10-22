@@ -173,15 +173,33 @@ class StatCardTests(unittest.TestCase):
         self.engine.leaderboard_submission.assert_not_called()
 
     def test_message_field_is_bounded_and_not_reused_by_a_new_page(self):
-        self.assertEqual(self.page.message_input.maxLength(), 160)
+        self.assertEqual(self.page.message_input.maxLength(), 320)
         self.assertEqual(self.page.message_input.placeholderText(), "Share a short message…")
-        self.page.message_input.setText("x" * 200)
-        self.assertEqual(len(self.page.message_input.text()), 160)
+        self.page.message_input.setText("x" * 400)
+        self.assertEqual(len(self.page.message_input.text()), 320)
         another = LeaderboardPage(self.engine, None, None)
         try:
             self.assertEqual(another.message_input.text(), "")
         finally:
             another.deleteLater()
+
+    def test_message_limit_accepts_160_emoji_and_rejects_161_ascii_without_truncating(self):
+        self.engine.leaderboard_submission = Mock(return_value=sample(10))
+        self.page.ledger = SimpleNamespace(restore_history=Mock())
+        self.page.client = SimpleNamespace(submission_unavailable="", busy=False, submit=Mock(return_value=True))
+        emoji = "\U0001f409" * 160
+        self.page.message_input.setText(emoji)
+        self.assertEqual(self.page.message_input.text(), emoji)
+        self.assertTrue(self.page.submit_stats())
+        self.engine.leaderboard_submission.assert_called_once_with(message=emoji)
+        self.engine.leaderboard_submission.reset_mock()
+        self.page.client.submit.reset_mock()
+        self.page.message_input.setText("x" * 161)
+        self.assertFalse(self.page.submit_stats())
+        self.assertEqual(self.page.message_input.text(), "x" * 161)
+        self.assertEqual(self.page.message.text(), "Use a message of up to 160 characters.")
+        self.engine.leaderboard_submission.assert_not_called()
+        self.page.client.submit.assert_not_called()
 
     def test_normalization_length_failure_does_not_claim_missing_stats_or_submit(self):
         self.engine.leaderboard_submission = Mock()
