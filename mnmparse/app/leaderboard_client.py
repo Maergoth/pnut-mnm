@@ -16,12 +16,15 @@ from mnmparse.leaderboard import MAX_BYTES, READ_URL, dump_records, parse_record
 from mnmparse.protected_stats import EncryptedFile
 
 
+DEFAULT_SUBMIT_URL = "https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots"
+
+
 class LeaderboardError(ValueError):
     pass
 
 
 def submission_url(value: str | None = None) -> str:
-    value = os.environ.get("PNUT_LEADERBOARD_SUBMIT_URL", "") if value is None else value
+    value = os.environ.get("PNUT_LEADERBOARD_SUBMIT_URL", DEFAULT_SUBMIT_URL) if value is None else value
     if not value:
         return ""
     try:

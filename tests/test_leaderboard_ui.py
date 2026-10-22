@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from mnmparse.app.leaderboard_client import LeaderboardClient, LeaderboardError, submission_url
+from mnmparse.app.leaderboard_client import DEFAULT_SUBMIT_URL, LeaderboardClient, LeaderboardError, submission_url
 from mnmparse.app.leaderboard_page import LeaderboardModel, LeaderboardPage
 from mnmparse.leaderboard import clipboard_text, dump_records, make_snapshot, utc_stamp
 from mnmparse.protected_stats import EncryptedFile
@@ -137,6 +137,31 @@ class ClientTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 submission_url(value)
         self.assertEqual(submission_url("https://example.com/snapshots"), "https://example.com/snapshots")
+
+    def test_public_default_preserves_environment_override_and_explicit_disable(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(submission_url(), DEFAULT_SUBMIT_URL)
+            self.assertEqual(DEFAULT_SUBMIT_URL,
+                             "https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots")
+            self.assertEqual(submission_url(""), "")
+        with patch.dict(os.environ, {"PNUT_LEADERBOARD_SUBMIT_URL": "http://127.0.0.1:8765/snapshots"}):
+            self.assertEqual(submission_url(), "http://127.0.0.1:8765/snapshots")
+            self.assertEqual(submission_url(""), "")
+        with patch.dict(os.environ, {"PNUT_LEADERBOARD_SUBMIT_URL": ""}):
+            self.assertEqual(submission_url(), "")
+
+    def test_default_endpoint_does_not_start_network_or_require_sign_in(self):
+        fetch = Mock()
+        with patch.dict(os.environ, {}, clear=True):
+            client = LeaderboardClient(MemoryFile(), fetch=fetch)
+        try:
+            self.assertEqual(client.endpoint, DEFAULT_SUBMIT_URL)
+            self.assertEqual(client.submission_unavailable, "")
+            self.assertFalse(client.busy)
+            fetch.assert_not_called()
+        finally:
+            client.shutdown()
+            client.deleteLater()
 
     @unittest.skipUnless(os.name == "nt", "Windows user storage")
     def test_real_public_cache_is_not_plaintext(self):
