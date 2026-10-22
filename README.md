@@ -752,8 +752,9 @@ rules, checked against 733 effects read independently in the 2026-10-02 logs:
   identifies who used what (it never counts as damage).
 The spell-school lockout line that follows an interrupt is not counted again.
 
-The [October 10 log audit](docs/log-audit-2026-10-10.md) lists the latest damage, Utility,
-loot and status categorization changes, with the remaining unreadable entries.
+The [October 21 log audit](docs/log-audit-2026-10-21.md) lists the latest pet, effect,
+consider and system-message corrections, with the remaining unreadable entries.
+The [October 10 audit](docs/log-audit-2026-10-10.md) covers earlier damage, Utility and loot changes.
 
 ### Encounters
 

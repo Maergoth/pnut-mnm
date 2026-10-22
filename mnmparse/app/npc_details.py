@@ -12,7 +12,8 @@ from typing import Any
 from PySide6.QtCore import QObject, Qt, Signal
 
 from mnmparse.maps import zone_title
-from mnmparse.npc_wiki import ItemDetails
+from mnmparse.npc_wiki import ItemDetails, WikiPageMissing
+from mnmparse.parser import parse_line
 
 log = logging.getLogger(__name__)
 RECHECK_SECONDS = 300.0
@@ -47,9 +48,16 @@ class NpcDetailsController(QObject):
     def on_message(self, _message: Any, event: Any) -> None:
         if getattr(event, "kind", "") == "consider" and getattr(event, "target", None):
             text = str(getattr(event, "text", "") or "")
-            if (re.search(r"\(PvP\s+Aggro\)", text, re.I)
-                    or re.match(re.escape(event.target) + r"\s+(?:Battle\s+with\s+them\s+would|You\s+would)\b", text, re.I)):
-                return  # The parser also recognizes these explicit player /con forms.
+            if getattr(event, "outcome", None) == "player" or re.search(r"\(PvP\s+Aggro\)", text, re.I):
+                return
+            # Old archived events lack the npc/player marker. Positive current
+            # faction prose (or an article-led NPC corpse) is required even for
+            # those events; an arbitrary target or a bare difficulty is not NPC
+            # evidence. Reparse also rejects unknown text carrying a stale tag.
+            identified = parse_line(text, float(getattr(event, "ts", 0.0) or 0.0))
+            if (identified.kind != "consider" or identified.outcome != "npc"
+                    or self._key(identified.target).casefold() != self._key(event.target).casefold()):
+                return
             self.show_npc(event.target)
 
     def show_npc(self, name: str) -> None:
@@ -100,7 +108,13 @@ class NpcDetailsController(QObject):
         self.panel.set_item_details(item)
 
     def _status(self, kind: str, name: str, cached: Any) -> str:
-        if (kind, name) in self._last_errors:
+        error = self._last_errors.get((kind, name))
+        if error == "page_missing":
+            if cached is not None:
+                return "No wiki page found · showing cached details"
+            label = {"npc": "NPC", "item": "item", "notables": "zone"}[kind]
+            return f"No wiki page found for this {label}"
+        if error:
             return "Wiki unavailable · showing cached details" if cached is not None else "Wiki details unavailable · try again later"
         return "Cached wiki details" if cached is not None else "Loading wiki details…"
 
@@ -158,7 +172,7 @@ class NpcDetailsController(QObject):
             try:
                 result = getattr(self.repo, f"refresh_{kind}")(name)
             except Exception as exc:
-                error = str(exc)
+                error = "page_missing" if isinstance(exc, WikiPageMissing) else "unavailable"
                 log.info("NPC wiki %s lookup for %s: %s", kind, name, exc)
             if not self._closed:
                 try:

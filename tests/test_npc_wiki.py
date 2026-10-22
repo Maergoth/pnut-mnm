@@ -79,6 +79,51 @@ class WikiParserTests(unittest.TestCase):
         self.assertEqual(details.reputation, ("+3 Guardians", "-5 Bandits"))
         self.assertEqual(details.quests, ("Local Quest",))
 
+    def test_mob_variants_keep_stats_and_reputation_scoped(self):
+        # Current rendered mob templates use td labels in mob-stats-box, and
+        # repeat independent sections for each zone on the same wiki page.
+        html = '''<div class="mw-parser-output">
+        <div class="mob-page-wrapper wiki-mob-variant" data-zone="Test Marsh">
+        <table class="mob-stats-box"><tbody>
+        <tr><th colspan="2">a test bat</th></tr>
+        <tr><td class="mob-label">Level</td><td><span class="mob-value">3</span></td></tr>
+        <tr><td class="mob-label">Zone</td><td><a href="/wiki/Test_Marsh">Test Marsh</a></td></tr>
+        </tbody></table>
+        <h3 class="mob-loot-header">Unique Loot</h3><div class="mob-loot-list"><ul>
+        <li><a href="/wiki/Test_Fur">Test Fur</a></li></ul></div>
+        <h3 class="mob-loot-header-common">Common Loot</h3><ul>
+        <li><a href="/wiki/Test_Tooth">Test Tooth</a></li></ul>
+        <h3 class="mob-loot-header-quest">Quest Loot</h3><ul>
+        <li><a href="/wiki/Test_Wing">Test Wing</a></li></ul>
+        <h3 class="mob-factions-header">Reputation Lost</h3><ul><li>None</li></ul>
+        <h3 class="mob-opposing-factions-header">Reputation Gained</h3><ul><li>None</li></ul>
+        </div>
+        <div class="mob-page-wrapper wiki-mob-variant" data-zone="Test Cave">
+        <table class="mob-stats-box"><tbody>
+        <tr><td class="mob-label">Level</td><td>5–7</td></tr>
+        <tr><td class="mob-label">Zone</td><td><a href="/wiki/Test_Cave">Test Cave</a></td></tr>
+        </tbody></table>
+        <h3>Unique Loot</h3><ul><li><a href="/wiki/Test_Fur">Test Fur</a></li>
+        <li><a href="/wiki/Test_Claw">Test Claw</a></li></ul>
+        <h3>Reputation Lost</h3><ul><li>Test Bandits</li></ul>
+        <h3>Reputation Gained</h3><ul><li>Test Wardens</li></ul>
+        </div><p><a href="/wiki/Unrelated_Page">Unrelated page</a></p>
+        <h2>Required by quests</h2><ul><li><a href="/wiki/Test_Quest">Test Quest</a></li></ul>
+        </div>'''
+        details = parse_npc(html, "a test bat")
+        self.assertEqual(details.level, "3 / 5–7")
+        self.assertEqual(details.common_drops, ("Test Tooth",))
+        self.assertEqual(details.unique_drops, ("Test Fur", "Test Claw"))
+        self.assertEqual(details.quests, ("Test Quest",))
+        self.assertEqual(details.reputation, ("Lost: Test Bandits", "Gained: Test Wardens"))
+
+    def test_quest_loot_is_not_a_required_quest(self):
+        details = parse_npc('''<p>Level: 1</p><h3>Quest Loot</h3><ul>
+        <li><a href="/wiki/Test_Token">Test Token</a></li></ul>''', "Example")
+        self.assertEqual(details.quests, ())
+        self.assertEqual(details.unique_drops, ())
+        self.assertEqual(details.common_drops, ())
+
     def test_quest_table_retains_quest_name_and_ignores_level_column(self):
         html = '''<h2>Required by quests</h2><table>
         <tr><th>Quest</th><th>Level</th></tr>
@@ -182,6 +227,33 @@ class WikiParserTests(unittest.TestCase):
         with self.assertRaises(WikiDataError):
             parse_notables('<h2>NPCs</h2><a href="/wiki/A_rat">A rat</a>', "Test Zone")
 
+    def test_notables_labelled_row_inside_nested_layout_tables(self):
+        html = '''<div class="mw-parser-output"><table><tbody><tr><td>
+        <table class="zoneTopTable"><tbody><tr><td><table class="zoneTopTable">
+        <tr><th><b>Level:</b></th><td>1–50</td></tr>
+        <tr><th><b>Notable NPCs:</b></th><td>
+        <a href="/wiki/Test_Keeper">Test Keeper</a>,
+        <a href="/wiki/A_test_captain">a test captain</a></td></tr>
+        <tr><th>Unique Items:</th><td><a href="/wiki/Test_Signet">Test Signet</a></td></tr>
+        <tr><th>Related Quests:</th><td><a href="/wiki/Test_Quest">Test Quest</a></td></tr>
+        </table></td></tr></tbody></table></td>
+        <td><a href="/wiki/Map_Key">Map Key</a></td></tr></tbody></table>
+        <h3>NPCs</h3><ul><li><a href="/wiki/A_common_bat">A common bat</a></li></ul></div>'''
+        self.assertEqual(parse_notables(html, "Test Zone").names, ("Test Keeper", "A test captain"))
+        empty = '<table><tr><th>Notable NPCs:</th><td>None known</td></tr></table>'
+        self.assertEqual(parse_notables(empty, "Test Zone").names, ())
+
+    def test_named_npc_table_header_selects_names_without_adding_stat_headers(self):
+        html = '''<table><tr><th>Named NPCs</th><th>Race</th><th>Class</th>
+        <th>Level</th><th>Location</th><th>Known Loot</th><th>Description</th></tr>
+        <tr><td><a href="/wiki/Test_Keeper">Test Keeper</a></td><td>Human</td>
+        <td>Warrior</td><td>10</td><td><a href="/wiki/Test_Tower">Test Tower</a></td>
+        <td><a href="/wiki/Test_Signet">Test Signet</a></td><td>Example</td></tr>
+        <tr><th>Common NPCs</th><th>Level</th></tr>
+        <tr><td><a href="/wiki/A_common_bat">A common bat</a></td><td>1</td></tr></table>'''
+        self.assertEqual(parse_notables(html, "Test Zone").names, ("Test Keeper",))
+        self.assertEqual(parse_notables('<h2>Notable NPCs</h2>' + html, "Test Zone").names, ("Test Keeper",))
+
     def test_titles_are_encoded_and_do_not_become_paths(self):
         self.assertTrue(wiki_url("Test Keeper's Ring").endswith("Test_Keeper%27s_Ring"))
         with tempfile.TemporaryDirectory() as temp:
@@ -219,6 +291,30 @@ class WikiCacheTests(unittest.TestCase):
         self.assertEqual(api.call_count, 1)
         self.assertEqual(api.call_args.args[0]["action"], "query")
 
+    def test_old_parser_cache_stays_readable_but_reparses_unchanged_wiki_once(self):
+        expected = self.seed_npc()
+        path = self.repo._path("npc", "Test Keeper")
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        envelope.pop("parser_version")
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        with patch.object(npc_wiki, "_api", side_effect=AssertionError("cache reads must remain offline")):
+            self.assertEqual(self.repo.cached_npc("Test Keeper"), expected)
+        before = path.read_bytes()
+        with patch.object(npc_wiki, "_api", side_effect=URLError("offline")):
+            with self.assertRaises(OSError):
+                self.repo.refresh_npc("Test Keeper")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.repo.cached_npc("Test Keeper"), expected)
+        changed = NPC_HTML.replace("12–15", "17")
+        with patch.object(npc_wiki, "_api", side_effect=[revision(), parsed(changed)]) as api:
+            refreshed = self.repo.refresh_npc("Test Keeper")
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(refreshed.level, "17")
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["parser_version"], npc_wiki.PARSER_VERSION)
+        with patch.object(npc_wiki, "_api", return_value=revision()) as api:
+            self.assertEqual(self.repo.refresh_npc("Test Keeper"), refreshed)
+        self.assertEqual(api.call_count, 1)
+
     def test_canonical_only_cache_serves_consider_article_offline(self):
         expected = self.seed_npc()
         with patch.object(npc_wiki, "_api", side_effect=AssertionError("cache reads must be offline")):
@@ -231,7 +327,24 @@ class WikiCacheTests(unittest.TestCase):
         with patch.object(npc_wiki, "_api", side_effect=[revision(touched="2026-10-21T12:00:00Z"), parsed(changed)]) as api:
             self.assertEqual(self.repo.refresh_npc("Test Keeper").level, "13–16")
         self.assertEqual(api.call_count, 2)
-        self.assertEqual(api.call_args.args[0]["oldid"], 42)
+        self.assertEqual(api.call_args.args[0]["page"], "Test Keeper")
+        self.assertEqual(api.call_args.args[0]["prop"], "text|revid")
+        self.assertNotIn("oldid", api.call_args.args[0])
+
+    def test_parse_requests_revision_and_rejects_text_only_response(self):
+        with patch.object(npc_wiki, "_api", side_effect=[revision(), {"parse": {"title": "Test Keeper", "text": NPC_HTML}}]) as api:
+            with self.assertRaises(WikiDataError):
+                self.repo.refresh_npc("Test Keeper")
+        self.assertEqual(api.call_args.args[0]["prop"], "text|revid")
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_first_letter_normalization_preserves_rest_of_npc_title(self):
+        meta = revision("A test bat")
+        meta["query"]["normalized"] = [{"from": "a test bat", "to": "A test bat"}]
+        with patch.object(npc_wiki, "_api", side_effect=[meta, parsed(title="A test bat")]) as api:
+            details = self.repo.refresh_npc("a test bat")
+        self.assertEqual(details.name, "A test bat")
+        self.assertEqual(api.call_args.args[0]["page"], "A test bat")
 
     def test_changed_revision_updates_atomic_disk_record(self):
         self.seed_npc()
@@ -283,6 +396,27 @@ class WikiCacheTests(unittest.TestCase):
             with self.assertRaises(WikiDataError):
                 self.repo.refresh_npc("Unknown")
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_explicit_missing_page_is_distinct_from_malformed_metadata(self):
+        missing = {"query": {"pages": [{"title": "Unknown", "missing": True, "ns": 0}]}}
+        with patch.object(npc_wiki, "_api", return_value=missing):
+            with self.assertRaises(npc_wiki.WikiPageMissing):
+                self.repo.refresh_npc("Unknown")
+        article_missing = {"query": {"pages": [{"title": "A Unknown", "missing": True}, {"title": "Unknown", "missing": True}]}}
+        with patch.object(npc_wiki, "_api", return_value=article_missing):
+            with self.assertRaises(npc_wiki.WikiPageMissing):
+                self.repo.refresh_npc("a Unknown")
+        for response in ({"query": {}}, {"query": {"pages": []}}, {"query": {"pages": [{"title": "Other", "missing": True}]}}):
+            with self.subTest(response=response), patch.object(npc_wiki, "_api", return_value=response):
+                with self.assertRaises(WikiDataError) as caught:
+                    self.repo.refresh_npc("Unknown")
+                self.assertNotIsInstance(caught.exception, npc_wiki.WikiPageMissing)
+        # Do not call an NPC unpublished if a requested articleless candidate
+        # was omitted by a malformed response rather than confirmed missing.
+        with patch.object(npc_wiki, "_api", return_value=missing):
+            with self.assertRaises(WikiDataError) as caught:
+                self.repo.refresh_npc("a Unknown")
+        self.assertNotIsInstance(caught.exception, npc_wiki.WikiPageMissing)
 
     def test_old_api_response_shapes_are_supported(self):
         meta = revision()

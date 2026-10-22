@@ -11,6 +11,8 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from mnmparse.app.npc_details import NpcDetailsController
+from mnmparse.npc_wiki import WikiPageMissing
+from mnmparse.parser import parse_line
 
 
 class Panel(QObject):
@@ -67,6 +69,8 @@ class Repository:
     def _refresh(self, kind, name, records):
         self.calls.append((kind, name))
         self.release.wait(3)
+        if isinstance(self.error, Exception):
+            raise self.error
         if self.error:
             raise OSError("wiki offline")
         return records.get(name)
@@ -109,7 +113,7 @@ class NpcDetailsTests(unittest.TestCase):
 
     def test_cached_details_display_before_network_and_considers_deduplicate(self):
         cached = self.repo.npcs["a rat"] = npc("a rat")
-        event = SimpleNamespace(kind="consider", target="a rat")
+        event = parse_line("a rat seems indifferent to your presence.", 0)
         for _ in range(5):
             self.controller.on_message(None, event)
         self.assertIs(self.panel.details, cached)
@@ -181,13 +185,85 @@ class NpcDetailsTests(unittest.TestCase):
         self.assertEqual(self.panel.items["Old Staff"].source, canonical.source)
 
     def test_explicit_player_considers_do_not_request_npc_pages(self):
-        from mnmparse.parser import parse_line
         for line in ("Gozif Battle with them would be risky.",
                      "Gozif You would emerge victorious.",
+                     "Birch They look weak. You would likely emerge victorious in battle with them.",
+                     "birch--They look weak. You would likely emerge victorious in battle with them.",
                      "You would almost certainly be crushed by them in battle. (PvP Aggro)"):
             self.controller.on_message(None, parse_line(line, 0))
         self.assertEqual(self.panel.name, "")
         self.assertFalse(self.repo.calls)
+
+    def test_named_faction_consider_and_legacy_event_use_positive_npc_identity(self):
+        cached = self.repo.npcs["Guard Amber"] = npc("Guard Amber")
+        text = ("Guard Amber considers you with kindness -- Would you like to die? "
+                "You would almost certainly be defeated in battle.")
+        event = parse_line(text, 0)
+        self.assertEqual(event.outcome, "npc")
+        self.controller.on_message(None, event)
+        self.assertEqual(self.panel.name, "Guard Amber")
+        self.assertIs(self.panel.details, cached)
+        self.controller.on_message(None, SimpleNamespace(kind="consider", target="Guard Amber", text=text))
+        self.wait_done()
+        self.assertEqual(self.repo.calls.count(("npc", "Guard Amber")), 1)
+
+    def test_unknown_or_mismatched_considers_never_lookup_even_with_stale_npc_marker(self):
+        for event in (
+            SimpleNamespace(kind="consider", target="Guard Amber"),
+            SimpleNamespace(kind="consider", target="Guard Amber", text="Guard Amber unexplained prose.", outcome="npc"),
+            SimpleNamespace(kind="consider", target="Guard Amber", text="Guard Amber You would emerge victorious.", outcome="npc"),
+            SimpleNamespace(kind="consider", target="Guard Amber", text="Guard Birch considers you with kindness."),
+            parse_line('Aster says, "Guard Amber considers you with kindness."', 0),
+            parse_line("Birch is dead. Their corpse will decay in 5 days and 19 hours.", 0),
+        ):
+            with self.subTest(event=event):
+                self.controller.on_message(None, event)
+        self.assertEqual(self.panel.name, "")
+        self.assertFalse(self.controller._pending)
+        self.assertFalse(self.repo.calls)
+
+    def test_missing_page_is_distinct_from_outage_and_preserves_cached_details(self):
+        self.repo.error = WikiPageMissing("confirmed missing")
+        self.controller.show_npc("Guard Amber")
+        self.wait_done()
+        self.assertEqual(self.panel.status, "No wiki page found for this NPC")
+        self.assertIsNone(self.panel.details)
+        self.assertEqual(self.controller._last_errors[("npc", "Guard Amber")], "page_missing")
+        cached = self.repo.npcs["Guard Birch"] = npc("Guard Birch")
+        self.controller.show_npc("Guard Birch")
+        self.wait_done()
+        self.assertIs(self.panel.details, cached)
+        self.assertEqual(self.panel.status, "No wiki page found · showing cached details")
+
+    def test_missing_item_and_zone_labels_are_specific(self):
+        self.repo.error = WikiPageMissing("confirmed missing")
+        self.controller.show_item("Example Staff")
+        self.controller.show_notables("Night Harbor")
+        self.wait_done()
+        self.assertEqual(self.panel.items["Example Staff"], "No wiki page found for this item")
+        self.assertEqual(self.map.zones["Night Harbor"], ((), "No wiki page found for this zone"))
+
+    def test_success_after_error_clears_unavailable_and_retains_cached_first_presentation(self):
+        for name, error in (("Guard Amber", OSError("offline")),
+                            ("Guard Birch", WikiPageMissing("confirmed missing"))):
+            with self.subTest(error=type(error).__name__):
+                self.repo.error = error
+                self.controller.show_npc(name)
+                self.wait_done()
+                self.assertIsNone(self.panel.details)
+                self.assertTrue(self.panel.status)
+                self.assertIn(("npc", name), self.controller._last_errors)
+                self.repo.error = False
+                fresh = self.repo.npcs[name] = npc(name, level="7")
+                self.controller._next_check[("npc", name)] = 0
+                self.repo.release.clear()
+                self.controller.show_npc(name)
+                self.assertIs(self.panel.details, fresh)
+                self.assertIn("cached", self.panel.status)
+                self.wait_done()
+                self.assertIs(self.panel.details, fresh)
+                self.assertEqual(self.panel.status, "")
+                self.assertNotIn(("npc", name), self.controller._last_errors)
 
     def test_hover_promotes_queued_prefetch_without_duplicate(self):
         self.controller._started = True  # Hold workers to reproduce a slow backlog.

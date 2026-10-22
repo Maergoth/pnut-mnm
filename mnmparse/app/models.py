@@ -400,6 +400,10 @@ def _skill_key(ev: Event) -> str:
     return skill if skill else MELEE_SKILL
 
 
+def _is_fade(ev: Event) -> bool:
+    return ev.kind == "cc_fade" or (ev.kind == "status" and ev.outcome == "fade")
+
+
 def _accumulate(
     events: list[Event], canon: dict[str, str], trace: list[dict[str, Any]] | None = None, *, vocab: Any = None,
     utility_credited: set[int] | None = None,
@@ -613,6 +617,8 @@ def _accumulate(
             debuff_lines.append((float(ev.ts), canon.get(ev.target, ev.target) if ev.target else None, ev.outcome))
     for idx, ev in enumerate(events):
         resolve_due(float(ev.ts), idx)
+        if _is_fade(ev):
+            continue
         if ev.kind == "cast" and ev.actor:
             began[canon.get(ev.actor, ev.actor)] = (float(ev.ts), idx)
         if ev.kind in ("status", "ability_hit", "ability_partial", "ability_miss", "melee_miss", "melee_hit", "cast") and ev.skill:
@@ -651,7 +657,10 @@ def _accumulate(
         if ev.kind == "cc":
             victim = canon.get(ev.target, ev.target) if ev.target else None
             get(ev.target)
-            if ev.outcome:
+            # Webs identify an item effect, not its caster. An unrelated Root
+            # attempt cannot explain this result, and no successful source line
+            # has been observed from which to attribute it safely.
+            if ev.outcome and ev.skill != "webs":
                 pending.append((float(ev.ts), idx, "cc", ev.outcome, victim, (ev.skill or "").lower() or None, None))
             continue
         if ev.kind in DAMAGE_KINDS:
@@ -754,7 +763,7 @@ def _credit_default_utility(
             if actor != target:
                 combatants.update((actor, target))
     for idx, ev in enumerate(events):
-        if ev.kind != "status" or not ev.actor or not ev.target or not ev.skill or idx in credited_actions:
+        if ev.kind != "status" or _is_fade(ev) or not ev.actor or not ev.target or not ev.skill or idx in credited_actions:
             continue
         actor, target = canon.get(ev.actor, ev.actor), canon.get(ev.target, ev.target)
         key = canonical_skill(ev.skill)

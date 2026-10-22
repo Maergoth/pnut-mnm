@@ -152,6 +152,7 @@ CC_OUTCOMES: dict[str, str] = {
     "bound": "root",  # "You are bound by a net shot."
     "adhere": "root",  # "X adheres to the ground."
     "unstuck": "root",  # "X comes unstuck." (the cc_fade of the line above)
+    "anchored": "root",  # "X is anchored to the ground by webs."
     "silenced": "silence",
     "snared": "snare",
     "slowed": "snare",  # "You are slowed by a snaring shot."
@@ -195,8 +196,12 @@ that introduce the rest of a sentence (``with their bow``, ``for 3 points``,
 ``but they absorb``) can never be part of the name. An NPC's unnamed pet
 (``a Bloodynose frightener's pet``) is a distinct combatant."""
 
-NAME: str = rf"(?:{PLAYER}|{NPC})"
-"""Either name form.  Reused as the actor and target sub-pattern."""
+NAME: str = rf"(?:{PLAYER}(?:'s\s+pet)?|{NPC})"
+"""Either name form, including a bare named combatant's unnamed pet.
+
+The literal ``'s pet`` remains part of that separate actor's name. It does not
+identify the viewer's pet or imply a saved pet ownership assignment.
+"""
 
 _POSSESSIVE: str = rf"(?P<actor>Your|{NAME}'s(?!\s+pet\b))"
 """``Your <Skill>`` or ``<Name>'s <Skill>``.  The ``'s`` is mandatory: with it optional,
@@ -211,6 +216,34 @@ _COIN_PART: str = r"[\dIlO|]+\s+(?:platinum|gold|silver|copper)(?:\s+coins?)?"
 _MULTI_COIN: str = rf"{_COIN_PART}(?:,?\s+(?:and\s+)?{_COIN_PART})+"
 _TAIL: str = r"""\s*[.!?,:;'"\-]*\s*$"""
 _SENTENCE_END: str = r"\s*[.!?]+\s*$"
+# A faction reaction identifies an NPC even when its proper name resembles a
+# player. Difficulty alone after a bare name is the player /consider form.
+_CON_REACTION: str = (
+    r"(?:considers\s+you\s+with\s+kindness"
+    r"|(?:seethes|scowls)\s+at\s+you(?:,?\s+ready\s+to\s+(?:strike|attack))?"
+    r"|glares\s+at\s+you(?:\s+threateningly)?"
+    r"|glowers\s+at\s+you(?:\s+dubiously)?"
+    r"|regards\s+at\s+you(?:\s+indifferently)?"
+    r"|looks\s+at\s+you(?:\s+(?:apprehensively|amiably))?"
+    r"|seems\s+indifferent\s+to\s+your\s+presence"
+    r"|views\s+you\s+as\s+a\s+threat|appears\s+uneasy\s+with\s+you)"
+)
+_CON_DIFFICULTY: str = (
+    r"(?:Would\s+you\s+like\s+to\s+die"
+    r"|You\s+would\s+(?:(?:almost\s+certainly|probably|likely)\s+)?"
+    r"(?:be\s+(?:defeated|crushed)(?:\s+by\s+them)?(?:\s+in\s+battle)?"
+    r"|emerge\s+victorious(?:\s+in\s+battle(?:\s+with\s+them)?)?|stand\s+a\s+fair\s+chance\s+in\s+battle)"
+    r"|It\s+might\s+prove\s+to\s+be\s+a\s+diffi?cult\s+battle"
+    r"|Battle(?:\s+with\s+them)?\s+would\s+be\s+(?:(?:quite\s+)?risky|fairly\s+in\s+your\s+favor|as\s+close\s+to\s+even\s+as\s+you\s+can\s+get)"
+    r"|They\s+look\s+weak|What\s+would\s+you\s+like\s+your\s+tombstone\s+to\s+say)"
+)
+_CON_BETWEEN: str = r"(?:\s*--\s*|\s*[.!?,:;]+\s*|\s+)"
+_CON_DIFFICULTY_TAIL: str = rf"(?:{_CON_BETWEEN}{_CON_DIFFICULTY}){{0,1}}\s*[.!?]*\s*(?:\(PvP\s+Aggro\))?{_TAIL}"
+# Lowercase player spellings occur here, but '--' must remain the separator
+# rather than becoming punctuation inside a name. Further title/name words
+# keep their usual capitalization, so difficulty prose cannot become a target.
+_CON_PLAYER: str = rf"[A-Za-z]+(?:[-'][A-Za-z]+)*(?:\s+{PLAYER_WORD}){{0,2}}?"
+_CON_NPC: str = rf"(?:{NAME}|{PLAYER_WORD}\s+the\s+{PLAYER_WORD})"
 _NOT_FUNCTION_WORD: str = (
     r"(?!(?:in|at|to|on|of|with|from|for|by|and|but|is|are|was|has|have|the|a|an)\b)"
 )
@@ -233,6 +266,11 @@ _ABILITY_VERBS: str = (
 )
 """Verbs seen between an ability name and its target: ``hits`` for most, ``bleeds`` for
 damage-over-time ticks (``X's Barbed Arrow bleeds Y for 3 points of Bleed Damage.``)."""
+
+_EFFECT_SKILL: str = (
+    r"[A-Z][A-Za-z']*(?:\s+(?:[A-Z][A-Za-z']*|of|the|versus|and|to|a|an|in|on|for|from|with|at|by)){0,7}"
+)
+"""A named effect in a wear-off notice, without swallowing another sentence."""
 
 _NPC_GREEDY: str = rf"(?:a|an|the)\s+{NPC_WORD}(?:\s+{NPC_WORD})*"
 """An NPC name with no stop words (for the status catch-all, where the sentence shape
@@ -291,22 +329,31 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("personal", rf"^Unknown\s+command:\s+\S+{_TAIL}"),
     # A trade confirmation reports outgoing money, never coin looted or received.
     ("personal", rf"^(?P<actor>You)\s+give\s+{_AMOUNT}\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+as\s+part\s+of\s+the\s+trade{_TAIL}"),
+    # Manual redistribution moves money already held; neither amount is new loot
+    # or a wrapped corpse split to attach to an earlier coin announcement.
+    ("personal", rf"^(?P<actor>You)\s+(?P<outcome>split)\s+{_AMOUNT}\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+with\s+your\s+party,\s+and\s+receive\s+\d+\s+(?:platinum|gold|silver|copper)\s+coins?\s+as\s+your\s+split{_TAIL}"),
     # no experience for the viewer from this kill (outcome "too high level")
     ("personal", r"^Someone\s+in\s+your\s+party\s+is\s+(?P<outcome>too\s+high\s+level)\s+for\s+you\s+to\s+receive\s+experience\b.*$"),
     ("personal", rf"^You\s+harvest\s+[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)JlI|]?(?:\s*[lI1|])?{_TAIL}"),
     ("personal", r"^(?:Your\s+camp\s+will\s+be\s+prepared\s+in|You\s+cannot\s+invite|You\s+have\s+not\s+received\s+any\s+tells|No\s+ability\s+memorized\s+in\s+Gem)\b.*$"),
     # /who: "Players in Monsters & Memories" + "There are 35 players in Shaded Dunes who match your search."
-    ("personal", r"^(?:Players\s+in\s+Monsters\b|There\s+(?:are|is)\s+\d+\s+players?\s+in\s+.+?\s+who\s+match\b).*$"),
+    ("personal", rf"^Players\s+in\s+Monsters\s+(?:&|and)\s+Memories{_TAIL}"),
+    # The count can contain OCR I/l/O glyphs; it is navigation text, never an
+    # amount. Require the complete summary so a following combat line can split.
+    ("personal", rf"^There\s+(?:are|is)\s+[\dIlO|]+\s+players?\s+in\s+.+?\s+who\s+match\s+your\s+search{_TAIL}"),
+    # Everything after this explicit header is the guild's authored message.
+    ("personal", r"^GUILD\s+MOTD\s*:.*$"),
     # ---- CHAT shown in the Combat window: "Mayana says, "Hail!"" / "You say, "Hail, Mayana."" --
     ("chat", rf"""^(?P<actor>You|{NAME})\s+(?:says|say|sav)\s*[,.:;]\s*["'].*$"""),
     # ---- CONSIDER / NPC taunt text shown to the viewer ----------------------------------
-    ("consider", rf"^(?P<target>{NAME})\s+(?:(?:seethes|glares|glowers|scowls|regards|looks)\s+at\s+you|seems\s+indifferent\s+to\s+your\s+presence|views\s+you\s+as\s+a\s+threat|appears\s+uneasy\s+with\s+you)\b.*$"),
-    # a player: "Gozif Battle with them would be quite risky." / "Gozif You would probably be defeated by them in battle."
-    ("consider", rf"^(?P<target>{PLAYER})\s+(?:Battle\s+with\s+them\s+would|You\s+would\s+(?:\w+\s+){{0,3}}(?:be\s+defeated|emerge\s+victorious))\b.*$"),
-    ("consider", r"^(?:Would\s+you\s+like\s+to\s+die|You\s+would\s+(?:\w+\s+){0,2}be\s+defeated|be\s+defeated\s+in\s+battle|Battle\s+with\s+them\s+would|What\s+would\s+you\s+like\s+your\s+tombstone)\b.*$"),
-    ("consider", rf"^You\s+would\s+almost\s+certainly\s+be\s+crushed\s+by\s+them\s+in\s+battle[.!]?\s*\(PvP\s+Aggro\){_TAIL}"),
+    ("consider", rf"^(?P<target>{_CON_NPC})\s+(?P<npc_reaction>{_CON_REACTION})(?:{_CON_BETWEEN}{_CON_DIFFICULTY}){{0,2}}{_TAIL}"),
+    ("consider", rf"^{_CON_DIFFICULTY}{_CON_DIFFICULTY_TAIL}"),
+    # Only this direct-difficulty rule permits lowercase player-name spelling.
+    # It precedes 'looks weak' debuffs so 'birch They look weak' is not a victim
+    # called 'birch They'. A lost '--' separator does not change its meaning.
+    ("consider", rf"^(?P<target>{_CON_PLAYER}){_CON_BETWEEN}(?P<player_difficulty>{_CON_DIFFICULTY}){_CON_DIFFICULTY_TAIL}"),
     # a corpse: "Gozif is dead. Their corpse will decay in 5 days and 19 hours."
-    ("consider", rf"^(?P<target>{NAME})\s+is\s+dead\W+Their\s+corpse\s+will\s+decay\b.*$"),
+    ("consider", rf"^(?P<target>{NAME})\s+(?P<corpse>is\s+dead\W+Their\s+corpse\s+will\s+decay\b.*)$"),
     # ---- ZONE changes --------------------------------------------------------------------
     ("zone", r"^(?:Entering|You\s+have\s+entered)\s+(?P<target>.+?)\.?$"),
     ("zone", r"^Loading,?\s+please\s+wait\b.*$"),
@@ -340,6 +387,7 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("cc_fade", rf"^(?P<target>{NAME})\s+comes?\s+(?P<outcome>unstuck){_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>{_CC_WORDS})(?:\s+to\s+the\s+ground)?(?:\s+by\s+(?P<skill>[a-z][a-z' ]+?))?{_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?P<outcome>adhere)s?\s+to\s+the\s+ground{_TAIL}"),
+    ("cc", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>anchored)\s+to\s+the\s+ground\s+by\s+(?P<skill>webs){_TAIL}"),
     # ---- CANNOT ATTACK (not a miss) -------------------------------------
     ("cannot_attack", rf"^(?P<actor>{NAME})\s+(?:try|tries)\s+to\s+attack\s*[,.]?\s*but\s+(?P<outcome>[^.!?]+?){_TAIL}"),
     ("cannot_attack", rf"^You\s+(?P<outcome>must\s+face\s+your\s+target|must\s+be\s+able\s+to\s+see\s+your\s+target|need\s+a\s+target)\s+to\s+use\s+that\s+ability[lI1|]?{_TAIL}"),
@@ -372,10 +420,16 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("cast", rf"^(?P<actor>{NAME})\s+(?P<skill>smash)es\s+the\s+[gz]round\b.*$"),
     ("interrupt", rf"^{_POSSESSIVE}\s+(?:casting|spell)\s+(?:is|was|has\s+been)\s+interrupted{_TAIL}"),
     # ---- STATE / STATUS (never damage or HP healing) --------------------
+    # These results name a victim, but do not identify a successful caster/ability.
+    ("status", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>weakened\s+by\s+poison|marked\s+with\s+holy\s+runes){_TAIL}"),
+    # Expiration is never a fresh cast, landed debuff, or utility action.
+    ("status", rf"^{_POSSESSIVE}\s+(?P<skill>{_EFFECT_SKILL})\s+(?P<outcome>wears?\s+off)(?:\s+of\s+(?P<target>{NAME}|you|yourself))?{_TAIL}"),
+    # An attack announcement names its target, but reports no hit, damage or taunt.
+    ("status", rf"^(?P<actor>{NPC})\s+screeches\s+as\s+it\s+swoops\s+in\s+to\s+attack\s+(?P<target>{NAME}){_TAIL}"),
     ("status", rf"^{_POSSESSIVE}\s+(?P<skill>.+?)\s+restores\s+{_AMOUNT}\s+of\s+their\s+(?P<dtype>Mana){_TAIL}"),
     ("status", rf"^(?P<actor>You|{PLAYER})\s+throws?\s+the\s+dice[.!]\s+Between\s+[\dO]+\s+and\s+\d+,\s+(?:you|they)\s+(?P<outcome>roll)\s+a\s+{_AMOUNT}{_TAIL}"),
     # Hardcore broadcasts are separate from character XP levels and combat deaths.
-    ("status", rf"^(?P<actor>{PLAYER})\s+is\s+now\s+Hardcore\s+Level\s+{_AMOUNT}{_TAIL}"),
+    ("status", rf"^(?P<actor>{PLAYER})\s+is\s+now\s+Hardcore\s+Level\s+(?P<hardcore_level>\d+(?:\s+\d+)*){_TAIL}"),
     ("status", rf"^(?P<actor>{PLAYER})\s+has\s+died\s+and\s+joined\s+the\s+Heroes\s+of\s+Hardcore[.!]?\s*\(Level\s+{_AMOUNT}\){_TAIL}"),
     ("status", rf"^(?:Starting\s+to\s+attack|Stopped\s+attacking){_TAIL}"),
     ("status", rf"^(?P<actor>{NAME})\s+(?P<skill>dispel)s?\s+magic\s+from\s+(?P<target>you|{NAME})(?:\s*[.!]?\s*\((?P<outcome>[^()]+)\))?{_TAIL}"),

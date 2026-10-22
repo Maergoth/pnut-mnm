@@ -369,7 +369,8 @@ def _build(kind: str, m: re.Match[str], text: str, ts: float, player_name: str) 
         target = map_player(raw_target, player_name)
 
     skill = _clean(g.get("skill"))
-    if skill and kind in _VERB_SKILL_KINDS and skill.islower() and " " not in skill:
+    fade = kind == "status" and _clean(g.get("outcome")) in ("wears off", "wear off")
+    if skill and kind in _VERB_SKILL_KINDS and not fade and skill.islower() and " " not in skill:
         skill = lemmatize(skill)
 
     dtype = _clean(g.get("dtype"))
@@ -404,6 +405,11 @@ def _build(kind: str, m: re.Match[str], text: str, ts: float, player_name: str) 
         amount = amount or 1
     elif kind == "level_up":
         amount = _level(g.get("level"))
+    elif kind == "status" and g.get("hardcore_level"):
+        # This broadcast's observed "1 1" is one score, not a character XP
+        # level. Its rule admits digits/spaces only, so malformed values stay
+        # unread rather than being guessed by general number repair.
+        amount = int("".join(g["hardcore_level"].split()))
 
     outcome = _clean(g.get("outcome"))
     if kind in ("melee_hit", "ability_hit"):
@@ -432,8 +438,15 @@ def _build(kind: str, m: re.Match[str], text: str, ts: float, player_name: str) 
         outcome = DEBUFF_OUTCOMES.get((outcome or "").lower(), outcome)
     elif kind == "damage_effect":
         outcome = DAMAGE_EFFECT_OUTCOMES.get((outcome or "").lower(), outcome)
+    elif kind == "consider":
+        if g.get("npc_reaction"):
+            outcome = "npc"
+        elif g.get("player_difficulty"):
+            outcome = "player"
+        elif g.get("corpse") and re.fullmatch(NPC, raw_target or ""):
+            outcome = "npc"  # A bare named corpse could still be a player.
     elif kind in ("personal", "status") and outcome:
-        outcome = outcome.lower()  # "YOU are temporarily IMMUNE to ..." -> "immune"
+        outcome = "fade" if fade else outcome.lower()  # "YOU are temporarily IMMUNE to ..." -> "immune"
 
     return Event(
         ts=ts,
@@ -616,6 +629,7 @@ _FUSED_NAME_RX = re.compile(
 )
 _SKILL_KINDS = frozenset({"ability_hit", "ability_miss", "heal", "cast", "resist", "debuff"})
 _SPLIT_CANDIDATE_RX = re.compile(r"(?<=\S)\s+(?=\S)")
+_GUILD_MOTD_RX = re.compile(r"^GUILD\s+MOTD:\s*\S")
 
 
 def parse_garbled_amount(text: str, ts: float, player_name: str = "") -> Event | None:
@@ -692,15 +706,29 @@ def split_fused(text: str, player_name: str = "", *, depth: int = 2) -> list[str
     """
     if depth <= 0 or not text:
         return [text]
+    ev = parse_line(text, 0.0, player_name)
+    # Chat and guild notices contain arbitrary player-written text. Experience
+    # and combat words inside that payload never establish separate events.
+    if ev.kind == "chat" or _GUILD_MOTD_RX.match(normalize_ocr(text)):
+        return [text]
     forced = _FORCED_SPLIT_RX.search(text)
     if forced is not None:
         # a message that always starts a new one, whatever the first part parsed as: "Your
         # faction standing with X cannot possibly get a You gain party experience!"
         left, right = text[: forced.start()].strip(), text[forced.end():].strip()
         return [*split_fused(left, player_name, depth=depth), *split_fused(right, player_name, depth=depth)]
-    ev = parse_line(text, 0.0, player_name)
     if ev.kind not in ("unknown", "ability_partial") and not looks_fused(ev):
         return [text]
+    # A complete consider can contain two difficulty sentences and a literal
+    # '--'. Prefer its longest clean prefix before splitting the following real
+    # message, so internal con clauses do not exhaust the bounded split depth.
+    for m in reversed(tuple(_SPLIT_CANDIDATE_RX.finditer(text))):
+        left, right = text[: m.start()].strip(), text[m.end():].strip()
+        if len(left) < 12 or not starts_message(right):
+            continue
+        considered = parse_line(left, 0.0, player_name)
+        if considered.kind == "consider" and not looks_fused(considered):
+            return [left, *split_fused(right, player_name, depth=depth - 1)]
     for m in _SPLIT_CANDIDATE_RX.finditer(text):
         left, right = text[: m.start()].strip(), text[m.end():].strip()
         if len(left) < 12 or not starts_message(right):
