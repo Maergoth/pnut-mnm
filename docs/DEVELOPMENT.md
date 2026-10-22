@@ -41,6 +41,16 @@ eight resists, each from one complete observation. The local ledger keeps indepe
 per-stat records and capture timestamps. Fresh current readings are submitted, never a
 combination of local maxima. Keep records out of session state, configuration and logs.
 
+Schema 2 also includes the optional canonical public message. Normalize and censor it
+before signing; adapters validate it without rewriting a signed payload. Python's
+ASCII JSON encoding and Worker signing bytes must agree for emoji and non-ASCII text.
+The 160-character message limit counts Unicode code points, rather than UTF-16 units.
+
+Coordinate the desktop and upload-service rollout before publishing schema-2 rows.
+The old 1.0.24 desktop's strict public-file reader cannot refresh a file containing
+schema 2, although its cached entries remain available. New readers preserve legacy
+signed rows unchanged. Preparing a desktop PR does not deploy the hosted Worker.
+
 For development, set `PNUT_LEADERBOARD_SUBMIT_URL=https://YOUR-SERVICE/snapshots`;
 an empty override disables Submit. HTTP is accepted only on localhost/loopback for
 local service tests. Redirects, credentials and query-string secrets are rejected.
