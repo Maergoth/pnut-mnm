@@ -1,6 +1,7 @@
 """The weight warning shares passive edge rendering and the mini-stat options."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import replace
 import os
 import unittest
@@ -112,6 +113,7 @@ class OverburdenedUiTests(unittest.TestCase):
         from mnmparse.app.settings_highlight import SettingsHighlight
 
         host = self.fixture.bootstrap(Config(reduced_motion=True))
+        host._read_area_gears.shutdown()
         helper = Mock()
         host._read_area_gears = helper
         host.engine.state = "running"
@@ -126,9 +128,108 @@ class OverburdenedUiTests(unittest.TestCase):
             control = getattr(host.window.page("settings"), target)
             self.assertTrue(visible[0].parentWidget() is control or visible[0].parentWidget().isAncestorOf(control))
         host.set_overlay_visible(False)
+        helper.stop.assert_not_called()
+        self.assertFalse(host.overlay.isVisible())
+        host.engine.state = "paused"
+        host._sync_read_area_gears()
         helper.stop.assert_called()
         host.engine.read_area_snapshot = lambda: {"hwnd": 123}
         self.assertEqual(host._read_area_snapshot(), {"hwnd": 123})
+
+    def test_real_reader_controls_hover_and_route_actions_with_combat_overlays_hidden(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from mnmparse.app.read_area_gears import ScreenMapping
+
+        # Reproduce a saved hidden overlay group at launch, not just a later toggle.
+        self.fixture.settings.setValue("main/overlay_visible", False)
+        host = self.fixture.bootstrap(Config(reduced_motion=True))
+        gears = host._read_area_gears
+        for window in gears._windows.values():
+            window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        current = {"point": (500, 600), "foreground": True}
+        host.engine.read_area_snapshot = lambda: {
+            "hwnd": 123, "capture_backend": "wgc", "frame_dimensions": (1000, 800),
+            "source_rect": (0, 0, 1000, 800), "chat_crop": (100, 400, 900, 750),
+            "stats_crop": (50, 100, 300, 250),
+        }
+        host.engine.leaderboard_status = lambda: {
+            "alias": "Sample Amber Finch", "eligible": True, "copy_eligible": True,
+            "submitted_day": "", "error": "",
+        }
+        host.engine.leaderboard_copy_text = lambda: "Fictional local mini stats"
+        record = {"synthetic": "submission routed only to the mocked client"}
+        host.engine.leaderboard_submission = lambda: record
+
+        def hover(point):
+            current["point"] = point
+            gears.refresh()
+            self.app.processEvents()
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("mnmparse.app.read_area_gears._cursor_position",
+                                      side_effect=lambda: current["point"]))
+            stack.enter_context(patch("mnmparse.app.read_area_gears._is_foreground",
+                                      side_effect=lambda _hwnd: current["foreground"]))
+            stack.enter_context(patch("mnmparse.app.read_area_gears._window_rectangles",
+                                      return_value={"frame": (0, 0, 1000, 800)}))
+            stack.enter_context(patch("mnmparse.app.read_area_gears._screen_mappings", return_value=(
+                ScreenMapping((0, 0, 1920, 1080), (0, 0, 1920, 1080), 1.0),)))
+            stack.enter_context(patch("mnmparse.app.read_area_gears._exclude_own_window", return_value=True))
+            submit = stack.enter_context(patch.object(host._leaderboard_client, "submit", return_value=True))
+            open_settings = stack.enter_context(patch.object(host, "_open_overlay_settings"))
+            host.engine.state = "running"
+            host._sync_read_area_gears()
+            self.assertTrue(gears._geometry_timer.isActive())
+            self.assertTrue(gears._hover_timer.isActive())
+            self.assertFalse(host.overlay.isVisible())
+            self.assertFalse(host.map_overlay.isVisible())
+            self.assertFalse(host.revenge_popout.isVisible())
+            chat = gears._windows["crop_picker"]
+            self.assertTrue(chat.button.isVisible())
+            hover((chat.x() + 10, chat.y() + 10))
+            QTest.mouseClick(chat.button, Qt.MouseButton.LeftButton)
+            open_settings.assert_called_once_with("crop_picker")
+
+            hover((100, 150))
+            for key in ("player_status_enabled", "copy_stats", "submit_stats"):
+                self.assertTrue(gears._windows[key].button.isVisible(), key)
+                self.assertTrue(gears._windows[key].button.isEnabled(), key)
+            copy = gears._windows["copy_stats"]
+            hover((copy.x() + 10, copy.y() + 10))
+            QTest.mouseClick(copy.button, Qt.MouseButton.LeftButton)
+            self.assertEqual(self.app.clipboard().text(), "Fictional local mini stats")
+            submit.assert_not_called()
+            upload = gears._windows["submit_stats"]
+            hover((upload.x() + 10, upload.y() + 10))
+            QTest.mouseClick(upload.button, Qt.MouseButton.LeftButton)
+            submit.assert_called_once_with(record)
+
+            # Existing safety gates still apply with the overlay group hidden.
+            current["foreground"] = False
+            hover((100, 150))
+            self.assertFalse(any(window.isVisible() for window in gears._windows.values()))
+            current["foreground"] = True
+            host.overlay.set_click_through(True)
+            hover((100, 150))
+            self.assertFalse(any(window.isVisible() for window in gears._windows.values()))
+            host.overlay.set_click_through(False)
+            hover((100, 150))
+            self.assertTrue(copy.button.isVisible())
+            host.set_overlay_visible(False)
+            self.assertTrue(gears._hover_timer.isActive())
+            for flag in ("_demo_active", "_selftest", "_shut_down"):
+                with self.subTest(flag=flag):
+                    setattr(host, flag, True)
+                    host._sync_read_area_gears()
+                    self.assertFalse(gears._hover_timer.isActive())
+                    self.assertFalse(any(window.isVisible() for window in gears._windows.values()))
+                    setattr(host, flag, False)
+                    host._sync_read_area_gears()
+            host.engine.state = "paused"
+            host._sync_read_area_gears()
+            self.assertFalse(gears._geometry_timer.isActive())
+            self.assertFalse(any(window.isVisible() for window in gears._windows.values()))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from mnmparse.leaderboard import COUNTERS, MAX_NUMBER, make_snapshot
+from mnmparse.leaderboard import (COUNTERS, LEGACY_FIELDS, MAX_NUMBER, READING_FIELDS,
+                                 local_clipboard_text, make_snapshot, signing_bytes)
 from mnmparse.parser import parse_line
 from mnmparse.protected_stats import ProtectedLedger, ProtectionError
 
@@ -44,6 +45,86 @@ class LeaderboardRecoveryTests(unittest.TestCase):
         self.event("You have been slain by a rat.", 101)
         self.event("You pierce a rat for 100 points of Physical Damage.", 102)
         self.event("You loot 3 copper coins from a rat's corpse.", 103)
+
+    def best_history(self):
+        self.ledger.set_phrase("a shared fictional recovery phrase")
+        self.ledger.set_capture_eligible(True)
+        first = {**self.stats(), **dict.fromkeys(READING_FIELDS, 1), "strength": 100, "resist_cold": 100}
+        self.ledger.record_stats(first)
+        self.ledger.record_stats({**first, "captured_at": "2026-10-22T14:00:00Z", "strength": 1,
+                                  "stamina": 100, "resist_cold": 1, "resist_corruption": 100})
+        self.event("You have slain a fictional rat.")
+        return self.ledger.prepare_submission()
+
+    def test_phrase_reinstall_restores_signed_v3_bests_without_activating_upload(self):
+        published = self.best_history()
+        recovered = ProtectedLedger(self.path.with_name("reinstalled.bin"))
+        recovered.set_phrase("a shared fictional recovery phrase")
+        recovered.set_capture_eligible(True)
+        self.assertTrue(recovered.restore_history([published]))
+        records = recovered.status()["records"]
+        self.assertEqual((records["strength"]["value"], records["stamina"]["value"],
+                          records["stat_total"]["value"], records["resist_total"]["value"]), (100, 100, 106, 107))
+        self.assertEqual(records["strength"]["captured_at"], published["captured_at"])
+        self.assertFalse(recovered.status()["eligible"])
+        with self.assertRaises(ProtectionError):
+            recovered.prepare_submission()
+        lower = {**self.stats(), **dict.fromkeys(READING_FIELDS, 1), "max_health": 100, "max_mana": 50,
+                 "captured_at": "2026-10-23T14:00:00Z"}
+        recovered.record_stats(lower)
+        copied = local_clipboard_text(lower, recovered.status())
+        self.assertIn("Max Health: 100", copied)
+        self.assertIn("Strength: 1", copied)
+        self.assertIn("Stat Total: 7", copied)
+        submitted = recovered.prepare_submission()
+        self.assertEqual((submitted["max_health"], submitted["max_mana"], submitted["strength"],
+                          submitted["stat_total"], submitted["resist_total"]), (733, 570, 100, 106, 107))
+        counts = recovered.file.load()["counters"]
+        self.assertFalse(recovered.restore_history([published]))
+        self.assertEqual(recovered.file.load()["counters"], counts)
+
+    def test_later_v3_bests_merge_after_counter_recovery_without_readding_counters(self):
+        published = self.best_history()
+        recovered = ProtectedLedger(self.path.with_name("another.bin"))
+        recovered.set_phrase("a shared fictional recovery phrase")
+        recovered.restore_history([published])
+        before = recovered.file.load()
+        partial = {**self.stats(), **dict.fromkeys(READING_FIELDS, None), "strength": 120,
+                   "captured_at": "2026-10-23T14:00:00Z"}
+        self.ledger.record_stats(partial)
+        improved = self.ledger.prepare_submission()
+        self.assertTrue(recovered.restore_history([improved, published]))
+        after = recovered.file.load()
+        self.assertEqual(after["counters"], before["counters"])
+        self.assertEqual(after["sequence"], before["sequence"])
+        self.assertEqual(after["records"]["strength"]["value"], 120)
+        self.assertEqual(after["records"]["stat_total"]["value"], 106)
+        self.assertEqual(after["records"]["resist_total"]["value"], 107)
+        self.assertFalse(recovered.restore_history([improved]))
+        self.assertFalse(recovered.status()["eligible"])
+
+    def test_foreign_tampered_and_current_reading_schemas_cannot_seed_stat_bests(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        best = self.best_history()
+        key = bytes.fromhex(self.ledger.file.load()["key"])
+        restored = ProtectedLedger(self.path.with_name("filtered.bin"))
+        restored.set_phrase("a shared fictional recovery phrase")
+        current = make_snapshot({**self.stats(), **dict.fromkeys(READING_FIELDS, 9999)},
+                                dict.fromkeys(COUNTERS, 0), key, 10)
+        legacy = {name: value for name, value in current.items() if name in LEGACY_FIELDS}
+        legacy["signature"] = Ed25519PrivateKey.from_private_bytes(key).sign(signing_bytes(legacy)).hex()
+        restored.restore_history([legacy, current])
+        self.assertEqual(restored.status()["records"], {})
+        foreign = {**best, "public_key": "00" * 32}
+        tampered = {**best, "strength": 99999}
+        before = restored.file.path.read_bytes()
+        self.assertFalse(restored.restore_history([foreign, tampered]))
+        self.assertEqual(restored.file.path.read_bytes(), before)
+        self.assertEqual(restored.status()["records"], {})
+        self.assertTrue(restored.restore_history([best]))  # Highs can recover even after v1/v2 counters.
+        self.assertEqual(restored.status()["records"]["strength"]["value"], 100)
+        self.assertFalse(restored.status()["eligible"])
 
     def test_matching_history_merges_baseline_once_preserving_current_capture(self):
         self.local_events()

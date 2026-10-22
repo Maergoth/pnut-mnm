@@ -6,6 +6,10 @@ The trial is deployed through Sites on Cloudflare Workers at [the service health
 
 This folder contains no credentials, and running its checks never contacts or writes to the public leaderboard. Hosted settings are maintained separately. The desktop release remains a separate review and approval step. The current host is the managed Sites runtime, not a provisioned direct Cloudflare Free account; its limits must be checked independently.
 
+The source adapter accepts original signed snapshots and version 2 current-reading snapshots unchanged. Version 3 publishes protected personal bests for maximum HP/Mana, attributes, AC and individual resists. Its Stat Total and Resist Total are independent best complete-reading records, never sums of unrelated individual maxima. A missing complete-reading total stays unavailable even when individual records exist. Fresh Window Capture is still required; its timestamp dates the submission, rather than claiming that all best values coexisted then. Copy continues to use the current reading.
+
+All three formats share daily IDs and cumulative checks. Optional messages remain normalized and censored before signing; the first accepted daily snapshot/message is immutable. The version 3 adapter has **not** been deployed; the existing service supports the original/version 2 formats. Version 1.0.24's strict public reader cannot refresh a file containing a version 2 or 3 row; cached entries remain available. Deploy the compatible backend and approved desktop before the first production version 3 submission.
+
 Use a current Node.js runtime with built-in WebCrypto. No npm install is needed:
 
 ```text

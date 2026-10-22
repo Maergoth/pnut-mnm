@@ -13,8 +13,21 @@ MAX_BYTES = 8 * 1024 * 1024
 MAX_RECORDS = 30_000
 COUNTERS = ("personal_kills", "personal_deaths", "high_hit", "coin_looted")
 MAX_NUMBER = 2**53 - 1
-FIELDS = frozenset({"public_key", "submission_id", "alias", "captured_at", "max_health", "max_mana",
-                    *COUNTERS, "sequence", "capture_backend", "signature"})
+MAX_STAT = 1_000_000_000
+ATTRIBUTE_FIELDS = ("strength", "stamina", "agility", "dexterity", "intelligence", "wisdom", "charisma")
+RESIST_FIELDS = tuple("resist_" + name for name in
+                     ("cold", "corruption", "disease", "electricity", "fire", "holy", "magic", "poison"))
+READING_FIELDS = (*ATTRIBUTE_FIELDS, "armor_class", *RESIST_FIELDS)
+TOTAL_FIELDS = ("stat_total", "resist_total")
+EXTRA_STATS = (*READING_FIELDS, *TOTAL_FIELDS)
+RECORD_FIELDS = ("max_health", "max_mana", *EXTRA_STATS)
+STAT_LABELS = {"max_health": "Max Health", "max_mana": "Max Mana", "armor_class": "Armor Class",
+               "stat_total": "Stat Total", "resist_total": "Resist Total",
+               **{name: name.title() for name in ATTRIBUTE_FIELDS},
+               **{name: name.removeprefix("resist_").title() + " Resist" for name in RESIST_FIELDS}}
+LEGACY_FIELDS = frozenset({"public_key", "submission_id", "alias", "captured_at", "max_health", "max_mana",
+                           *COUNTERS, "sequence", "capture_backend", "signature"})
+FIELDS = LEGACY_FIELDS | {"schema_version", "message", *EXTRA_STATS}
 ADJECTIVES = tuple("Agile Amiable Amber Ample Arctic Bold Brave Breezy Bright Brisk Calm Careful Cheery Clever Cozy Crisp Curious Daring Dazzling Dapper Eager Earnest Fancy Fearless Fleet Friendly Frosty Gentle Glowing Golden Graceful Grand Happy Hardy Honest Icy Jolly Jovial Keen Kind Lively Lucky Merry Mighty Mirthful Nimble Noble Patient Peaceful Plucky Polite Proud Quick Quiet Radiant Ready Rosy Shining Silent Sleepy Smooth Snowy Spry Steady Sunny Swift Tidy Tranquil Valiant Vibrant Warm Wily Wise Zesty".split())
 COLORS = tuple("Aqua Azure Beige Black Blue Bronze Brown Coral Crimson Cyan Emerald Gold Gray Green Indigo Ivory Jade Lavender Lilac Lime Magenta Maroon Mint Navy Ochre Olive Orange Peach Pink Plum Purple Red Rose Ruby Rust Saffron Scarlet Silver Slate Tan Teal Turquoise Violet White Yellow".split())
 ANIMALS = tuple("Alpaca Antelope Badger Bat Bear Beaver Bison Bobcat Buffalo Camel Caribou Cat Chamois Cheetah Cobra Cougar Coyote Crane Crow Deer Dingo Dolphin Dove Dragon Eagle Egret Elk Falcon Ferret Finch Fox Frog Gazelle Gecko Goat Goose Hare Hawk Hedgehog Heron Horse Hound Ibex Ibis Jaguar Jay Koala Lemur Leopard Lion Lizard Llama Lynx Mantis Marmot Mink Moose Moth Mouse Newt Ocelot Otter Owl Panda Panther Parrot Pelican Penguin Pika Pony Puffin Puma Quail Rabbit Raven Robin Salmon Seal Shark Skink Sloth Sparrow Squid Stoat Swan Tapir Tiger Toad Tortoise Toucan Trout Turtle Viper Walrus Weasel Whale Wolf Wombat Yak Zebra".split())
@@ -67,10 +80,45 @@ def valid_alias(value: Any) -> bool:
     return len(parts) == 3 and all(part in words for part, words in zip(parts, (ADJECTIVES, COLORS, ANIMALS)))
 
 
+def reading_stats(source: Any) -> dict[str, int | None]:
+    """Normalize one observation; totals never borrow another reading's values."""
+    get = source.get if isinstance(source, dict) else lambda name: getattr(source, name, None)
+    values = {name: value if type(value := get(name)) is int and -MAX_STAT <= value <= MAX_STAT else None
+              for name in READING_FIELDS}
+    for total, group in (("stat_total", ATTRIBUTE_FIELDS), ("resist_total", RESIST_FIELDS)):
+        values[total] = sum(values[name] for name in group) if all(values[name] is not None for name in group) else None
+    return values
+
+
+def validate_reading_stats(record: dict[str, Any]) -> None:
+    for name in READING_FIELDS:
+        value = record[name]
+        if value is not None and (type(value) is not int or not -MAX_STAT <= value <= MAX_STAT):
+            raise ValueError("Invalid character stat")
+    expected = reading_stats(record)
+    for name, group in (("stat_total", ATTRIBUTE_FIELDS), ("resist_total", RESIST_FIELDS)):
+        value = record[name]
+        if record["schema_version"] == 2:
+            if (value is not None and type(value) is not int) or value != expected[name]:
+                raise ValueError("Character total must match one complete reading")
+        elif value is not None:
+            # Individual bests need not coexist. Their sum is only an upper
+            # bound, never a replacement for a complete-reading total record.
+            if (type(value) is not int or not -len(group) * MAX_STAT <= value <= len(group) * MAX_STAT
+                    or expected[name] is None or value > expected[name]):
+                raise ValueError("Invalid personal-best total")
+
+
 def validate_snapshot(record: Any) -> dict[str, Any]:
-    """Whitelist the complete public payload; names, paths and current values cannot enter it."""
-    if not isinstance(record, dict) or set(record) != FIELDS:
+    """Whitelist public fields; names, paths and current health/mana cannot enter it."""
+    if not isinstance(record, dict) or set(record) not in (LEGACY_FIELDS, FIELDS):
         raise ValueError("Unexpected snapshot fields")
+    if set(record) == FIELDS:
+        from mnmparse.leaderboard_messages import validate_message
+        if type(record["schema_version"]) is not int or record["schema_version"] not in (2, 3):
+            raise ValueError("Unsupported snapshot version")
+        validate_message(record["message"])
+        validate_reading_stats(record)
     if not isinstance(record["submission_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", record["submission_id"]):
         raise ValueError("Invalid anonymous submission ID")
     if not isinstance(record["public_key"], str) or not re.fullmatch(r"[0-9a-f]{64}", record["public_key"]):
@@ -105,13 +153,34 @@ def validate_snapshot(record: Any) -> dict[str, Any]:
 
 
 def make_snapshot(stats: dict[str, Any], counters: dict[str, int], private_key: bytes,
-                  sequence: int) -> dict[str, Any]:
+                  sequence: int, *, message: str = "") -> dict[str, Any]:
+    """Build the existing version-2 current-reading format without changing its meaning."""
+    return _make_signed_snapshot(stats, counters, private_key, sequence, message, 2, reading_stats(stats))
+
+
+def make_personal_best_snapshot(fresh_context: dict[str, Any], records: dict[str, Any],
+                                counters: dict[str, int], private_key: bytes, sequence: int,
+                                *, message: str = "") -> dict[str, Any]:
+    """Sign protected personal records using a fresh capture's date and backend."""
+    best = {field: (records.get(field) or {}).get("value") for field in RECORD_FIELDS}
+    stats = {"captured_at": fresh_context["captured_at"], "capture_backend": fresh_context.get("capture_backend"),
+             "max_health": best["max_health"], "max_mana": best["max_mana"]}
+    return _make_signed_snapshot(stats, counters, private_key, sequence, message, 3,
+                                 {field: best[field] for field in EXTRA_STATS})
+
+
+def _make_signed_snapshot(stats: dict[str, Any], counters: dict[str, int], private_key: bytes,
+                          sequence: int, message: str, version: int,
+                          character: dict[str, int | None]) -> dict[str, Any]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from mnmparse.leaderboard_messages import normalize_message
     key, stamp = public_key(private_key), stats["captured_at"]
     record = {"public_key": key.hex(), "submission_id": daily_id(key, stamp), "alias": alias_for_key(key),
               "captured_at": stamp, "max_health": stats.get("max_health"), "max_mana": stats.get("max_mana"),
               **{field: counters[field] for field in COUNTERS}, "sequence": sequence,
-              "capture_backend": stats.get("capture_backend")}
+              "capture_backend": stats.get("capture_backend"), "schema_version": version,
+              "message": normalize_message(message),
+              **character}
     record["signature"] = Ed25519PrivateKey.from_private_bytes(private_key).sign(signing_bytes(record)).hex()
     return validate_snapshot(record)
 
@@ -125,7 +194,7 @@ def local_clipboard_text(stats: dict[str, Any], status: dict[str, Any]) -> str:
     """Local copying also permits desktop readings; it never creates an upload payload."""
     record = {"alias": status.get("alias"), "captured_at": stats.get("captured_at"),
               "max_health": stats.get("max_health"), "max_mana": stats.get("max_mana"),
-              **{field: status.get(field) for field in COUNTERS}}
+              **{field: status.get(field) for field in COUNTERS}, **reading_stats(stats)}
     if not valid_alias(record["alias"]):
         raise ValueError("Anonymous name is unavailable")
     parse_stamp(record["captured_at"])
@@ -142,10 +211,14 @@ def local_clipboard_text(stats: dict[str, Any], status: dict[str, Any]) -> str:
 
 def _stat_block(record: dict[str, Any]) -> str:
     mana = str(record["max_mana"]) if record["max_mana"] is not None else "Unavailable"
-    return (f"{record['alias']} · {record['captured_at']}\n"
+    text = (f"{record['alias']} · {record['captured_at']}\n"
             f"Max Health: {record['max_health']}\nMax Mana: {mana}\n"
             f"Kills: {record['personal_kills']}\nDeaths: {record['personal_deaths']}\n"
             f"Highest hit: {record['high_hit']}\nCoin looted (copper): {record['coin_looted']}")
+    if any(name in record for name in EXTRA_STATS):
+        text += "".join(f"\n{STAT_LABELS[name]}: {record.get(name) if record.get(name) is not None else 'Unavailable'}"
+                        for name in EXTRA_STATS)
+    return text
 
 
 def parse_records(text: str, *, strict: bool = False) -> list[dict[str, Any]]:

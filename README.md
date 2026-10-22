@@ -335,28 +335,46 @@ valid reading returns to capacity or below. **Overburdened warning** in the same
 disables this display independently of health alerts. Red low-health warnings take
 priority when both are active; gray returns if health recovers while weight remains high.
 Hover the combat-chat or mini-stat screen read area to reveal its top-left gear and open
-the relevant highlighted settings. The gears follow the captured game window.
+the relevant highlighted settings. These shortcuts stay available during capture when
+the normal overlays are hidden. The gears follow the captured game window.
 
 **Leaderboard.** Open **Ranks** in the main navigation to view the **Leaderboard**.
-It shows your anonymous three-word name, current maximum HP/Mana, and lifetime personal
-kills, deaths, highest hit and corpse coin looted. Coin is shown in copper before party
+It shows your anonymous three-word name, personal-best maximum HP/Mana, AC, all seven attributes and
+all eight resists, alongside lifetime personal kills, deaths, highest hit and corpse coin
+looted. **Stat Total** adds STR, STA, AGI, DEX, INT, WIS and CHA; **Resist Total** adds
+Cold, Corruption, Disease, Electricity, Fire, Holy, Magic and Poison. Each total requires
+a complete reading of its group. Each total keeps its highest complete reading, independently
+of the individual stat records. Missing readings appear as —. Coin is shown in copper before party
 splitting. Session resets and imported logs do not change these totals. New totals are
 collected from live **Window Capture** only; desktop capture does not contribute.
 
-**Copy** places the current anonymous summary on your clipboard and never submits it.
-It works with a fresh mini-stat reading from either capture backend. **Submit** publishes
+**Copy current** places the current anonymous summary on your clipboard and never submits it.
+It works with a fresh mini-stat reading from either capture backend. **Submit personal bests** publishes
 one anonymous snapshot per UTC day and requires a fresh reading from **Window Capture**.
 The same separate Copy and Submit icons appear beside the mini-stat read area while
 hovering. Submissions run in the background through the hosted service without an
 external sign-in. If the service is unavailable, your local totals remain available to retry.
-No character name is included. The public table sorts numbers numerically and capture
-times chronologically; **Refresh public entries** checks the public file while keeping
+No character name is added automatically. Public entries use three lines, with the bold gold anonymous
+name repeated on each line. Sort by any stat without separating an entry's lines, and hover
+an entry to see its update time. **Fresh reading** shows the current values; **Local best**
+keeps each stat's highest observed value and its capture time. Best totals come from one
+complete reading, rather than adding individual records reached at different times.
+Submitting uses these stored personal bests and lifetime counters. The fresh Window Capture
+reading establishes eligibility and the snapshot's update time; Copy continues using current
+values. **Refresh public entries** checks the public file while keeping
 cached entries visible during an outage. Opening PNUT does not contact the leaderboard.
+
+Add an optional message of up to 160 characters before submitting. Common English swear
+words are replaced with asterisks. Hover a public entry to see its message in a chat bubble
+above the update timestamp. The first accepted snapshot and message for that UTC day
+remain the same on a retry. Messages are public; include only text you want to share.
 
 An optional **secret phrase** restores the same anonymous name on another installation.
 Use 8–1024 characters, preserve letter case and keep the phrase private. Changing to a
 different identity starts new local totals; refreshing public entries restores that
-identity's previously submitted totals once. The phrase itself is never saved or uploaded.
+identity's previously submitted totals once and restores its published personal bests.
+Recovered record times refer to the published snapshot's update time. The phrase itself
+is never saved or uploaded.
 
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
@@ -602,6 +620,10 @@ Corrupted codes are rejected rather than imported with changed settings.
 "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
 Fresh installations also include **Resist**, which says “resist” when a target resists your spell.
+Fresh installations also include **Fizzle**, which plays its bundled sound when
+**Your spell fizzles!** is read, with no countdown.
+The sound travels with the app, so it does not need a file in Downloads. Existing trigger
+profiles stay unchanged; choose **Restore starter triggers** to add this missing starter.
 Invis Break matches **You begin to feel yourself appearing**. Version 0.1.6 corrects the old
 default match once while preserving customized patterns, other settings, and deleted presets.
 New installs use an immediate Falling sound with no Invis Break countdown or delayed alerts.

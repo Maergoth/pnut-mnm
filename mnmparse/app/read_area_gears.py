@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 Rect = tuple[int, int, int, int]
 TARGETS = ("crop_picker", "player_status_enabled", "copy_stats", "submit_stats")
 _LABELS = {"crop_picker": "combat chat reader", "player_status_enabled": "mini-stat reader",
-           "copy_stats": "copy anonymous stats", "submit_stats": "submit anonymous stats"}
+           "copy_stats": "copy current stats", "submit_stats": "submit personal bests"}
 
 
 def _rect(value: Any) -> Rect | None:
@@ -122,56 +122,102 @@ class ScreenMapping:
                       round(self.logical[1] + (point[1] - self.physical[1]) / self.scale))
 
 
-def _native_monitors() -> dict[str, Rect]:
+def _monitor_info(monitor: int) -> tuple[str, Rect] | None:
     if sys.platform != "win32":
-        return {}
+        return None
     import ctypes.wintypes as wt
 
     class MonitorInfo(ctypes.Structure):
         _fields_ = [("size", wt.DWORD), ("monitor", wt.RECT), ("work", wt.RECT),
                     ("flags", wt.DWORD), ("device", wt.WCHAR * 32)]
 
+    get = ctypes.windll.user32.GetMonitorInfoW
+    get.argtypes = [wt.HANDLE, ctypes.POINTER(MonitorInfo)]
+    get.restype = wt.BOOL
+    info = MonitorInfo()
+    info.size = ctypes.sizeof(info)
+    if get(monitor, ctypes.byref(info)):
+        r = info.monitor
+        bounds = (r.left, r.top, r.right, r.bottom)
+        if _rect(bounds):
+            return info.device.casefold(), bounds
+    return None
+
+
+def _native_monitors() -> dict[str, Rect]:
+    if sys.platform != "win32":
+        return {}
+    import ctypes.wintypes as wt
+
     user = ctypes.windll.user32
-    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HANDLE, wt.HDC, ctypes.POINTER(wt.RECT), wt.LPARAM)
-    user.GetMonitorInfoW.argtypes = [wt.HANDLE, ctypes.POINTER(MonitorInfo)]
+    callback_type = ctypes.WINFUNCTYPE(wt.BOOL, wt.HANDLE, wt.HDC, ctypes.POINTER(wt.RECT), wt.LPARAM)
     user.EnumDisplayMonitors.argtypes = [wt.HDC, ctypes.POINTER(wt.RECT), callback_type, wt.LPARAM]
+    user.EnumDisplayMonitors.restype = wt.BOOL
     monitors = {}
 
     def found(monitor, _dc, _rect, _data):
-        info = MonitorInfo()
-        info.size = ctypes.sizeof(info)
-        if user.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            r = info.monitor
-            monitors[info.device.casefold()] = (r.left, r.top, r.right, r.bottom)
+        info = _monitor_info(monitor)
+        if info is not None:
+            monitors[info[0]] = info[1]
         return True
 
     user.EnumDisplayMonitors(None, None, callback_type(found), 0)
     return monitors
 
 
-def _screen_mappings() -> tuple[ScreenMapping, ...]:
+def _native_screen_bounds(screen: Any) -> Rect | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        handle = screen.nativeInterface().handle()
+        if type(handle) is int and handle > 0:
+            info = _monitor_info(handle)
+            return info[1] if info is not None else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass  # Older bindings and non-Windows Qt plugins may lack this interface.
+    return None
+
+
+def _matched_screens() -> tuple[tuple[Any, ScreenMapping], ...]:
     monitors = _native_monitors()
     result = []
     for screen in QGuiApplication.screens():
         r = screen.geometry()
         logical = (r.x(), r.y(), r.x() + r.width(), r.y() + r.height())
-        physical = monitors.get(screen.name().casefold())
-        if physical is None and sys.platform != "win32":
-            physical = logical
         scale = float(screen.devicePixelRatio())
-        if physical is not None and math.isfinite(scale) and scale > 0:
-            result.append(ScreenMapping(physical, logical, scale))
-    return tuple(result)
+        if not _rect(logical) or not math.isfinite(scale) or scale <= 0:
+            continue
+        physical = _native_screen_bounds(screen)
+        if physical is None:
+            if sys.platform != "win32":
+                physical = logical
+            else:
+                # Windows Qt preserves physical screen origins, scaling only
+                # dimensions. Allow one logical pixel of integer-size rounding.
+                # QScreen.name() is user-facing, not a native monitor identifier.
+                matches = [bounds for bounds in monitors.values() if _rect(bounds)
+                           and bounds[:2] == logical[:2]
+                           and abs(bounds[2] - bounds[0] - r.width() * scale) <= scale
+                           and abs(bounds[3] - bounds[1] - r.height() * scale) <= scale]
+                if len(matches) != 1:
+                    continue
+                physical = matches[0]
+        result.append((screen, ScreenMapping(physical, logical, scale)))
+    # Mirrored/ambiguous screen assignments must not place a control on a guess.
+    return tuple(pair for pair in result
+                 if sum(other[1].physical == pair[1].physical for other in result) == 1)
+
+
+def _screen_mappings() -> tuple[ScreenMapping, ...]:
+    return tuple(mapping for _screen, mapping in _matched_screens())
 
 
 def screen_at_physical(point: tuple[int, int]):
     """Find a Qt screen using native pixels, including mixed-DPI monitor origins."""
-    monitors = _native_monitors()
-    for screen in QGuiApplication.screens():
-        bounds = monitors.get(screen.name().casefold())
-        if bounds is not None and _contains(bounds, point):
-            return screen
-    return None
+    if sys.platform != "win32":
+        return None
+    matches = [screen for screen, mapping in _matched_screens() if _contains(mapping.physical, point)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _cursor_position() -> tuple[int, int] | None:
@@ -246,8 +292,8 @@ class _GearWindow(QWidget):
 class _CopyButton(_AreaButton):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setAccessibleName("Copy anonymous stats")
-        self.setAccessibleDescription("Copy anonymous stats locally. Requires fresh mini stats.")
+        self.setAccessibleName("Copy current stats")
+        self.setAccessibleDescription("Copy current mini stats locally without submitting. Requires a fresh reading.")
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -265,8 +311,8 @@ class _CopyButton(_AreaButton):
 class _SubmitButton(_CopyButton):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setAccessibleName("Submit anonymous stats")
-        self.setAccessibleDescription("Publish one anonymous daily snapshot. Requires fresh mini stats from Window Capture.")
+        self.setAccessibleName("Submit personal bests")
+        self.setAccessibleDescription("Publish your personal best stats and lifetime totals once per UTC day. Requires fresh Window Capture.")
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

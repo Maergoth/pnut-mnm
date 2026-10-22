@@ -1796,8 +1796,8 @@ class App(QApplication):
         gears = self.__dict__.get("_read_area_gears")
         if gears is None:
             return
+        # Reader shortcuts belong to active capture, independently of the combat overlays.
         wanted = (getattr(self.engine, "state", "") == "running"
-                  and self.__dict__.get("_overlay_group_visible", True)
                   and not (self._selftest or self._shut_down or self.__dict__.get("_demo_active", False)))
         if wanted:
             gears.start()

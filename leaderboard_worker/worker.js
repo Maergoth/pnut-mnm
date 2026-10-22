@@ -8,9 +8,13 @@ export const BRANCH = "leaderboard-data";
 export const CONTENTS_URL = `${API_ROOT}/contents/leaderboard.jsonl`;
 const MAX_API_BYTES = Math.ceil(MAX_FILE_BYTES / 3) * 4 + 65_536;
 const COUNTERS = ["personal_kills", "personal_deaths", "high_hit", "coin_looted"];
-const FIELDS = ["public_key", "submission_id", "alias", "captured_at", "max_health", "max_mana",
+const LEGACY_FIELDS = ["public_key", "submission_id", "alias", "captured_at", "max_health", "max_mana",
   ...COUNTERS, "sequence", "capture_backend", "signature"];
-const SORTED_UNSIGNED = FIELDS.filter((key) => key !== "signature").sort();
+const ATTRIBUTES = ["strength", "stamina", "agility", "dexterity", "intelligence", "wisdom", "charisma"];
+const RESISTS = ["cold", "corruption", "disease", "electricity", "fire", "holy", "magic", "poison"]
+  .map((name) => "resist_" + name);
+const READING_FIELDS = [...ATTRIBUTES, "armor_class", ...RESISTS];
+const FIELDS = [...LEGACY_FIELDS, "schema_version", "message", ...READING_FIELDS, "stat_total", "resist_total"];
 const WORDS = [ADJECTIVES, COLORS, ANIMALS];
 const WORD_SETS = WORDS.map((words) => new Set(words));
 const encoder = new TextEncoder();
@@ -19,6 +23,15 @@ const HEX32 = /^[0-9a-f]{32}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX128 = /^[0-9a-f]{128}$/;
+const MESSAGE_SPACE = /[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u;
+const MESSAGE_CONTROL = /\p{C}/u;
+// Match Python's ASCII-only case-insensitive alternatives with Unicode word boundaries.
+const SWEAR_BODY = "motherfuck(?:ers?|ing)?|fuck(?:ers?|ing|ed|s)?|"
+  + "bullshit(?:ting|ted|s)?|shit(?:ty|ting|ted|s|heads?)?|bitch(?:es|ing|y)?|"
+  + "assholes?|bastards?|cunts?|dicks?|cock(?:s|suckers?)?|piss(?:ed|ing|es)?|damn(?:ed|ing)?|hell|ass";
+const MESSAGE_SWEARS = new RegExp("(?<![\\p{L}\\p{N}_])(?:"
+  + SWEAR_BODY.replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`)
+  + ")(?![\\p{L}\\p{N}_])", "gu");
 
 class InvalidSnapshot extends Error {}
 class StorageError extends Error {}
@@ -65,13 +78,46 @@ export function parseStamp(value) {
 }
 
 export function canonicalJson(record) {
-  return JSON.stringify(Object.fromEntries(SORTED_UNSIGNED.map((key) => [key, record[key]])));
+  return JSON.stringify(Object.fromEntries(Object.keys(record).filter((key) => key !== "signature")
+    .sort().map((key) => [key, record[key]])))
+    .replace(/[\u007f-\uffff]/g, (character) => "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"));
+}
+
+export function normalizeMessage(value) {
+  if (typeof value !== "string") throw new InvalidSnapshot("Message must be text");
+  const text = Array.from(value.normalize("NFKC"), (character) => MESSAGE_SPACE.test(character) ? " "
+    : MESSAGE_CONTROL.test(character) ? "" : character).join("").replace(/ +/g, " ").replace(/^ +| +$/g, "");
+  if (Array.from(text).length > 160) throw new InvalidSnapshot("Message is too long");
+  return text.replace(MESSAGE_SWEARS, (word) => "*".repeat(word.length));
 }
 
 function validateShape(record) {
-  if (!record || typeof record !== "object" || Array.isArray(record)
-      || Object.keys(record).length !== FIELDS.length || FIELDS.some((key) => !Object.hasOwn(record, key))) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw new InvalidSnapshot("Unexpected fields");
+  }
+  const fields = Object.hasOwn(record, "schema_version") ? FIELDS : LEGACY_FIELDS;
+  if (Object.keys(record).length !== fields.length || fields.some((key) => !Object.hasOwn(record, key))) {
+    throw new InvalidSnapshot("Unexpected fields");
+  }
+  if (fields === FIELDS) {
+    if (record.schema_version !== 2 && record.schema_version !== 3) throw new InvalidSnapshot("Unsupported version");
+    if (normalizeMessage(record.message) !== record.message) throw new InvalidSnapshot("Invalid public message");
+    for (const field of READING_FIELDS) {
+      if (record[field] !== null && (!Number.isSafeInteger(record[field]) || Math.abs(record[field]) > 1_000_000_000)) {
+        throw new InvalidSnapshot("Invalid character stat");
+      }
+    }
+    for (const [total, group] of [["stat_total", ATTRIBUTES], ["resist_total", RESISTS]]) {
+      const expected = group.every((field) => record[field] !== null)
+        ? group.reduce((sum, field) => sum + record[field], 0) : null;
+      if (record.schema_version === 2) {
+        if (record[total] !== expected) throw new InvalidSnapshot("Invalid character total");
+      } else if (record[total] !== null && (!Number.isSafeInteger(record[total])
+          || Math.abs(record[total]) > group.length * 1_000_000_000
+          || expected === null || record[total] > expected)) {
+        throw new InvalidSnapshot("Invalid personal-best total");
+      }
+    }
   }
   for (const [field, pattern] of [["public_key", HEX64], ["submission_id", HEX32], ["signature", HEX128]]) {
     if (typeof record[field] !== "string" || !pattern.test(record[field])) throw new InvalidSnapshot("Invalid identity");

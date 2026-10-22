@@ -45,7 +45,8 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
     from PySide6.QtCore import Qt
 
     from mnmparse.app.leaderboard_page import LeaderboardModel
-    from mnmparse.leaderboard import clipboard_text, dump_records, parse_records, utc_stamp, validate_snapshot
+    from mnmparse.leaderboard import (READING_FIELDS, clipboard_text, dump_records, local_clipboard_text,
+                                     parse_records, utc_stamp, validate_snapshot)
     from mnmparse.parser import parse_line
     from mnmparse.protected_stats import EncryptedFile, ProtectedLedger, ProtectionError
 
@@ -58,16 +59,28 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
     # Exercises the bundled scrypt/OpenSSL path as well as Ed25519 below.
     ledger.set_phrase("Synthetic startup smoke phrase")
     ledger.set_capture_eligible(True)
-    ledger.record_stats({"max_health": 1234567, "max_mana": 7654321,
-                         "captured_at": utc_stamp(), "capture_backend": "window"})
+    first = {"max_health": 1234567, "max_mana": 7654321, **dict.fromkeys(READING_FIELDS, 1),
+             "strength": 100, "resist_cold": 100,
+             "captured_at": utc_stamp(), "capture_backend": "window"}
+    ledger.record_stats(first)
+    current = {**first, "max_health": 100, "max_mana": 50, "strength": 1, "stamina": 100,
+               "resist_cold": 1, "resist_corruption": 100, "captured_at": utc_stamp()}
+    ledger.record_stats(current)
     event = parse_line("You have slain a smoke rat.", 100, "SmokeOwner")
     if event is None or event.kind != "kill":
         raise RuntimeError("Synthetic leaderboard kill did not parse")
     ledger.record_event(event)
     record = validate_snapshot(ledger.prepare_submission())
     if (record["max_health"] != 1234567 or record["max_mana"] != 7654321
-            or record["personal_kills"] != 1):
+            or record["personal_kills"] != 1 or record["schema_version"] != 3
+            or (record["strength"], record["stamina"]) != (100, 100)
+            or (record["resist_cold"], record["resist_corruption"]) != (100, 100)
+            or (record["stat_total"], record["resist_total"]) != (106, 107)):
         raise RuntimeError("Packaged leaderboard did not retain synthetic reader values and personal kill")
+    current_text = local_clipboard_text(current, ledger.status())
+    if ("Max Health: 100\n" not in current_text or "Max Mana: 50\n" not in current_text
+            or "\nStrength: 1\n" not in current_text or "Stat Total: 106\n" not in current_text):
+        raise RuntimeError("Packaged stat Copy did not use the fresh current reading")
     text = clipboard_text(record)
     if ("Max Health: 1234567" not in text or "Max Mana: 7654321" not in text
             or "Kills: 1" not in text or "SmokeOwner" in text):
@@ -103,7 +116,8 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
         raise RuntimeError("Packaged leaderboard numeric sorting failed")
     report["leaderboard"] = {"native_crypto": True, "windows_storage": True, "counter_roundtrip": True,
                              "cache_roundtrip": True, "fresh_read_required": True,
-                             "clipboard": True, "numeric_sort": True}
+                             "clipboard": True, "numeric_sort": True,
+                             "current_copy_best_submit": True, "complete_reading_totals": True}
 
 
 def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
@@ -561,9 +575,29 @@ def _exercise(report: dict[str, Any]) -> None:
             store = TriggerStore()
             store.install_presets()
             names = {trigger.name for trigger in store.triggers}
-            if not {"Gatekick", "Healkick", "Invis Break", "Resist"}.issubset(names):
+            if not {"Gatekick", "Healkick", "Invis Break", "Resist", "Fizzle"}.issubset(names):
                 raise RuntimeError(f"Bundled trigger presets missing: {sorted(names)}")
             report["presets"] = sorted(names)
+            report["stage"] = "decode bundled Fizzle sound without playback"
+            import hashlib
+            from PySide6.QtCore import QUrl
+            from PySide6.QtMultimedia import QMediaPlayer
+            from mnmparse.app.triggers_runtime import builtin_sound_path
+
+            recording = builtin_sound_path("Fizzle")
+            if hashlib.sha256(recording.read_bytes()).hexdigest() != "cc1fa5c8b23bd4d227ac7a7c6e890012f80e45e9c2593200f9c6914357738947":
+                raise RuntimeError("Packaged Fizzle recording is missing or changed")
+            player = QMediaPlayer(window)
+            player.setSource(QUrl.fromLocalFile(str(recording)))
+            deadline = time.monotonic() + 3
+            while (player.mediaStatus() not in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.InvalidMedia)
+                   and time.monotonic() < deadline):
+                app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+            if (player.error() != QMediaPlayer.Error.NoError or player.mediaStatus() != QMediaPlayer.MediaStatus.LoadedMedia
+                    or player.duration() <= 0):
+                raise RuntimeError("Packaged Fizzle MP3 could not be decoded")
+            player.setSource(QUrl())
+            report["fizzle"] = {"bundled_recording": True, "unchanged_bytes": True, "mp3_decode": True}
 
             report["stage"] = "exercise timer sharing"
             from mnmparse.trigger_chat import ChatShareAssembler, encode_trigger

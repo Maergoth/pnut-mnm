@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import ctypes
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -13,6 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 from shiboken6 import isValid
 
+from mnmparse.app import read_area_gears as reader_gears
 from mnmparse.app.read_area_gears import ReadAreaGears, ScreenMapping, resolve_read_areas, screen_at_physical
 
 
@@ -20,6 +22,11 @@ def snapshot(**changes):
     return {"hwnd": 123, "capture_backend": "wgc", "frame_dimensions": (1000, 800),
             "source_rect": (0, 0, 1000, 800), "chat_crop": (100, 400, 900, 750),
             "stats_crop": (50, 100, 300, 250), **changes}
+
+
+def fake_screen(name, rect, scale=1.0, handle=None):
+    return SimpleNamespace(name=lambda: name, geometry=lambda: QRect(*rect), devicePixelRatio=lambda: scale,
+                           nativeInterface=lambda: SimpleNamespace(handle=lambda: handle))
 
 
 class ReadAreaGeometryTests(unittest.TestCase):
@@ -63,14 +70,83 @@ class ReadAreaGeometryTests(unittest.TestCase):
         self.assertEqual(right.qt_point((300, 200)), QPoint(150, 100))
 
     def test_warning_screen_lookup_matches_native_bounds_on_mixed_dpi_monitors(self):
-        primary = SimpleNamespace(name=lambda: "primary")
-        secondary = SimpleNamespace(name=lambda: "secondary")
-        with patch("mnmparse.app.read_area_gears._native_monitors", return_value={
-                "primary": (0, 0, 1920, 1080), "secondary": (1920, 0, 3840, 1080)}), \
+        primary = fake_screen("AORUS FO32U2P", (0, 0, 2560, 1440), 1.5)
+        secondary = fake_screen("ASUS VS228", (3840, 799, 1080, 1920))
+        with patch("mnmparse.app.read_area_gears.sys.platform", "win32"), \
+                patch("mnmparse.app.read_area_gears._native_monitors", return_value={
+                    "display1": (0, 0, 3840, 2160), "display2": (3840, 799, 4920, 2719)}), \
                 patch("mnmparse.app.read_area_gears.QGuiApplication.screens", return_value=[primary, secondary]):
-            self.assertIs(screen_at_physical((3300, 540)), secondary)
+            self.assertEqual(reader_gears._screen_mappings(), (
+                ScreenMapping((0, 0, 3840, 2160), (0, 0, 2560, 1440), 1.5),
+                ScreenMapping((3840, 799, 4920, 2719), (3840, 799, 4920, 2719), 1.0)))
+            self.assertIs(screen_at_physical((4380, 1759)), secondary)
             self.assertIs(screen_at_physical((100, 100)), primary)
             self.assertIsNone(screen_at_physical((-3000, 0)))
+
+    def test_native_monitor_handle_is_preferred_and_keeps_all_64_bits(self):
+        import ctypes.wintypes as wt
+
+        handle = (1 << 40) + 65537
+        screen = fake_screen("Friendly monitor", (0, 0, 2560, 1440), 1.5, handle)
+
+        def fill_monitor(actual_handle, pointer):
+            self.assertEqual(actual_handle, handle)
+            info = pointer._obj
+            self.assertEqual(info.size, ctypes.sizeof(info))
+            info.device = "DISPLAY1"
+            info.monitor.left, info.monitor.top = 0, 0
+            info.monitor.right, info.monitor.bottom = 3840, 2160
+            return True
+
+        get = Mock(side_effect=fill_monitor)
+        with patch("mnmparse.app.read_area_gears.sys.platform", "win32"), \
+                patch("mnmparse.app.read_area_gears.ctypes.windll", create=True,
+                      new=SimpleNamespace(user32=SimpleNamespace(GetMonitorInfoW=get))), \
+                patch("mnmparse.app.read_area_gears._native_monitors", return_value={}), \
+                patch("mnmparse.app.read_area_gears.QGuiApplication.screens", return_value=[screen]):
+            self.assertEqual(reader_gears._screen_mappings(), (
+                ScreenMapping((0, 0, 3840, 2160), (0, 0, 2560, 1440), 1.5),))
+            self.assertIs(screen_at_physical((3000, 2000)), screen)
+        self.assertIs(get.argtypes[0], wt.HANDLE)
+        self.assertIs(get.restype, wt.BOOL)
+
+    def test_duplicate_friendly_names_negative_origins_and_fractional_rounding_match_geometry(self):
+        left = fake_screen("Generic monitor", (-2560, -300, 1707, 960), 1.5)
+        primary = fake_screen("Generic monitor", (0, 0, 1920, 1080), 2.0)
+        with patch("mnmparse.app.read_area_gears.sys.platform", "win32"), \
+                patch("mnmparse.app.read_area_gears._native_monitors", return_value={
+                    "display1": (-2560, -300, 0, 1140), "display2": (0, 0, 3840, 2160)}), \
+                patch("mnmparse.app.read_area_gears.QGuiApplication.screens", return_value=[left, primary]):
+            mappings = reader_gears._screen_mappings()
+            self.assertEqual(len(mappings), 2)
+            self.assertEqual(mappings[0].qt_point((-2410, -150)), QPoint(-2460, -200))
+            self.assertEqual(mappings[1].qt_point((300, 200)), QPoint(150, 100))
+            self.assertIs(screen_at_physical((-2410, -150)), left)
+            self.assertIs(screen_at_physical((3000, 2000)), primary)
+
+    def test_ambiguous_fallback_or_duplicate_screen_assignment_fails_closed(self):
+        screen = fake_screen("DISPLAY1", (0, 0, 1000, 800))
+        with patch("mnmparse.app.read_area_gears.sys.platform", "win32"), \
+                patch("mnmparse.app.read_area_gears._native_monitors", return_value={
+                    "display1": (0, 0, 1000, 800), "display2": (0, 0, 1001, 800)}), \
+                patch("mnmparse.app.read_area_gears.QGuiApplication.screens", return_value=[screen]):
+            self.assertEqual(reader_gears._screen_mappings(), ())
+            self.assertIsNone(screen_at_physical((100, 100)))
+        with patch("mnmparse.app.read_area_gears.sys.platform", "win32"), \
+                patch("mnmparse.app.read_area_gears._native_monitors", return_value={
+                    "display1": (0, 0, 1000, 800)}), \
+                patch("mnmparse.app.read_area_gears.QGuiApplication.screens", return_value=[screen, screen]):
+            self.assertEqual(reader_gears._screen_mappings(), ())
+            self.assertIsNone(screen_at_physical((100, 100)))
+
+    def test_matching_name_cannot_override_wrong_geometry_or_invalid_dpi(self):
+        for scale in (1.0, 0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(scale=scale), patch("mnmparse.app.read_area_gears.sys.platform", "win32"), \
+                    patch("mnmparse.app.read_area_gears._native_monitors", return_value={
+                        "display1": (0, 0, 1000, 800)}), \
+                    patch("mnmparse.app.read_area_gears.QGuiApplication.screens", return_value=[
+                        fake_screen("DISPLAY1", (100, 0, 1000, 800), scale)]):
+                self.assertEqual(reader_gears._screen_mappings(), ())
 
 
 class ReadAreaGearTests(unittest.TestCase):
@@ -154,6 +230,8 @@ class ReadAreaGearTests(unittest.TestCase):
         self.hover((100, 150))
         copy = self.gears._windows["copy_stats"]
         submit = self.gears._windows["submit_stats"]
+        self.assertEqual(copy.button.accessibleName(), "Copy current stats")
+        self.assertEqual(submit.button.accessibleName(), "Submit personal bests")
         self.assertTrue(copy.button.isVisible())
         self.assertTrue(submit.button.isVisible())
         self.assertEqual(submit.x() - copy.x(), 30)

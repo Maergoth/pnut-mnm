@@ -81,7 +81,9 @@ class EnginePlayerStatusTests(unittest.TestCase):
         with patch("mnmparse.player_status.read_player_status", return_value=self.reading()):
             self.engine._process_frame(np.zeros((8, 8, 3), np.uint8), self.cfg, cropped=True)
         self.assertEqual(self.engine._tracker.update.call_args.args[0], [chat])
-        self.assertEqual(self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]["rows"][0]["text"], stats.text)
+        diagnostic = self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]
+        self.assertEqual(diagnostic["row_count"], 1)
+        self.assertEqual([row["text"] for row in diagnostic["rows"]], [chat.text])
 
     def test_low_hp_requires_fresh_confirmation_and_alerts_once(self):
         self.engine._ocr = Mock(read=Mock(return_value=[]))
