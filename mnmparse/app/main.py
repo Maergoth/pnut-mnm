@@ -1306,6 +1306,10 @@ class App(QApplication):
         self.map_downloads: Any | None = None
         self.npc_details: Any | None = None
         self.app_updates: Any | None = None
+        self._update_notice: Any | None = None
+        self._update_ready_version = ""
+        self._update_last_status = ""
+        self._overlay_settings_gears: list[Any] = []
         self.triggers: Any | None = None
         self._low_health_flash: Any | None = None
         self._low_health_active = False
@@ -1360,6 +1364,7 @@ class App(QApplication):
         self.revenge_popout = RevengePopoutWindow(self.revenge, self.settings)
         self.tray = TrayIcon(self.icon, self)
         self._wire()
+        self._install_overlay_settings_gears()
         if self.triggers is not None:
             self.triggers.set_config(cfg)
 
@@ -1581,14 +1586,6 @@ class App(QApplication):
                 except UpdateError:
                     available = False
                 settings_page.app_recovery_button.setVisible(available)
-                self.app_updates.started.connect(
-                    lambda: settings_page.set_app_update_status("Checking GitHub for updates…", True))
-                self.app_updates.progress.connect(
-                    lambda message: settings_page.set_app_update_status(message, True))
-                self.app_updates.finished.connect(self._on_app_update_status)
-                self.app_updates.ready.connect(
-                    lambda version: self._on_app_update_status(
-                        f"Version {version} is ready. Restart now or quit and reopen to install. Closing to the tray keeps PNUT running."))
             if self.map_downloads is not None:
                 self._connect_optional(settings_page, "map_download_requested", self.map_downloads.start)
                 self.map_downloads.started.connect(
@@ -1612,6 +1609,12 @@ class App(QApplication):
             except Exception:  # noqa: BLE001
                 log.debug("history page could not be primed", exc_info=True)
 
+        if self.app_updates is not None:
+            self.app_updates.started.connect(self._on_app_update_started)
+            self.app_updates.progress.connect(self._on_app_update_progress)
+            self.app_updates.finished.connect(self._on_app_update_status)
+            self.app_updates.ready.connect(self._on_app_update_ready)
+        self._connect_optional(tray, "restart_update_requested", self.restart_for_update)
         tray.show_window_requested.connect(self.show_window)
         tray.hide_window_requested.connect(self.hide_window)
         tray.toggle_capture_requested.connect(self.toggle_capture)
@@ -1640,22 +1643,164 @@ class App(QApplication):
         except Exception:  # Bad OCR or a malformed share must not interrupt capture.
             log.debug("Could not read a chat timer share", exc_info=True)
 
+    def _install_overlay_settings_gears(self) -> None:
+        from mnmparse.app.overlay_settings import OverlaySettingsGear
+
+        overlay = self.overlay
+        targets = (
+            (overlay, "overlay_enabled", "Combat overlay"),
+            (getattr(overlay, "timer_panel", None), "triggers", "Timer"),
+            (getattr(overlay, "attack_bar", None), "attack_bar", "Auto-attack bar"),
+            (getattr(overlay, "npc_panel", None), "npc_enabled", "Considered NPC"),
+            (self.map_overlay, "map_download_button", "Map"),
+            (self.__dict__.get("revenge_popout"), "revenge_enabled", "Revenge List"),
+        )
+        self._overlay_settings_gears = []
+        for panel, target, label in targets:
+            if not isinstance(panel, QWidget):
+                continue
+            def input_enabled(widget=panel) -> bool:
+                owner = getattr(widget, "_owner", widget)
+                return (not bool(getattr(owner, "click_through", False))
+                        and not bool(widget.windowFlags() & Qt.WindowType.WindowTransparentForInput))
+            gear = OverlaySettingsGear(panel, lambda option=target: self._open_overlay_settings(option),
+                                       label=label, input_enabled=input_enabled)
+            panel._settings_gear = gear
+            reflow = getattr(panel, "_settings_gear_changed", None)
+            if callable(reflow):
+                reflow()
+            panel.update()
+            self._overlay_settings_gears.append(gear)
+
+    def _open_overlay_settings(self, target: str) -> None:
+        if self.window is None or self._shut_down or self.__dict__.get("_quit_pending", False):
+            return
+        self.show_window()
+        if target == "triggers":
+            self.window.show_page("triggers")
+        else:
+            self.window._open_settings_option(target)
+
     def _on_chat_share_pending(self, message: str) -> None:
         if self.window is not None:
             self.window.set_timer_share_notice(message)
             if message and not self.window.isVisible() and self.tray is not None:
                 self.tray.notify("Shared PNUT timer", message + " Open PNUT to review it.")
 
-    def _on_app_update_status(self, message: str) -> None:
+    def _on_app_update_started(self) -> None:
+        self._on_app_update_progress("Checking GitHub for updates…")
+
+    def _on_app_update_progress(self, message: str) -> None:
         if self.window is not None:
             page = self.window.page("settings")
             if page is not None:
-                ready = self.app_updates is not None and self.app_updates.ready_package is not None
-                page.set_app_update_status(message, False, ready)
+                page.set_app_update_status(message, True)
+            self.window.show_message(message)
 
-    def restart_for_update(self) -> None:
-        if self.app_updates is not None and self.app_updates.prepare_restart(arguments=["--config", str(self.config_path)]):
-            self.request_quit()
+    def _on_app_update_status(self, message: str) -> None:
+        self._update_last_status = message
+        ready = self.app_updates is not None and getattr(self.app_updates, "ready_package", None) is not None
+        if not ready:
+            self._update_ready_version = ""
+        if self.window is not None:
+            page = self.window.page("settings")
+            if page is not None:
+                page.set_app_update_status(message, False, ready)
+            self.window.show_message(message)
+        setter = getattr(self.tray, "set_update_ready", None)
+        if callable(setter):
+            setter(getattr(self.app_updates, "ready_version", "") if ready else "")
+
+    def _make_update_notice(self) -> Any:
+        from mnmparse.app.update_restart import UpdateRestartNotice
+
+        notice = UpdateRestartNotice()
+        notice.restart_requested.connect(self.restart_for_update)
+        notice.postponed.connect(self._on_update_postponed)
+        return notice
+
+    def _on_app_update_ready(self, version: str) -> None:
+        if (self._selftest or self._shut_down or self.__dict__.get("_quit_pending", False)
+                or self.app_updates is None or self.app_updates.ready_package is None):
+            return
+        if version == self.__dict__.get("_update_ready_version", ""):
+            return  # Duplicate completions must not restart a postponed countdown.
+        self._update_ready_version = version
+        old = self.__dict__.get("_update_notice")
+        if old is not None:
+            old.stop()
+            old.deleteLater()
+        self._update_notice = self._make_update_notice()
+        self._update_notice.begin(version)
+        if not self.app_updates.automatic_restart_allowed(version):
+            self._show_update_failure(
+                f"PNUT {version} previously failed to update. Automatic retry is paused. "
+                "Choose Restart now to try again, or Later to keep this version running.")
+            return
+        message = f"PNUT {version} downloaded. Restarting in 10 seconds to install; choose Later to postpone."
+        self._on_app_update_status(message)
+        if self.tray is not None:
+            self.tray.notify("PNUT update downloaded", message)
+
+    def _on_update_postponed(self) -> None:
+        version = self.__dict__.get("_update_ready_version", "")
+        if self.app_updates is not None and not self.app_updates.automatic_restart_allowed(version):
+            self._on_app_update_status(
+                f"PNUT {version} is downloaded. Automatic retry is paused; restart from Settings or the tray to retry.")
+            return
+        self._on_app_update_status(
+            f"PNUT {version} is downloaded. Restart to update from Settings or the tray; "
+            "otherwise it will install on the next launch.")
+
+    def _show_update_failure(self, message: str) -> None:
+        self._on_app_update_status(message)
+        notice = self.__dict__.get("_update_notice")
+        if notice is None:
+            self._update_notice = notice = self._make_update_notice()
+        notice.show_failure(message)
+        if self.tray is not None:
+            self.tray.notify("PNUT update needs attention", message, warning=True)
+
+    def _update_restart_blocker(self) -> str:
+        try:
+            if self.window is not None:
+                page = self.window.page("settings")
+                dirty = getattr(page, "has_unsaved_changes", None)
+                if callable(dirty) and dirty():
+                    return "Update paused. Save or discard your Settings changes before restarting."
+                triggers = self.window.page("triggers")
+                flush = getattr(triggers, "flush_pending_changes", None)
+                if callable(flush) and not flush():
+                    return "Update paused. Trigger changes could not be saved; check storage permissions."
+            wizard = self.__dict__.get("_setup_wizard")
+            if wizard is not None and wizard.isVisible():
+                return "Update paused. Finish or close setup before restarting."
+            revenge = self.__dict__.get("revenge")
+            if revenge is not None and not revenge.flush_pending_changes():
+                return "Update paused. Revenge List changes could not be saved; check storage permissions."
+        except Exception:
+            log.exception("Could not save pending changes before updating")
+            return "Update paused. Pending changes could not be saved; check storage permissions."
+        return ""
+
+    def restart_for_update(self) -> bool:
+        if (self.app_updates is None or self._selftest or self._shut_down
+                or self.__dict__.get("_quit_pending", False)):
+            return False
+        blocker = self._update_restart_blocker()
+        if blocker:
+            self._show_update_failure(blocker)
+            return False
+        notice = self.__dict__.get("_update_notice")
+        if notice is not None:
+            notice.stop()
+        self._on_app_update_progress("Verifying the downloaded update before restarting…")
+        self._update_last_status = ""
+        if not self.app_updates.prepare_restart(arguments=["--config", str(self.config_path)]):
+            self._show_update_failure(self.__dict__.get("_update_last_status") or "Could not prepare the downloaded update. Try Update in Settings again.")
+            return False
+        self.request_quit()
+        return True
 
     def restart_for_recovery(self) -> None:
         if self.app_updates is not None and self.app_updates.prepare_recovery(arguments=["--config", str(self.config_path)]):
@@ -2111,6 +2256,8 @@ class App(QApplication):
     def _on_overlay_click_through(self, enabled: bool) -> None:
         if self.tray is not None:
             self.tray.set_overlay_click_through(bool(enabled))
+        for gear in self.__dict__.get("_overlay_settings_gears", ()):
+            gear.sync()
 
     def _on_overlay_locked(self, locked: bool) -> None:
         self.settings.setValue("overlay/locked", bool(locked))
@@ -2385,6 +2532,9 @@ class App(QApplication):
         if self._shut_down:
             return
         self._shut_down = True
+        update_notice = self.__dict__.get("_update_notice")
+        if update_notice is not None:
+            update_notice.stop()
         announcement = self.__dict__.get("_whats_new")
         if announcement is not None:
             announcement.stop()

@@ -91,6 +91,47 @@ class PendingUpdateTests(unittest.TestCase):
         self.assertIsNotNone(controller.ready_package)
         return controller
 
+    def failed_release(self):
+        atomic_json(self.install / ".pnut-update.json", {
+            "schema": 1, "token": "d" * 32, "status": "rolled_back", "version": self.version,
+        })
+
+    def run_check(self, controller):
+        # Execute the worker deterministically, with every network response and
+        # helper process mocked. Real controller signals still update readiness.
+        messages, ready = [], []
+        controller.finished.connect(messages.append)
+        controller.ready.connect(ready.append)
+        with patch.object(updates.threading, "Thread") as thread, \
+             patch.object(updates.subprocess, "Popen") as process:
+            self.assertTrue(controller.start())
+            self.assertFalse(controller.start())
+            thread.assert_called_once()
+            controller._worker.run()
+            process.assert_not_called()
+        self.assertFalse(controller.is_running)
+        return messages, ready
+
+    def offer_release(self, version):
+        old_name = self.payload["tag_name"].removeprefix("v")
+        self.payload = json.loads(json.dumps(self.payload).replace(old_name, version))
+        self.archive_name = f"PNUT-MnM-{version}-windows.zip"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(self.archive_data)) as source, \
+             zipfile.ZipFile(buffer, "w") as target:
+            for entry in source.infolist():
+                data = source.read(entry.filename)
+                if entry.filename == "_internal/build-info.json":
+                    info = json.loads(data)
+                    info["version"] = version
+                    data = json.dumps(info).encode()
+                target.writestr(entry, data)
+        self.archive_data = buffer.getvalue()
+        self.checksum = (hashlib.sha256(self.archive_data).hexdigest()
+                         + "  " + self.archive_name + "\n").encode("ascii")
+        for asset in self.payload["assets"]:
+            asset["size"] = len(self.checksum) if asset["name"].endswith(".sha256") else len(self.archive_data)
+
     def assert_rejected(self):
         controller = updates.AppUpdateController()
         self.addCleanup(controller.shutdown)
@@ -272,6 +313,141 @@ class PendingUpdateTests(unittest.TestCase):
         after_rollback = updates.AppUpdateController()
         self.addCleanup(after_rollback.shutdown)
         self.assertFalse(after_rollback.restore_pending())
+
+    def test_same_failed_pending_release_is_retained_but_not_automatically_installed(self):
+        self.download()
+        pending = self.receipt.read_bytes()
+        self.fetch.reset_mock()
+        for status in ("rolled_back", "failed"):
+            with self.subTest(status=status):
+                atomic_json(self.install / ".pnut-update.json", {
+                    "schema": 1, "token": "d" * 32, "status": status,
+                    "version": self.version, "reported": False,
+                })
+                # Reporting the failure once must not erase retry suppression.
+                self.assertTrue(updates.consume_update_result())
+                with patch.object(updates.subprocess, "Popen") as process:
+                    prepared, message = updates.prepare_pending_update(["--config", "profile.json"])
+                    prepared_again, _ = updates.prepare_pending_update()
+                self.assertFalse(prepared)
+                self.assertFalse(prepared_again)
+                self.assertIn(self.version, message)
+                self.assertIn("Automatic retry is paused", message)
+                process.assert_not_called()
+                self.assertEqual(self.receipt.read_bytes(), pending)
+                self.assertTrue(self.stage.is_dir())
+                self.assertTrue((self.stage / self.archive_name).is_file())
+                self.assertEqual((self.install / updates.EXECUTABLE).read_bytes(), b"original application")
+        self.fetch.assert_not_called()
+
+    def test_failed_release_can_still_be_retried_explicitly(self):
+        self.download()
+        atomic_json(self.install / ".pnut-update.json", {
+            "schema": 1, "token": "d" * 32, "status": "rolled_back", "version": self.version,
+        })
+        controller = self.restore()
+        self.assertEqual(controller.ready_version, self.version)
+        self.assertFalse(controller.automatic_restart_allowed(self.version))
+        arguments = ["--config", str(self.root / "My profile.json")]
+        with patch.object(updates, "make_restart_script", wraps=updates.make_restart_script) as script, \
+             patch.object(updates.subprocess, "Popen") as process:
+            self.assertTrue(controller.prepare_restart(arguments))
+        process.assert_called_once()
+        self.assertEqual(script.call_args.kwargs["arguments"], arguments)
+        self.assertFalse(self.receipt.exists())
+        self.assertEqual((self.install / updates.EXECUTABLE).read_bytes(), b"original application")
+
+    def test_different_failed_target_does_not_block_newer_pending_release(self):
+        self.download()
+        atomic_json(self.install / ".pnut-update.json", {
+            "schema": 1, "token": "d" * 32, "status": "failed", "version": "9.8.6",
+        })
+        with patch.object(updates.subprocess, "Popen") as process:
+            prepared, message = updates.prepare_pending_update()
+        self.assertTrue(prepared, message)
+        process.assert_called_once()
+        self.assertFalse(self.receipt.exists())
+
+    def test_failed_cached_target_checks_metadata_and_reuses_archive_when_latest_is_unchanged(self):
+        self.download()
+        self.failed_release()
+        controller = self.restore()
+        pending, archive = self.receipt.read_bytes(), (self.stage / self.archive_name).read_bytes()
+        self.fetch.reset_mock()
+        messages, ready = self.run_check(controller)
+        self.assertEqual(self.fetch.call_count, 1)
+        self.assertEqual(self.fetch.call_args.args[0], updates.LATEST_URL)
+        self.assertEqual(ready, [self.version])
+        self.assertEqual(controller.ready_package, self.package)
+        self.assertEqual(self.receipt.read_bytes(), pending)
+        self.assertEqual((self.stage / self.archive_name).read_bytes(), archive)
+        self.assertIn("Automatic retry is paused", messages[-1])
+        self.assertNotIn("up to date", messages[-1])
+        self.assertFalse(controller.automatic_restart_allowed(controller.ready_version))
+
+    def test_withdrawn_failed_release_stays_downloaded_without_claiming_up_to_date(self):
+        self.download()
+        self.failed_release()
+        controller = self.restore()
+        pending = self.receipt.read_bytes()
+        # Both an older-but-newer-than-running release and an already-installed
+        # release mean there is no replacement for this failed cached target.
+        for version in ("9.8.6", updates.APP_VERSION):
+            with self.subTest(latest=version):
+                self.offer_release(version)
+                self.fetch.reset_mock()
+                messages, ready = self.run_check(controller)
+                self.assertEqual(self.fetch.call_count, 1)
+                self.assertEqual(ready, [self.version])
+                self.assertEqual(controller.ready_version, self.version)
+                self.assertEqual(controller.ready_package, self.package)
+                self.assertIn("remains downloaded", messages[-1])
+                self.assertIn("retry is paused", messages[-1])
+                self.assertNotIn("up to date", messages[-1])
+                self.assertEqual(self.receipt.read_bytes(), pending)
+
+    def test_newer_verified_release_replaces_failed_readiness_after_download(self):
+        self.download()
+        self.failed_release()
+        controller = self.restore()
+        prior_archive = self.stage / self.archive_name
+        prior_bytes = prior_archive.read_bytes()
+        self.offer_release("9.8.8")
+        self.fetch.reset_mock()
+        messages, ready = self.run_check(controller)
+        self.assertEqual(self.fetch.call_count, 3)
+        self.assertEqual(ready, ["9.8.8"])
+        self.assertEqual(controller.ready_version, "9.8.8")
+        self.assertNotEqual(controller.ready_package, self.package)
+        self.assertEqual(json.loads(self.receipt.read_text())["version"], "9.8.8")
+        self.assertTrue(controller.automatic_restart_allowed("9.8.8"))
+        self.assertEqual(prior_archive.read_bytes(), prior_bytes)
+        self.assertNotIn("up to date", messages[-1])
+
+    def test_metadata_or_new_download_failure_preserves_failed_cache_for_manual_retry(self):
+        self.download()
+        self.failed_release()
+        controller = self.restore()
+        pending = self.receipt.read_bytes()
+        prior_archive = self.stage / self.archive_name
+        prior_bytes = prior_archive.read_bytes()
+        self.fetch.side_effect = OSError("metadata unavailable")
+        messages, ready = self.run_check(controller)
+        self.assertEqual(ready, [])
+        self.assertIn("metadata unavailable", messages[-1])
+        self.fetch.side_effect = self._fetch
+        self.offer_release("9.8.8")
+        self.checksum = b"0" * 64 + b"  " + self.archive_name.encode()
+        messages, ready = self.run_check(controller)
+        self.assertEqual(ready, [])
+        self.assertIn("checksum", messages[-1])
+        self.assertEqual(controller.ready_version, self.version)
+        self.assertEqual(controller.ready_package, self.package)
+        self.assertEqual(self.receipt.read_bytes(), pending)
+        self.assertEqual(prior_archive.read_bytes(), prior_bytes)
+        with patch.object(updates.subprocess, "Popen") as process:
+            self.assertTrue(controller.prepare_restart())
+        process.assert_called_once()
 
     def test_failed_helper_spawn_restores_pending_download_for_retry(self):
         self.download()

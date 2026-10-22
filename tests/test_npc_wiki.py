@@ -58,6 +58,20 @@ def parsed(html=NPC_HTML, title="Test Keeper", number=42):
 
 
 class WikiParserTests(unittest.TestCase):
+    def test_npc_record_keeps_overlap_in_common_using_normalized_wiki_titles(self):
+        details = NpcDetails("Sample Keeper", common_drops=("Sample_Token", "Unique Ring"),
+            unique_drops=(" sample   TOKEN ", "UNIQUE_RING", "Sample-Token", "Rare Staff"))
+        self.assertEqual(details.common_drops, ("Sample_Token", "Unique Ring"))
+        self.assertEqual(details.unique_drops, ("Sample-Token", "Rare Staff"))
+
+    def test_npc_parser_gives_common_drops_precedence_over_unique(self):
+        html = '''<h2>Unique drops</h2><ul><li><a href="/wiki/Shared_Token">Shared Token</a></li>
+        <li><a href="/wiki/Rare_Staff">Rare Staff</a></li></ul><h2>Common drops</h2>
+        <ul><li><a href="/wiki/Shared_Token">Shared Token</a></li></ul>'''
+        details = parse_npc(html, "Sample Keeper")
+        self.assertEqual(details.common_drops, ("Shared Token",))
+        self.assertEqual(details.unique_drops, ("Rare Staff",))
+
     def test_npc_uses_infobox_sections_and_separates_loot(self):
         details = parse_npc(NPC_HTML, "Test Keeper")
         self.assertEqual(details.level, "12–15")
@@ -283,6 +297,21 @@ class WikiCacheTests(unittest.TestCase):
             self.assertIsNone(other.cached_npc("Not Published"))
             self.assertIsNone(other.cached_item("Not Published"))
             self.assertIsNone(other.cached_notables("Not Published"))
+
+    def test_legacy_cached_overlap_is_normalized_without_network_or_disk_changes(self):
+        self.seed_npc()
+        path = self.repo._path("npc", "Test Keeper")
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        envelope["data"]["common_drops"] = ["Shared_Token"]
+        envelope["data"]["unique_drops"] = [" shared   TOKEN ", "Rare Staff"]
+        envelope.pop("parser_version", None)
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        before = path.read_bytes()
+        with patch.object(npc_wiki, "_api", side_effect=AssertionError("cache reads must remain offline")):
+            details = WikiRepository(self.root).cached_npc("Test Keeper")
+        self.assertEqual(details.common_drops, ("Shared_Token",))
+        self.assertEqual(details.unique_drops, ("Rare Staff",))
+        self.assertEqual(path.read_bytes(), before)
 
     def test_same_revision_does_not_transfer_rendered_page_again(self):
         expected = self.seed_npc()

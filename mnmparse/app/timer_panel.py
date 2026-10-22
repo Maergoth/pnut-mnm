@@ -262,6 +262,10 @@ class TimerPanel(DockedPanel):
         self.sync()
         self.update()
 
+    def _settings_gear_changed(self) -> None:
+        """Keep the settings button clear of every timer row, even while hidden."""
+        self.refresh()
+
     def sync(self) -> None:
         # The owner also calls sync when an overlay is re-shown. Expire notifications
         # before showing anything; their lifetime never pauses while the panel is hidden.
@@ -283,7 +287,8 @@ class TimerPanel(DockedPanel):
 
     def _resize_for(self, rows: int) -> None:
         row_h = self._row_h()
-        self.set_rows_height(10 + rows * row_h + (rows - 1) * 4)
+        minimum = 30 if getattr(self, "_settings_gear", None) is not None else 0
+        self.set_rows_height(max(minimum, 10 + rows * row_h + (rows - 1) * 4))
 
     def _row_h(self) -> int:
         return int(round(self._px * 2.3))
@@ -305,8 +310,9 @@ class TimerPanel(DockedPanel):
     def _row_rect(self, index: int) -> QRectF:
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         scroll_space = 14 if self._scroll.maximum() > 0 else 0
-        return QRectF(r.left() + 8, r.top() + 5 + index * (self._row_h() + 4),
-                      r.width() - 16 - scroll_space, self._row_h())
+        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
+        return QRectF(r.left() + 8 + inset, r.top() + 5 + index * (self._row_h() + 4),
+                      max(0, r.width() - 16 - scroll_space - inset), self._row_h())
 
     def _sync_expired_buttons(self) -> None:
         expired = {timer.id: timer for timer in self._visible_timers()
@@ -452,7 +458,8 @@ class TimerPanel(DockedPanel):
         if not timers and not self._popups and not candidates:
             p.setFont(self._f_label)
             p.setPen(qcolor(token("MUTED")))
-            p.drawText(r.adjusted(10, 0, -10, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
+            p.drawText(r.adjusted(10 + inset, 0, -10, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                        "Timers: none running")
             p.end()
             return

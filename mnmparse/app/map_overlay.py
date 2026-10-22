@@ -667,6 +667,9 @@ class MapOverlay(QWidget):
         self._header_hide.stop()
         self.header.show()
         self.header.raise_()
+        gear = getattr(self, "_settings_gear", None)
+        if gear is not None:
+            gear.raise_()
 
     def _hide_header(self) -> None:
         # A popup extends beyond the header; keep its controls until it closes.
@@ -779,6 +782,14 @@ class MapOverlay(QWidget):
             radius = theme.RADIUS_PANEL - 2
             clip.addRoundedRect(QRectF(self.view.rect()), radius, radius)
             self.view.setMask(QRegion(clip.toFillPolygon().toPolygon()))
+
+    def _settings_gear_changed(self) -> None:
+        """Keep floating header controls to the right of the independent gear."""
+        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
+        self.header.layout().setContentsMargins(6 + inset, 6, 6, 6)
+        self._position_chrome()
+        self.header.layout().activate()
+        self.update()
 
     def paintEvent(self, event: Any) -> None:  # noqa: N802
         painter = QPainter(self)

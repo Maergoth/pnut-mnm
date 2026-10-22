@@ -1700,7 +1700,17 @@ class OverlayWindow(QWidget):
         """Narrowest the overlay may get at the current font size."""
         margins = self.layout().contentsMargins() if self.layout() is not None else None
         side = (margins.left() + margins.right()) if margins is not None else 20
-        return max(MIN_SIZE.width(), self._tabs.needed_width() + side, self._table.minimum_width() + side)
+        chrome = self._toolbar.sizeHint().width() + 38 if getattr(self, "_settings_gear", None) is not None else 0
+        return max(MIN_SIZE.width(), self._tabs.needed_width() + side, self._table.minimum_width() + side, chrome)
+
+    def _settings_gear_changed(self) -> None:
+        """Reserve stable room after the app attaches the hover settings button."""
+        inset = 26 if getattr(self, "_settings_gear", None) is not None else 0
+        self.layout().setContentsMargins(10 + inset, 4, 10, 8)
+        self.setMinimumWidth(self.needed_min_width())
+        self.layout().activate()
+        self._position_chrome()
+        self.update()
 
     def _apply_stylesheet(self) -> None:
         qss = ""
@@ -1738,7 +1748,10 @@ class OverlayWindow(QWidget):
 
     def _position_chrome(self) -> None:
         self._toolbar.adjustSize()
-        self._toolbar.move(self.width() - self._toolbar.width() - 8, 4)
+        left = self.width() - self._toolbar.width() - 8
+        if getattr(self, "_settings_gear", None) is not None:
+            left = max(30, left)
+        self._toolbar.move(left, 4)
         self._grip.move(self.width() - self._grip.width() - 2, self.height() - self._grip.height() - 2)
 
     # ------------------------------------------------------------------ data

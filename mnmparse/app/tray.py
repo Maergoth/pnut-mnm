@@ -29,6 +29,7 @@ class TrayIcon(QSystemTrayIcon):
         toggle_overlay_requested: "Show overlay" / "Hide overlay".
         toggle_lock_requested: "Lock overlay" / "Unlock overlay".
         reset_requested: "Reset encounter".
+        restart_update_requested: Restart into the downloaded application update.
         quit_requested: "Quit".
 
     The ``set_*`` methods keep the menu labels in sync with the real state; they never
@@ -42,6 +43,7 @@ class TrayIcon(QSystemTrayIcon):
     toggle_lock_requested = Signal()
     toggle_click_through_requested = Signal()
     reset_requested = Signal()
+    restart_update_requested = Signal()
     quit_requested = Signal()
     toggle_mute_requested = Signal()
 
@@ -70,6 +72,9 @@ class TrayIcon(QSystemTrayIcon):
         self._click_through_action.triggered.connect(self.toggle_click_through_requested)
         self._reset_action = QAction("Reset encounter", self._menu)
         self._reset_action.triggered.connect(self.reset_requested)
+        self._update_action = QAction(self._menu)
+        self._update_action.triggered.connect(self.restart_update_requested)
+        self.set_update_ready("")
         self._quit_action = QAction("Quit", self._menu)
         self._mute_action = QAction("Mute audio", self._menu)
         self._mute_action.setCheckable(True)
@@ -86,6 +91,7 @@ class TrayIcon(QSystemTrayIcon):
         self._menu.addAction(self._click_through_action)
         self._menu.addSeparator()
         self._menu.addAction(self._mute_action)
+        self._menu.addAction(self._update_action)
         self._menu.addAction(self._quit_action)
         self.setContextMenu(self._menu)
         self.activated.connect(self._on_activated)
@@ -131,6 +137,13 @@ class TrayIcon(QSystemTrayIcon):
 
     def set_muted(self, muted: bool) -> None:
         self._mute_action.setChecked(muted)
+
+    def set_update_ready(self, version: str) -> None:
+        """Keep a downloaded update accessible even after its notice is dismissed."""
+        version = version.strip()
+        self._update_action.setText(f"Restart to update to PNUT {version}" if version else "")
+        self._update_action.setVisible(bool(version))
+        self._update_action.setEnabled(bool(version))
 
     # -- notifications --------------------------------------------------------------
 

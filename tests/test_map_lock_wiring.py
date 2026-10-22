@@ -162,6 +162,84 @@ class MapLockWiringTests(unittest.TestCase):
         self.assertEqual(host.tray._overlay_locked, locked)
         self.assertEqual(self.settings.value("overlay/locked", type=bool), locked)
 
+    def test_download_ready_is_wired_to_global_countdown_and_tray_action(self):
+        host = self.bootstrap()
+        controller = host.app_updates
+        controller.ready_package = Path(self.temp.name) / "verified-package"
+        controller.ready_version = "9.8.7"
+        controller.automatic_restart_allowed = Mock(return_value=True)
+        controller.prepare_restart = Mock(return_value=True)
+        controller.finished.emit("PNUT 9.8.7 downloaded.")
+        controller.ready.emit("9.8.7")
+        notice = host._update_notice
+        try:
+            self.assertTrue(notice.isVisible())
+            self.assertIn("Restarting in 10 seconds", host.window._status_bar.currentMessage())
+            self.assertTrue(host.window.page("settings")._app_update_ready)
+            self.assertTrue(host.tray._update_action.isVisible())
+            controller.ready.emit("9.8.7")
+            self.assertIs(host._update_notice, notice)
+            notice.later_button.click()
+            self.assertFalse(notice.isVisible())
+            controller.prepare_restart.assert_not_called()
+            host.request_quit.assert_not_called()
+        finally:
+            notice.stop()
+            notice.deleteLater()
+
+    def test_overlay_gears_open_each_panels_settings_in_the_main_app(self):
+        from PySide6.QtCore import QPoint
+
+        host = self.bootstrap(Config(player_name="SampleHero", casual_mode=False, revenge_enabled=True))
+        host.overlay.timer_panel.set_always_show(True)
+        self.settings.setValue("attack_bar/weapon_delay", 36)
+        host.overlay.attack_bar.reload_preferences()
+        host.overlay.npc_panel.show_npc("Sample Keeper")
+        host.revenge.save_attacker("FictionalRival")
+        host.show_revenge_popout()
+        self.assertEqual(len(host._overlay_settings_gears), 6)
+        destinations = (
+            (host.overlay, "overlay_enabled"),
+            (host.overlay.timer_panel, "triggers"),
+            (host.overlay.attack_bar, "attack_bar"),
+            (host.overlay.npc_panel, "npc_enabled"),
+            (host.map_overlay, "map_download_button"),
+            (host.revenge_popout, "revenge_enabled"),
+        )
+        with patch.object(host, "show_window") as show, \
+                patch.object(host.window, "_open_settings_option") as settings, \
+                patch.object(host.window, "show_page") as page:
+            for panel, destination in destinations:
+                with self.subTest(destination=destination):
+                    show.reset_mock()
+                    settings.reset_mock()
+                    page.reset_mock()
+                    panel.show()
+                    gear = panel._settings_gear
+                    position = panel.mapToGlobal(QPoint(10, 10))
+                    with patch("mnmparse.app.overlay_settings.QCursor.pos", return_value=position):
+                        gear.sync()
+                        self.assertTrue(gear.isVisible())
+                        gear.click()
+                    show.assert_called_once()
+                    if destination == "triggers":
+                        page.assert_called_once_with("triggers")
+                        settings.assert_not_called()
+                    else:
+                        settings.assert_called_once_with(destination)
+                        page.assert_not_called()
+
+    def test_combat_gear_hides_immediately_when_click_through_is_enabled(self):
+        from PySide6.QtCore import QPoint
+
+        host = self.bootstrap()
+        gear = host.overlay._settings_gear
+        with patch("mnmparse.app.overlay_settings.QCursor.pos", return_value=host.overlay.mapToGlobal(QPoint(10, 10))):
+            gear.sync()
+            self.assertTrue(gear.isVisible())
+            host.overlay.set_click_through(True)
+            self.assertFalse(gear.isVisible())
+
     def assert_appearance(self, opacity, font_scale):
         self.assertEqual(self.host.map_overlay.appearance, (opacity, font_scale))
         self.assertEqual((self.host.revenge_popout.opacity, self.host.revenge_popout.font_scale),

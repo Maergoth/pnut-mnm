@@ -244,6 +244,42 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("installed Windows build", messages[0])
         download.assert_not_called()
 
+    def test_automatic_restart_suppresses_only_matching_confirmed_failed_release(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        valid = {"schema": 1, "token": "a" * 32, "status": "rolled_back", "version": "9.8.7"}
+        cases = (
+            ("rolled back", valid, False),
+            ("failed", {**valid, "status": "failed"}, False),
+            ("already reported", {**valid, "reported": True}, False),
+            ("v-prefixed receipt", {**valid, "version": "v9.8.7"}, False),
+            ("different failed target", {**valid, "version": "9.8.6"}, True),
+            ("healthy", {**valid, "status": "healthy"}, True),
+            ("pending", {**valid, "status": "pending"}, True),
+            ("invalid schema", {**valid, "schema": 2}, True),
+            ("invalid token", {**valid, "token": "invalid"}, True),
+            ("missing version", {key: value for key, value in valid.items() if key != "version"}, True),
+            ("malformed version", {**valid, "version": "9.8"}, True),
+            ("nontext version", {**valid, "version": 9}, True),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            installation = Path(temp)
+            receipt = installation / ".pnut-update.json"
+            with patch.object(updates, "installed_directory", return_value=installation):
+                self.assertTrue(controller.automatic_restart_allowed("9.8.7"))
+                for label, record, expected in cases:
+                    with self.subTest(case=label):
+                        receipt.write_text(json.dumps(record), encoding="utf-8")
+                        self.assertEqual(controller.automatic_restart_allowed("9.8.7"), expected)
+                receipt.write_text(json.dumps(valid), encoding="utf-8")
+                self.assertFalse(controller.automatic_restart_allowed("v9.8.7"))
+                receipt.write_text("not json", encoding="utf-8")
+                self.assertTrue(controller.automatic_restart_allowed("9.8.7"))
+                for unsupported in ("9.8", "arbitrary", None):
+                    self.assertFalse(controller.automatic_restart_allowed(unsupported))
+            with patch.object(updates, "installed_directory", side_effect=updates.UpdateError("Source build")):
+                self.assertFalse(controller.automatic_restart_allowed("9.8.7"))
+
     def test_concurrent_starts_and_late_shutdown_results_are_ignored(self):
         controller = updates.AppUpdateController()
         ready = []

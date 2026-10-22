@@ -232,12 +232,28 @@ def verify_package_version(package: Path, version: str) -> dict:
 
 
 def download_update(cancelled: threading.Event, progress: Callable[[str], None],
-                    installation: Path | None = None) -> tuple[str, Path] | None:
+                    installation: Path | None = None, *, retained_version: str = "") -> tuple[str, Path] | None:
     progress("Checking GitHub for application updates…")
     payload = json.loads(_fetch(LATEST_URL, 1024 * 1024, cancelled))
     release = select_release(payload)
     if release is None:
         return None
+    if retained_version:
+        # A failed download remains available for a deliberate retry while we
+        # check for a fixed release. Do not download its large archive again or
+        # replace it with an older release if the failed release was withdrawn.
+        if version_tuple(release.version) < version_tuple(retained_version):
+            return None
+        if release.version == retained_version:
+            pending = _pending_record(installation) if installation is not None else None
+            if pending is None or pending[0]["version"] != retained_version:
+                raise UpdateError("The saved update is unavailable. Download it again.")
+            record, stage = pending
+            progress("Verifying the saved application update…")
+            verify_archive(stage / record["archive"], (stage / "release.sha256").read_bytes(), record["archive"])
+            if cancelled.is_set():
+                raise _Cancelled("Update cancelled.")
+            return retained_version, stage / "package"
     root = _stage_root()
     root.mkdir(parents=True, exist_ok=True)
     prune_owned(root, "update-stage", keep=3, max_age_days=7)
@@ -372,7 +388,11 @@ def prepare_pending_update(arguments: list[str] | None = None) -> tuple[bool, st
     messages: list[str] = []
     controller.finished.connect(messages.append)
     try:
-        prepared = controller.restore_pending() and controller.prepare_restart(arguments)
+        restored = controller.restore_pending()
+        if restored and not controller.automatic_restart_allowed(controller.ready_version):
+            return False, (f"PNUT {controller.ready_version} previously failed to update. "
+                           "Automatic retry is paused; open Settings > App updates to retry.")
+        prepared = restored and controller.prepare_restart(arguments)
         return bool(prepared), messages[-1] if messages else ""
     finally:
         controller.shutdown()
@@ -766,8 +786,9 @@ class _Signals(QObject):
 
 
 class _Worker:
-    def __init__(self, installation: Path | None = None) -> None:
+    def __init__(self, installation: Path | None = None, retained: tuple[str, Path] | None = None) -> None:
         self.installation = installation
+        self.retained = retained
         self.cancelled = threading.Event()
         self.signals = _Signals()
 
@@ -781,8 +802,17 @@ class _Worker:
     def run(self) -> None:
         try:
             result = download_update(self.cancelled, lambda message: self._emit(self.signals.progress, message),
-                                     installation=self.installation)
-            message = f"PNUT {result[0]} is ready. Restart now or quit and reopen to install." if result else f"PNUT {APP_VERSION} is up to date."
+                                     installation=self.installation,
+                                     retained_version=self.retained[0] if self.retained else "")
+            if result is None and self.retained is not None:
+                result = self.retained
+                message = (f"No newer application update is available. PNUT {result[0]} remains downloaded; "
+                           "automatic retry is paused.")
+            elif self.retained is not None and result is not None and result[0] == self.retained[0]:
+                message = (f"PNUT {result[0]} remains downloaded. Automatic retry is paused; "
+                           "restart from Settings or the tray to retry.")
+            else:
+                message = f"PNUT {result[0]} is ready. Restart now or quit and reopen to install." if result else f"PNUT {APP_VERSION} is up to date."
             self._emit(self.signals.completed, result, message)
         except Exception as exc:
             log.warning("Application update failed: %s", exc)
@@ -810,6 +840,24 @@ class AppUpdateController(QObject):
     @property
     def ready_package(self) -> Path | None:
         return self._ready_package
+
+    @property
+    def ready_version(self) -> str:
+        return self._ready_version
+
+    def automatic_restart_allowed(self, version: str) -> bool:
+        """Avoid retrying a failed release automatically; explicit retry stays available."""
+        try:
+            target = version_tuple(version)
+            record = _receipt(installed_directory())
+        except (OSError, UpdateError):
+            return False
+        if record is None or record["status"] not in {"rolled_back", "failed"}:
+            return True
+        try:
+            return version_tuple(record.get("version")) != target
+        except UpdateError:
+            return True  # A malformed version is not evidence this target failed.
 
     def restore_pending(self) -> bool:
         """Recover readiness without contacting GitHub or executing the package."""
@@ -848,11 +896,12 @@ class AppUpdateController(QObject):
             return False
         if self._ready_package is None:
             self.restore_pending()
-        if self._ready_package is not None:
+        if self._ready_package is not None and self.automatic_restart_allowed(self._ready_version):
             self.finished.emit(f"PNUT {self._ready_version} is ready. Restart now or quit and reopen to install.")
             self.ready.emit(self._ready_version)
             return False
-        self._worker = worker = _Worker(install)
+        retained = (self._ready_version, self._ready_package) if self._ready_package is not None else None
+        self._worker = worker = _Worker(install, retained)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.completed.connect(self._on_completed)
         self.started.emit()

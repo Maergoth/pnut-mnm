@@ -2397,7 +2397,7 @@ class SettingsPage(QWidget):
         row.addWidget(self.app_recovery_button)
         self.app_update_on_startup = QCheckBox("On startup")
         self.app_update_on_startup.setToolTip(
-            "Download app updates from GitHub on startup and offer to restart when ready."
+            "Check GitHub on startup, download updates and restart automatically after a visible 10-second countdown. Choose Later to postpone."
         )
         self.app_update_on_startup.setChecked(
             self._settings.value("app/update_on_startup", False, type=bool)
@@ -2422,7 +2422,7 @@ class SettingsPage(QWidget):
             self.app_update_requested.emit()
 
     def set_app_update_status(self, message: str, running: bool, ready: bool = False) -> None:
-        """Offer a restart only after an app update is ready to install."""
+        """Keep progress and the manual restart action available alongside the notice."""
         self._app_update_ready = ready
         self.app_update_button.setText("Restart to update" if ready else "Update")
         self.app_update_button.setEnabled(not running)
@@ -3438,6 +3438,10 @@ class SettingsPage(QWidget):
         self.crop_picker.set_config(cfg)
         self.player_status_picker.set_config(dataclasses.replace(cfg, crop=self.player_status_picker.crop()))
         self._on_form_changed()
+
+    def has_unsaved_changes(self) -> bool:
+        """Automatic app restarts must not discard a settings draft."""
+        return self.form_config() != self._cfg
 
     def _on_form_changed(self) -> None:
         if not self._loading:
