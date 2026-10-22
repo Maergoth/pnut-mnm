@@ -34,6 +34,13 @@ Cloudflare runtime; no separate player account or sign-in is required. Worker pu
 and a desktop app release are separate operations. The Python `leaderboard_service`
 remains an optional local/reference adapter.
 
+Leaderboard schema 2 adds nullable attributes, AC, resists and derived totals. Preserve
+the exact legacy signed payload when reading older rows; inserting defaults would
+invalidate its signature. `stat_total` is the seven attributes and `resist_total` the
+eight resists, each from one complete observation. The local ledger keeps independent
+per-stat records and capture timestamps. Fresh current readings are submitted, never a
+combination of local maxima. Keep records out of session state, configuration and logs.
+
 For development, set `PNUT_LEADERBOARD_SUBMIT_URL=https://YOUR-SERVICE/snapshots`;
 an empty override disables Submit. HTTP is accepted only on localhost/loopback for
 local service tests. Redirects, credentials and query-string secrets are rejected.
