@@ -100,7 +100,7 @@ function validateShape(record) {
     throw new InvalidSnapshot("Unexpected fields");
   }
   if (fields === FIELDS) {
-    if (record.schema_version !== 2) throw new InvalidSnapshot("Unsupported version");
+    if (record.schema_version !== 2 && record.schema_version !== 3) throw new InvalidSnapshot("Unsupported version");
     if (normalizeMessage(record.message) !== record.message) throw new InvalidSnapshot("Invalid public message");
     for (const field of READING_FIELDS) {
       if (record[field] !== null && (!Number.isSafeInteger(record[field]) || Math.abs(record[field]) > 1_000_000_000)) {
@@ -110,7 +110,13 @@ function validateShape(record) {
     for (const [total, group] of [["stat_total", ATTRIBUTES], ["resist_total", RESISTS]]) {
       const expected = group.every((field) => record[field] !== null)
         ? group.reduce((sum, field) => sum + record[field], 0) : null;
-      if (record[total] !== expected) throw new InvalidSnapshot("Invalid character total");
+      if (record.schema_version === 2) {
+        if (record[total] !== expected) throw new InvalidSnapshot("Invalid character total");
+      } else if (record[total] !== null && (!Number.isSafeInteger(record[total])
+          || Math.abs(record[total]) > group.length * 1_000_000_000
+          || expected === null || record[total] > expected)) {
+        throw new InvalidSnapshot("Invalid personal-best total");
+      }
     }
   }
   for (const [field, pattern] of [["public_key", HEX64], ["submission_id", HEX32], ["signature", HEX128]]) {

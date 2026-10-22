@@ -43,6 +43,17 @@ records.update(v2_current=record(1, legacy=False, **character),
                v2_partial=record(1, legacy=False, **{**character, "wisdom": None, "resist_magic": None}),
                v2_message=record(1, legacy=False, message='<b>SHIT!</b> Café 🐉 & "great"', **character),
                v2_message_retry=record(1, legacy=False, sequence=11, message="Different public message", **character))
+best_values = {**dict.fromkeys(leaderboard.READING_FIELDS, 1), "strength": 100, "stamina": 100,
+               "resist_cold": 100, "resist_corruption": 100, "max_health": 900, "max_mana": 700,
+               "stat_total": 106, "resist_total": 107}
+highs = {name: {"value": value, "captured_at": "2026-10-21T14:00:00Z"} for name, value in best_values.items()}
+personal_bests = leaderboard.make_personal_best_snapshot(records["v2_current"], highs,
+    {field: records["v2_current"][field] for field in leaderboard.COUNTERS}, b"\x01" * 32, 10,
+    message="Personal records 🐉")
+records["v3_bests"] = personal_bests
+records["v3_no_complete"] = leaderboard.make_personal_best_snapshot(records["v2_current"],
+    {name: entry for name, entry in highs.items() if name not in leaderboard.TOTAL_FIELDS},
+    {field: records["v2_current"][field] for field in leaderboard.COUNTERS}, b"\x01" * 32, 10)
 for field in leaderboard.COUNTERS:
     records["decreased_" + field] = record(1, **{field: records["previous"][field] - 1})
 # These remain correctly signed but must fail policy/field validation.
@@ -59,6 +70,13 @@ altered = {**records["v2_current"], "stat_total": 99999}
 altered["signature"] = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32).sign(
     leaderboard.signing_bytes(altered)).hex()
 records["signed_bad_v2_total"] = altered
+for name, changes in (("signed_bad_v3_total", {"stat_total": 206}),
+                      ("signed_bad_v3_partial", {"wisdom": None}),
+                      ("signed_bad_v3_range", {"resist_total": -8 * leaderboard.MAX_STAT - 1})):
+    altered = {**personal_bests, **changes}
+    altered["signature"] = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32).sign(
+        leaderboard.signing_bytes(altered)).hex()
+    records[name] = altered
 for name, message in (("signed_bad_message", "uncensored shit"),
                       ("signed_noncanonical_message", "  Two\tspaces  ")):
     altered = {**records["v2_current"], "message": message}

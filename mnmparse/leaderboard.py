@@ -96,10 +96,17 @@ def validate_reading_stats(record: dict[str, Any]) -> None:
         if value is not None and (type(value) is not int or not -MAX_STAT <= value <= MAX_STAT):
             raise ValueError("Invalid character stat")
     expected = reading_stats(record)
-    for name in TOTAL_FIELDS:
+    for name, group in (("stat_total", ATTRIBUTE_FIELDS), ("resist_total", RESIST_FIELDS)):
         value = record[name]
-        if (value is not None and type(value) is not int) or value != expected[name]:
-            raise ValueError("Character total must match one complete reading")
+        if record["schema_version"] == 2:
+            if (value is not None and type(value) is not int) or value != expected[name]:
+                raise ValueError("Character total must match one complete reading")
+        elif value is not None:
+            # Individual bests need not coexist. Their sum is only an upper
+            # bound, never a replacement for a complete-reading total record.
+            if (type(value) is not int or not -len(group) * MAX_STAT <= value <= len(group) * MAX_STAT
+                    or expected[name] is None or value > expected[name]):
+                raise ValueError("Invalid personal-best total")
 
 
 def validate_snapshot(record: Any) -> dict[str, Any]:
@@ -108,7 +115,7 @@ def validate_snapshot(record: Any) -> dict[str, Any]:
         raise ValueError("Unexpected snapshot fields")
     if set(record) == FIELDS:
         from mnmparse.leaderboard_messages import validate_message
-        if type(record["schema_version"]) is not int or record["schema_version"] != 2:
+        if type(record["schema_version"]) is not int or record["schema_version"] not in (2, 3):
             raise ValueError("Unsupported snapshot version")
         validate_message(record["message"])
         validate_reading_stats(record)
@@ -147,15 +154,33 @@ def validate_snapshot(record: Any) -> dict[str, Any]:
 
 def make_snapshot(stats: dict[str, Any], counters: dict[str, int], private_key: bytes,
                   sequence: int, *, message: str = "") -> dict[str, Any]:
+    """Build the existing version-2 current-reading format without changing its meaning."""
+    return _make_signed_snapshot(stats, counters, private_key, sequence, message, 2, reading_stats(stats))
+
+
+def make_personal_best_snapshot(fresh_context: dict[str, Any], records: dict[str, Any],
+                                counters: dict[str, int], private_key: bytes, sequence: int,
+                                *, message: str = "") -> dict[str, Any]:
+    """Sign protected personal records using a fresh capture's date and backend."""
+    best = {field: (records.get(field) or {}).get("value") for field in RECORD_FIELDS}
+    stats = {"captured_at": fresh_context["captured_at"], "capture_backend": fresh_context.get("capture_backend"),
+             "max_health": best["max_health"], "max_mana": best["max_mana"]}
+    return _make_signed_snapshot(stats, counters, private_key, sequence, message, 3,
+                                 {field: best[field] for field in EXTRA_STATS})
+
+
+def _make_signed_snapshot(stats: dict[str, Any], counters: dict[str, int], private_key: bytes,
+                          sequence: int, message: str, version: int,
+                          character: dict[str, int | None]) -> dict[str, Any]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from mnmparse.leaderboard_messages import normalize_message
     key, stamp = public_key(private_key), stats["captured_at"]
     record = {"public_key": key.hex(), "submission_id": daily_id(key, stamp), "alias": alias_for_key(key),
               "captured_at": stamp, "max_health": stats.get("max_health"), "max_mana": stats.get("max_mana"),
               **{field: counters[field] for field in COUNTERS}, "sequence": sequence,
-              "capture_backend": stats.get("capture_backend"), "schema_version": 2,
+              "capture_backend": stats.get("capture_backend"), "schema_version": version,
               "message": normalize_message(message),
-              **reading_stats(stats)}
+              **character}
     record["signature"] = Ed25519PrivateKey.from_private_bytes(private_key).sign(signing_bytes(record)).hex()
     return validate_snapshot(record)
 

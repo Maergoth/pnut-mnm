@@ -95,6 +95,34 @@ test("v2 signed totals require one complete group and accept explicit zero or ne
   assert.equal((await post(R.signed_bad_v2_total)).status, 400);
 });
 
+test("v3 personal bests keep observed totals rather than summing independent maxima", async () => {
+  assert.equal(R.v3_bests.schema_version, 3);
+  assert.equal(R.v3_bests.strength + R.v3_bests.stamina, 200);
+  assert.equal(R.v3_bests.stat_total, 106);
+  assert.equal(R.v3_bests.resist_total, 107);
+  assert.equal(R.v3_bests.max_health, 900);
+  assert.equal(R.v3_bests.max_mana, 700);
+  for (const record of [R.v3_bests, R.v3_no_complete]) {
+    assert.deepEqual(await validateSnapshot(record), record);
+    const { post } = setup([R.v2_previous]);
+    assert.equal((await post(record)).status, 201);
+  }
+  assert.equal(R.v3_no_complete.stat_total, null);
+  assert.equal(R.v3_no_complete.resist_total, null);
+  for (const record of [R.signed_bad_v3_total, R.signed_bad_v3_partial, R.signed_bad_v3_range]) {
+    const { github, post } = setup();
+    assert.equal((await post(record)).status, 400);
+    assert.equal(github.puts, 0);
+  }
+  for (const original of [R.current, R.v2_current, R.v3_bests]) {
+    const { post, github } = setup([original]);
+    const repeat = await post(R.v3_bests);
+    assert.equal(repeat.status, 200);
+    assert.deepEqual((await repeat.json()).snapshot, original);
+    assert.equal(github.puts, 0);
+  }
+});
+
 test("optional public messages match Python normalization and preserve signed Unicode and first daily message", async () => {
   for (const [input, expected] of fixture.messages) assert.equal(normalizeMessage(input), expected);
   assert.throws(() => normalizeMessage("🐉".repeat(161)));

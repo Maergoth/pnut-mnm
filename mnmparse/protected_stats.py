@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 from mnmparse.grammar import is_you
-from mnmparse.leaderboard import (COUNTERS, MAX_NUMBER, MAX_STAT, RECORD_FIELDS, alias_for_key, make_snapshot,
+from mnmparse.leaderboard import (COUNTERS, MAX_NUMBER, MAX_STAT, RECORD_FIELDS, alias_for_key, make_personal_best_snapshot,
                                  parse_stamp, phrase_key, public_key, reading_stats)
 
 MAGIC = b"PNUT-DPAPI-v1\x00"
@@ -322,8 +322,8 @@ class ProtectedLedger:
             value = self._load()  # Decrypt and validate the protected source immediately before signing.
             if value["stats"] is None:
                 raise ProtectionError("Read current mini stats using Window Capture before submitting")
-            record = make_snapshot(value["stats"], value["counters"], bytes.fromhex(value["key"]), value["sequence"],
-                                   message=message)
+            record = make_personal_best_snapshot(value["stats"], value["records"], value["counters"],
+                                                bytes.fromhex(value["key"]), value["sequence"], message=message)
             signatures = value["prepared_signatures"]
             if record["signature"] not in signatures:
                 value["prepared_signatures"] = (signatures + [record["signature"]])[-64:]

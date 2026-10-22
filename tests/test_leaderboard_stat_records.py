@@ -78,7 +78,7 @@ class StatSchemaTests(unittest.TestCase):
         for changes in ({"stat_total": 9999}, {"resist_total": 9999}, {"wisdom": None},
                         {"strength": True}, {"strength": 1.0}, {"armor_class": model.MAX_STAT + 1},
                         {"resist_cold": -model.MAX_STAT - 1}, {"schema_version": True},
-                        {"schema_version": 3}, {"character_name": "fictional"}):
+                        {"schema_version": 4}, {"character_name": "fictional"}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 model.validate_snapshot(resign({**current, **changes}))
         with self.assertRaises(ValueError):
@@ -97,6 +97,27 @@ class StatSchemaTests(unittest.TestCase):
         old_client = signed(observation("2026-10-24T14:00:00Z"), legacy=True, sequence=3)
         self.assertEqual(GitHubStore("fixture", opener=fake).append(old_client), (old_client, True))
         self.assertEqual(model.parse_records(fake.data.decode(), strict=True), [legacy, next_day, old_client])
+
+    def test_personal_best_schema_preserves_totals_instead_of_summing_individual_records(self):
+        values = {**observation(), "strength": 100, "stamina": 100, "resist_cold": 100,
+                  "resist_corruption": 100, "stat_total": 106, "resist_total": 107}
+        highs = {field: {"value": values[field], "captured_at": FIRST} for field in model.RECORD_FIELDS}
+        current = observation(SECOND, max_health=100, max_mana=None)
+        record = model.make_personal_best_snapshot(current, highs, dict.fromkeys(model.COUNTERS, 0), KEY, 2)
+        self.assertEqual(record["schema_version"], 3)
+        self.assertEqual((record["stat_total"], record["resist_total"]), (106, 107))
+        self.assertEqual((record["strength"], record["stamina"], record["max_health"], record["max_mana"]),
+                         (100, 100, 733, 570))
+        self.assertEqual(record["captured_at"], SECOND)
+        self.assertEqual(model.parse_records(model.dump_records([record]), strict=True), [record])
+        for changes in ({"stat_total": 206}, {"resist_total": 207}, {"wisdom": None},
+                        {"stat_total": True}, {"stat_total": -7 * model.MAX_STAT - 1}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                model.validate_snapshot(resign({**record, **changes}))
+        absent_totals = resign({**record, "stat_total": None, "resist_total": None})
+        self.assertEqual(model.validate_snapshot(absent_totals), absent_totals)
+        with self.assertRaises(ValueError):
+            model.validate_snapshot(resign({**record, "schema_version": 2}))
 
     def test_public_message_is_normalized_before_signing_then_immutable_for_the_day(self):
         first = signed(message='  <b>SHIT!</b> Café 🐉 & "great"  ')
@@ -137,9 +158,12 @@ class LocalStatRecordTests(unittest.TestCase):
         self.assertEqual(highs["resist_total"], {"value": 107, "captured_at": FIRST})
         self.assertEqual(highs["max_health"]["value"], 733)
         self.assertEqual(highs["max_mana"]["value"], 570)
-        current = self.ledger.prepare_submission()
-        self.assertEqual((current["strength"], current["stamina"], current["max_health"], current["max_mana"]),
-                         (1, 100, 700, 500))
+        best = self.ledger.prepare_submission()
+        self.assertEqual(best["schema_version"], 3)
+        self.assertEqual((best["strength"], best["stamina"], best["max_health"], best["max_mana"]),
+                         (100, 100, 733, 570))
+        self.assertEqual((best["stat_total"], best["resist_total"]), (106, 107))
+        self.assertEqual(best["captured_at"], SECOND)
         partial = observation(THIRD, **dict.fromkeys(model.READING_FIELDS, None))
         partial.update(strength=999999, resist_fire=888888)
         self.ledger.record_stats(partial)
@@ -148,7 +172,31 @@ class LocalStatRecordTests(unittest.TestCase):
         self.assertEqual(highs["resist_fire"]["value"], 888888)
         self.assertEqual(highs["stat_total"]["value"], 106)
         self.assertEqual(highs["resist_total"]["value"], 107)
-        self.assertIsNone(self.ledger.prepare_submission()["stat_total"])
+        self.assertEqual(self.ledger.prepare_submission()["stat_total"], 106)
+        self.assertEqual(self.ledger.prepare_submission()["resist_total"], 107)
+
+    def test_individual_partial_records_never_invent_a_complete_total(self):
+        for index, field in enumerate(model.READING_FIELDS):
+            partial = observation(**dict.fromkeys(model.READING_FIELDS, None))
+            partial[field] = index
+            self.ledger.record_stats(partial)
+        best = self.ledger.prepare_submission()
+        self.assertTrue(all(best[field] is not None for field in model.READING_FIELDS))
+        self.assertIsNone(best["stat_total"])
+        self.assertIsNone(best["resist_total"])
+        self.assertNotIn("stat_total", self.ledger.status()["records"])
+
+    def test_restart_preserves_bests_but_requires_fresh_evidence_before_submitting(self):
+        self.ledger.record_stats(observation(strength=100))
+        restarted = ProtectedLedger(self.path)
+        restarted.set_capture_eligible(True)
+        with self.assertRaises(ValueError):
+            restarted.prepare_submission()
+        restarted.record_stats(observation(SECOND, strength=1, max_health=100, max_mana=None))
+        best = restarted.prepare_submission()
+        self.assertEqual((best["strength"], best["max_health"], best["max_mana"], best["stat_total"]),
+                         (100, 733, 570, 106))
+        self.assertEqual(best["captured_at"], SECOND)
 
     def test_zero_negative_and_timestamped_records_survive_only_encrypted_storage(self):
         self.ledger.record_stats(observation(strength=0, armor_class=-7, resist_fire=-8))
