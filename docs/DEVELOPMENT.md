@@ -75,7 +75,7 @@ ZIP under `dist/releases/`, extracts it into a temporary directory, and runs tha
 EXE with a minimal Windows PATH. Only the ZIP and its `.sha256` file are release assets;
 machine-specific install metadata and smoke reports are not.
 
-Publishing is automated. Squash merging a PR that bumps `__version__` in
+Publishing is automated. Merging a PR that bumps `__version__` in
 `mnmparse/__init__.py` runs the build, startup and portable package gates on the merged
 commit without repeating the full regression suite, and the workflow's release
 job then publishes `v<version>` on GitHub with that run's gated ZIP and checksum attached,
