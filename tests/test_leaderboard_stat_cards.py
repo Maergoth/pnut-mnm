@@ -17,6 +17,7 @@ from mnmparse.app import theme
 from mnmparse.app.leaderboard_page import (
     COLUMNS, RECORD_ROWS, LeaderboardCardDelegate, LeaderboardModel, LeaderboardPage, record_lines, record_tooltip,
 )
+from mnmparse.leaderboard import COUNTERS, MAX_NUMBER
 
 
 def sample(number, **changes):
@@ -129,6 +130,8 @@ class StatCardTests(unittest.TestCase):
     def test_narrow_view_scrolls_full_values_and_keyboard_selects_whole_cards(self):
         # Force real overflow even when a previous shell test installed a smaller font.
         large_values = {field: 1_000_000_000 for row in RECORD_ROWS for field in row}
+        large_values.update(stat_total=7_000_000_000, resist_total=8_000_000_000,
+                            **{field: MAX_NUMBER for field in COUNTERS})
         self.page.model.set_records([sample(i, alias="Fictional Golden Antelope", **large_values)
                                      for i in range(10)])
         self.page.resize(700, 740)
