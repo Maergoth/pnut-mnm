@@ -2333,7 +2333,7 @@ class Engine(QObject):
         from mnmparse.app.notable_kills import eligible_group_event, name_key
         from mnmparse.stats import DAMAGE_KINDS
 
-        if (self.state != "running"
+        if (self.state != "running" or not self._leaderboard_frame_current(cfg)
                 or any(bool(getattr(msg, key, False)) for key in ("backlog", "fragment", "estimated_ts"))
                 or event.estimated or event.estimated_ts):
             return

@@ -221,6 +221,57 @@ class LiveKillEngineTests(unittest.TestCase):
         self.deliver(text, 102)
         self.assertEqual(self.kills, [])
 
+    def test_pause_resume_during_ocr_rejects_old_kill_but_fresh_desktop_capture_celebrates(self):
+        import numpy as np
+        from mnmparse.capture import MssRegionSource
+
+        self.cfg = dataclasses.replace(self.cfg, crop=(0, 0, 8, 8), capture_backend="mss",
+                                       player_status_enabled=False)
+        self.engine.update_config(self.cfg)
+        self.engine._source = object.__new__(MssRegionSource)
+        self.engine._ocr = Mock()
+        tracker = self.engine._tracker = Mock()
+        tracker.prev, tracker.scrolled_back, tracker._state = [], False, "live"
+        tracker.update.return_value = [Message(f"You have slain {NPC}!", 100, 2)]
+
+        def pause_during_ocr(_image):
+            self.engine.set_paused(True)
+            self.engine.set_paused(False)
+            return []
+
+        self.engine._ocr.read.side_effect = pause_during_ocr
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        try:
+            self.engine._process_frame(frame, self.cfg)
+            self.assertEqual(self.kills, [])
+            self.engine._ocr.read.side_effect = None
+            self.engine._ocr.read.return_value = []
+            tracker.update.return_value = [Message(f"You have slain {NPC}!", 101, 2),
+                                           Message(f"You crush {NPC} for 10 points of damage.", 102, 2)]
+            self.engine._process_frame(frame, self.cfg)
+            self.assertEqual(len(self.kills), 1)
+            self.assertEqual(len(self.activity), 1)
+            self.assertFalse(self.engine._leaderboard_capture_eligible())
+        finally:
+            self.engine._source = None  # This fixture never opens a native capture session.
+
+    def test_old_reader_configuration_and_source_cannot_emit_live_group_events(self):
+        old_cfg = self.cfg
+        self.engine.update_config(dataclasses.replace(old_cfg, crop=(0, 0, 8, 8)))
+        self.deliver(f"You have slain {NPC}!")
+        self.assertEqual(self.kills, [])
+
+        self.cfg = self.engine.config
+        self.engine._leaderboard_frame_context = (
+            self.engine._player_reader_epoch, object(), self.engine._leaderboard_reader_key(self.cfg))
+        self.deliver(f"You have slain {NPC}!", 101)
+        self.deliver(f"You crush {NPC} for 10 points of damage.", 102)
+        self.assertEqual(self.kills, [])
+        self.assertEqual(self.activity, [])
+        self.engine._leaderboard_frame_context = None
+        self.deliver(f"You have slain {NPC}!", 103)
+        self.assertEqual(len(self.kills), 1)
+
     def test_player_consider_identity_excludes_a_same_named_notable_victim(self):
         self.deliver(f"{NPC} Battle with them would be risky.")
         self.deliver(f"You have slain {NPC}!", 101)
