@@ -602,6 +602,10 @@ Corrupted codes are rejected rather than imported with changed settings.
 "Fire this trigger now" applies the trigger, including its overlap rule, without waiting
 for the text. **Gatekick**, **Healkick**, and **Invis Break** are included on every install.
 Fresh installations also include **Resist**, which says “resist” when a target resists your spell.
+Fresh installations also include **Fizzle**, which plays its bundled sound when
+**Your spell fizzles!** is read, with no countdown.
+The sound travels with the app, so it does not need a file in Downloads. Existing trigger
+profiles stay unchanged; choose **Restore starter triggers** to add this missing starter.
 Invis Break matches **You begin to feel yourself appearing**. Version 0.1.6 corrects the old
 default match once while preserving customized patterns, other settings, and deleted presets.
 New installs use an immediate Falling sound with no Invis Break countdown or delayed alerts.

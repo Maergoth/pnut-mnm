@@ -194,7 +194,7 @@ class TimerRuntimeTests(unittest.TestCase):
             path = Path(tmp) / "triggers.json"
             with patch("mnmparse.app.triggers_runtime.project_path", return_value=path):
                 store = default_store()
-                self.assertEqual([t.name for t in store.triggers], ["Gatekick", "Healkick", "Invis Break", "Resist"])
+                self.assertEqual([t.name for t in store.triggers], ["Gatekick", "Healkick", "Invis Break", "Resist", "Fizzle"])
                 self.assertTrue(path.is_file())
                 self.assertEqual(default_store().to_dict(), store.to_dict())
                 path.write_text("invalid json", encoding="utf-8")

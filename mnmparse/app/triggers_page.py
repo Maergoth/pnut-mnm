@@ -287,7 +287,7 @@ class TriggersPage(QWidget):
         lay.addWidget(self.undo_delete)
         starters = QPushButton("Restore starter triggers")
         starters.setObjectName("Chip")
-        starters.setToolTip("Add missing Gatekick, Healkick, Invis Break and Resist starters; keep existing trigger settings")
+        starters.setToolTip("Add missing Gatekick, Healkick, Invis Break, Resist and Fizzle starters; keep existing trigger settings")
         starters.clicked.connect(self._restore_presets)
         lay.addWidget(starters)
         return panel

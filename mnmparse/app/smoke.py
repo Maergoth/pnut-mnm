@@ -561,9 +561,29 @@ def _exercise(report: dict[str, Any]) -> None:
             store = TriggerStore()
             store.install_presets()
             names = {trigger.name for trigger in store.triggers}
-            if not {"Gatekick", "Healkick", "Invis Break", "Resist"}.issubset(names):
+            if not {"Gatekick", "Healkick", "Invis Break", "Resist", "Fizzle"}.issubset(names):
                 raise RuntimeError(f"Bundled trigger presets missing: {sorted(names)}")
             report["presets"] = sorted(names)
+            report["stage"] = "decode bundled Fizzle sound without playback"
+            import hashlib
+            from PySide6.QtCore import QUrl
+            from PySide6.QtMultimedia import QMediaPlayer
+            from mnmparse.app.triggers_runtime import builtin_sound_path
+
+            recording = builtin_sound_path("Fizzle")
+            if hashlib.sha256(recording.read_bytes()).hexdigest() != "cc1fa5c8b23bd4d227ac7a7c6e890012f80e45e9c2593200f9c6914357738947":
+                raise RuntimeError("Packaged Fizzle recording is missing or changed")
+            player = QMediaPlayer(window)
+            player.setSource(QUrl.fromLocalFile(str(recording)))
+            deadline = time.monotonic() + 3
+            while (player.mediaStatus() not in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.InvalidMedia)
+                   and time.monotonic() < deadline):
+                app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+            if (player.error() != QMediaPlayer.Error.NoError or player.mediaStatus() != QMediaPlayer.MediaStatus.LoadedMedia
+                    or player.duration() <= 0):
+                raise RuntimeError("Packaged Fizzle MP3 could not be decoded")
+            player.setSource(QUrl())
+            report["fizzle"] = {"bundled_recording": True, "unchanged_bytes": True, "mp3_decode": True}
 
             report["stage"] = "exercise timer sharing"
             from mnmparse.trigger_chat import ChatShareAssembler, encode_trigger

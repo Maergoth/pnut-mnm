@@ -28,6 +28,16 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.25": ReleaseNotes(
+        changes=(
+            "Fresh installs include Fizzle: your spell fizzling plays the bundled sound, without a timer.",
+            "Existing trigger settings stay unchanged. Use Restore starter triggers in Triggers to add missing starters.",
+        ),
+        settings_label="App updates",
+        settings_target="app_update_button",
+        feature_page="triggers",
+        feature_label="Open Triggers",
+    ),
     "1.0.24": ReleaseNotes(
         changes=(
             "Overlay gears float above content and highlight settings. Weapon delay is in Settings; Reset Encounter becomes End Encounter.",

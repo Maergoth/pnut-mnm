@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import math
 import struct
+import sys
 import time
 import wave
 from dataclasses import replace
@@ -113,10 +114,15 @@ _CUES = {
     "Siren": lambda: _glide(580, 1060, 0.26) + _glide(1060, 580, 0.26),
     "Victory fanfare": _victory_fanfare,
 }
+_BUNDLED_SOUNDS = {"Fizzle": "fizzle.mp3"}
 
 
 def builtin_sound_path(name: str) -> Path:
-    """The .wav of a built-in cue (written the first time it is asked for)."""
+    """Resolve a bundled recording or a generated built-in WAV cue."""
+    if name in _BUNDLED_SOUNDS:
+        bundle = getattr(sys, "_MEIPASS", None)
+        root = Path(bundle) if bundle else Path(__file__).resolve().parents[2]
+        return root / "assets" / "bundled_sounds" / _BUNDLED_SOUNDS[name]
     name = name if name in _CUES else "Chime"
     folder = project_path("assets") / "sounds"
     path = folder / f"{name.lower().replace(' ', '_')}.wav"
@@ -186,6 +192,9 @@ class AudioOut(QObject):
 
     # -- playback ----------------------------------------------------------------------
     def play_builtin(self, name: str, volume: int = 100) -> None:
+        if name in _BUNDLED_SOUNDS:
+            self.play_file(str(builtin_sound_path(name)), volume)
+            return
         name = name if name in _CUES else "Chime"
         try:
             from PySide6.QtMultimedia import QSoundEffect
