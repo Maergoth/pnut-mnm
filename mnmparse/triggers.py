@@ -53,7 +53,7 @@ ACTIONS: tuple[str, ...] = ("none", "sound", "file", "speak")
 TIMER_MODES: tuple[str, ...] = ("replace", "retain", "stack")
 _LEGACY_TIMER_MODES = {"restart": "replace", "ignore": "retain"}
 #: Built-in cues (generated as small .wav files the first time they are needed).
-BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling", "Siren")
+BUILTIN_SOUNDS: tuple[str, ...] = ("Chime", "Dink", "Alert", "Bell", "Beep", "Low tone", "Tick", "Rising", "Falling", "Siren", "Victory fanfare")
 STORE_VERSION = 1
 # Matching CPU use above 30 ms is diagnostic; regex engine limits allow additional
 # scheduling time. Synchronous callers also limit work started for one line;

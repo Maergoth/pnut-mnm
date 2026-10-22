@@ -42,6 +42,16 @@ the deployed runtime does not support fetch's `error` redirect mode. Its Node
 conformance tests run in PR CI. Large-history capacity needs measurement on the
 actual host; the local Node benchmark does not prove compatibility with a 10 ms tier.
 
+Notable kill celebrations consume `Engine.live_group_kill` and `live_group_activity`,
+emitted only after fresh captured events have been parsed and roster ownership checked.
+Their zone is captured under the engine lock; GUI delivery also verifies the current
+zone and running state. Keep history/import/demo and encounter rebuild paths separate.
+The NPC controller warms zone lists through its bounded cache queue, while the kill
+controller keeps at most 16 unresolved kills for 30 seconds. Only complementary active
+and passive kill notices within two seconds are paired; fresh damage re-arms pairing,
+and distinct same-form kills remain separate. The victory cue is synthesized from the
+user-supplied two-bar score at 130 BPM; no external recording or MIDI is downloaded.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
@@ -155,8 +165,9 @@ mnmparse/            library + CLI
     engine.py        Engine(QObject): worker thread running the pipeline, Qt signals
     models.py        ActorRow / EncounterSnapshot / build_snapshot (CC crediting lives here)
     docked_panel.py  DockedPanel: base for windows that dock under the overlay (drag off, snap back)
-    map_overlay.py  resizable/fullscreen map viewer, asynchronous requests and zone switching
-    npc_details.py  cache-first lookup controller, bounded daemon workers and hover prefetch
+    map_overlay.py  shared asynchronous map viewer: floating overlay or embedded normal widget
+    zones_page.py   independent main-window map browser and cache-backed NPC detail/item view
+    npc_details.py  cache-first lookup controller, shared attached map views, browser signals and bounded workers
     npc_panel.py    detachable NPC details and passive item-stat tooltips
     map_downloads.py  background map updates for Settings and the optional startup download
     app_updates.py  verified GitHub downloads and deferred Windows application replacement
@@ -164,6 +175,7 @@ mnmparse/            library + CLI
     overlay_settings.py hover-only overlay shortcuts into the main app's settings
     read_area_gears.py hover settings shortcuts for the live combat-chat and mini-stat read areas
     monster_icon.py shared scalable NPC glyph for maps and respawn timers
+    notable_npc_menu.py level labels and unique-loot/quest badges for the map's NPC menu
     attack_bar.py    AttackBar: the swing timer window (docked under the timer panel or the overlay)
     timer_panel.py   TimerPanel: trigger countdowns with radial rings, docked under the overlay
     triggers_page.py TriggersPage: trigger list and editor, audio settings

@@ -366,7 +366,7 @@ class NpcPanel(DockedPanel):
         common = getattr(self._details, "common_drops", ()) or ()
         unique = unique_drops_excluding_common(common, getattr(self._details, "unique_drops", ()) or ())
         for key, label in (("unique_drops", "Unique drops"), ("common_drops", "Common drops"),
-                           ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
+                           ("quests", "Quests"), ("reputation", "Reputation gained / lost")):
             if not self._fields[key]:
                 continue
             values = unique if key == "unique_drops" else getattr(self._details, key, ()) or ()

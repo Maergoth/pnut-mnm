@@ -30,11 +30,12 @@ class ReleaseNotes:
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.24": ReleaseNotes(
         changes=(
-            "Hover gears float over overlay content and highlight the relevant options.",
-            "Weapon delay is now in Settings. Reset encounter is now End Encounter.",
-            "Right-click spawn timers show monster icons, including after expiration and restart.",
-            "Overburdened mini stats pulse gray screen edges. Hover the mini-stat or combat-chat read area to open its settings.",
-            "Ranks opens an anonymous Leaderboard. Copy stays local; separate Submit shares daily Window Capture stats. Both have mini-stat hover shortcuts.",
+            "Overlay gears float above content and highlight settings. Weapon delay is in Settings; Reset Encounter becomes End Encounter.",
+            "Spawn timers show monster icons. Notable NPCs show levels, loot swords and quest feathers; victories play a fanfare and open drops.",
+            "Browse maps and NPCs in Zones. Caves of Irem's primary map and periodic wiki refresh work.",
+            "Overburdened weight pulses gray edges; both screen read areas gain hover gears.",
+            "Ranks adds daily anonymous Window Capture submissions; Copy stays local. Both have mini-stat shortcuts.",
+            "Fresh installs include a spoken Resist trigger.",
         ),
         settings_label="Overlay settings",
         settings_target="overlay_enabled",

@@ -376,6 +376,15 @@ def _exercise(report: dict[str, Any]) -> None:
             reference = CachedReference(reference.cache_dir)
             controller = NpcDetailsController(reference, overlay.npc_panel, map_window, window)
             try:
+                zones = window.page("zones")
+                if zones is None or not zones.map.embedded:
+                    raise RuntimeError("The main Zones browser is unavailable")
+                zones.bind(controller)
+                zones.map.set_zone("Night Harbor")
+                zones.map.npc_selected.emit("Smoke Keeper")
+                if zones.details.selected_name != "Smoke Keeper" or "Smoke Staff" not in zones.details.browser.toPlainText():
+                    raise RuntimeError("The main Zones pane did not display cached NPC details")
+                report["zones"] = {"embedded_map": True, "cached_npc_details": True, "independent_browsing": True}
                 controller.on_message(None, parse_line("Smoke Keeper seems indifferent to your presence.", 0))
                 if overlay.npc_panel._details != npc or not overlay.npc_panel.options["unique_drops"]:
                     raise RuntimeError("Cached NPC details did not display immediately")

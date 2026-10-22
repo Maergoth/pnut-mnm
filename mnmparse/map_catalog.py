@@ -3,6 +3,7 @@
 This fallback enables downloads when wiki discovery is temporarily unavailable.
 Only successfully inspected zone pages are included; empty tuples mean the page
 had no maps when checked. Live discovery remains authoritative for new maps.
+The Caves of Irem primary and alternate were rechecked on 2026-10-22.
 """
 from types import MappingProxyType
 
@@ -19,7 +20,10 @@ MAP_CATALOG = MappingProxyType({"Ail'Vorith": (('Ailvorith foreignquarters2',
                   ('Blind Midden - Basement',
                    'https://static.wikitide.net/monstersandmemorieswiki/3/3a/Blind_Midden_-_Basement.png',
                    'https://monstersandmemories.miraheze.org/wiki/File:Blind_Midden_-_Basement.png')),
- 'Caves of Irem': (('Caves of Irem1stDraft',
+ 'Caves of Irem': (('Caves of Irem',
+                    'https://static.wikitide.net/monstersandmemorieswiki/2/27/Irem.png',
+                    'https://monstersandmemories.miraheze.org/wiki/File:Irem.png'),
+                   ('Caves of Irem1stDraft',
                     'https://static.wikitide.net/monstersandmemorieswiki/f/fc/Caves_of_Irem1stDraft.jpg',
                     'https://monstersandmemories.miraheze.org/wiki/File:Caves_of_Irem1stDraft.jpg'),),
  'Evershade Weald': (('Evershade Weald june 26',

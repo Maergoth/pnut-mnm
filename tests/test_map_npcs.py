@@ -8,12 +8,17 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.name == "nt":
+    os.environ.setdefault("QT_QPA_FONTDIR", os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"))
 
-from PySide6.QtCore import QPoint, QPointF, QSettings, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, QSettings, Qt
 from PySide6.QtGui import QCursor, QEnterEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 from mnmparse.app.map_overlay import MapOverlay
+from mnmparse.app.notable_npc_menu import NotableNpcMenu
 
 
 class MapNotableNPCTests(unittest.TestCase):
@@ -41,6 +46,24 @@ class MapNotableNPCTests(unittest.TestCase):
 
     def rows(self):
         return [a.text() for a in self.window.notable_npcs_menu.actions() if not a.isSeparator()]
+
+    def narrow_screen(self, menu):
+        """Exercise overflow even when CI provides a wide desktop."""
+        area = QRect(self.app.primaryScreen().availableGeometry())
+        area.setWidth(min(800, area.width()))
+        screen = Mock()
+        screen.availableGeometry.return_value = area
+        self.enterContext(patch.object(menu, "screen", return_value=screen))
+        return area
+
+    @staticmethod
+    def close_popup(menu):
+        # deleteLater alone leaves a failed standalone popup grabbing input
+        # until DeferredDelete runs, which processEvents does not guarantee.
+        if isValid(menu):
+            menu.close()
+            menu.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_hidden_zone_changes_defer_request_until_map_is_opened(self):
         self.assertFalse(self.window.notable_npcs.isEnabled())
@@ -133,6 +156,194 @@ class MapNotableNPCTests(unittest.TestCase):
         self.window.set_appearance(0.5, 2.0)
         self.assertEqual(button.size(), self.window.wiki_link.size())
         self.assertGreater(button.iconSize().width(), 20)
+
+    def test_level_precedes_literal_name_and_metadata_uses_normalized_titles(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_notable_npcs(
+            "Sungreet Strand", ["Bill & Ben", "Fictional Keeper", "Unknown Shade"],
+            levels={"BILL_&_BEN": "12 - 15", "fictional keeper": "30", "Unknown Shade": "Unknown"},
+            unique_loot=[" BILL & BEN ", "fictional_keeper"], quests=["bill_&_ben"])
+        actions = self.window.notable_npcs_menu.actions()
+        self.assertEqual(self.rows(), ["Lv. 12–15  Bill && Ben", "Lv. 30  Fictional Keeper", "Unknown Shade"])
+        self.assertEqual([action.data() for action in actions], ["Bill & Ben", "Fictional Keeper", "Unknown Shade"])
+        self.assertTrue(actions[0].property("notableUniqueLoot"))
+        self.assertTrue(actions[0].property("notableQuests"))
+        self.assertTrue(actions[1].property("notableUniqueLoot"))
+        self.assertFalse(actions[1].property("notableQuests"))
+        self.assertIn("Unique loot", actions[0].toolTip())
+        self.assertIn("quests", actions[0].toolTip())
+        actions[0].trigger()
+        self.assertEqual(self.selections, ["Bill & Ben"])
+
+    def test_metadata_only_update_preserves_native_actions_and_keyboard_selection(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper", "Sand Specter"])
+        menu = self.window.notable_npcs_menu
+        menu.popup(QPoint(20, 20))
+        self.app.processEvents()
+        actions = menu.actions()
+        menu.setActiveAction(actions[1])
+        before_y = [menu.actionGeometry(action).y() for action in actions]
+        self.window.set_notable_npcs(
+            "Sungreet Strand", ["Fictional Keeper", "Sand Specter"],
+            levels={"Fictional Keeper": "12–15", "Sand Specter": "18"},
+            unique_loot=["Fictional Keeper"], quests=["Sand Specter"])
+        self.app.processEvents()
+        self.assertEqual(menu.actions(), actions)
+        self.assertIs(menu.activeAction(), actions[1])
+        self.assertEqual([menu.actionGeometry(action).y() for action in actions], before_y)
+        self.assertEqual(self.rows(), ["Lv. 12–15  Fictional Keeper", "Lv. 18  Sand Specter"])
+        self.assertTrue(actions[1].property("notableQuests"))
+        QTest.keyClick(menu, Qt.Key.Key_Return)
+        self.assertEqual(self.selections, ["Sand Specter"])
+
+    def test_membership_changes_wait_for_close_without_retargeting_current_row(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper", "Sand Specter"])
+        menu = self.window.notable_npcs_menu
+        menu.popup(QPoint(20, 20))
+        self.app.processEvents()
+        original = menu.actions()
+        menu.setActiveAction(original[0])
+        self.window.set_notable_npcs("Sungreet Strand", ["A New Arrival", "Fictional Keeper"], "Refreshing…")
+        self.app.processEvents()
+        self.assertEqual(menu.actions(), original)
+        self.assertIs(menu.activeAction(), original[0])
+        self.assertEqual([action.data() for action in menu.actions()], ["Fictional Keeper", "Sand Specter"])
+        original[0].trigger()
+        self.assertEqual(self.selections, ["Fictional Keeper"])
+        menu.hide()
+        self.app.processEvents()
+        self.assertEqual(self.rows(), ["A New Arrival", "Fictional Keeper", "Refreshing…"])
+
+    def test_zone_change_while_open_never_relabels_or_selects_previous_zone(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper"], levels={"Fictional Keeper": "10"})
+        menu = self.window.notable_npcs_menu
+        menu.popup(QPoint(20, 20))
+        self.app.processEvents()
+        old_action = menu.actions()[0]
+        self.window.set_zone("Night Harbor")
+        self.window.set_notable_npcs("Night Harbor", ["Other Keeper"], levels={"Other Keeper": "35"})
+        self.assertIs(menu.actions()[0], old_action)
+        self.assertEqual(old_action.text(), "Lv. 10  Fictional Keeper")
+        old_action.trigger()
+        self.assertEqual(self.selections, [])
+        menu.hide()
+        self.app.processEvents()
+        self.assertEqual(self.rows(), ["Lv. 35  Other Keeper"])
+
+    def test_live_level_growth_is_clamped_and_does_not_shrink_from_pointer(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper"])
+        menu = self.window.notable_npcs_menu
+        area = self.app.primaryScreen().availableGeometry()
+        menu.popup(QPoint(area.right() - 5, area.top() + 20))
+        self.app.processEvents()
+        action = menu.actions()[0]
+        old_geometry = menu.geometry()
+        menu.setActiveAction(action)
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper"], levels={"Fictional Keeper": "12–15"})
+        self.app.processEvents()
+        self.assertTrue(area.contains(menu.geometry()))
+        self.assertEqual(menu.y(), old_geometry.y())
+        self.assertIs(menu.activeAction(), action)
+        expanded_width = menu.width()
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper"])
+        self.app.processEvents()
+        self.assertGreaterEqual(menu.width(), expanded_width)
+        menu.hide()
+        self.app.processEvents()
+        self.assertEqual(menu.minimumWidth(), 0)
+
+    def test_both_badges_render_separately_and_fit_scaled_native_rows(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper"],
+                                     levels={"Fictional Keeper": "12–15"},
+                                     unique_loot=["Fictional Keeper"], quests=["Fictional Keeper"])
+        menu = self.window.notable_npcs_menu
+        for scale in (0.6, 1.0, 2.0):
+            with self.subTest(scale=scale):
+                self.window.set_appearance(0.85, scale)
+                menu.popup(QPoint(20, 20))
+                self.app.processEvents()
+                action = menu.actions()[0]
+                sword, feather = menu.badge_rects(action)
+                row = menu.actionGeometry(action)
+                self.assertFalse(sword.intersects(feather))
+                self.assertTrue(row.contains(sword.toAlignedRect()))
+                self.assertTrue(row.contains(feather.toAlignedRect()))
+                self.assertGreaterEqual(sword.width(), 14)
+                image = menu.grab().toImage()
+                for rect, channel in ((sword, "gold"), (feather, "blue")):
+                    colored = 0
+                    for y in range(int(rect.top()), int(rect.bottom()) + 1):
+                        for x in range(int(rect.left()), int(rect.right()) + 1):
+                            c = image.pixelColor(x, y)
+                            colored += (c.red() > c.blue() + 35 if channel == "gold"
+                                        else c.blue() > c.red() + 35)
+                    self.assertGreater(colored, 5)
+                menu.hide()
+                self.app.processEvents()
+
+    def test_long_valid_level_growth_stays_on_screen_after_native_popup_layout(self):
+        # Exercise the native popup inset as well as the themed map menu.
+        native = NotableNpcMenu()
+        self.addCleanup(self.close_popup, native)
+        font = native.font()
+        font.setPixelSize(24)
+        native.setFont(font)
+        action = native.addAction("Fictional Keeper")
+        action.setData("Fictional Keeper")
+        area = self.narrow_screen(native)
+        native.popup(QPoint(area.right() - 3, area.bottom() - 3))
+        self.app.processEvents()
+        native.setActiveAction(action)
+        old_y = native.y()
+        # A previously applied app stylesheet can override setFont(24px).
+        # Choose genuine overflow using the polished popup's actual metrics.
+        for last_level in range(30, 100):
+            level = " / ".join(str(n) for n in range(10, last_level))
+            if native.fontMetrics().horizontalAdvance(f"Lv. {level}  Fictional Keeper") > area.width():
+                break
+        self.assertGreater(native.fontMetrics().horizontalAdvance(f"Lv. {level}  Fictional Keeper"), area.width())
+        native.refresh_metadata({"fictional keeper": level}, {"fictional keeper"}, {"fictional keeper"})
+        for _ in range(3):
+            self.app.processEvents()
+        self.assertTrue(area.contains(native.geometry()))
+        self.assertLessEqual(native.actionGeometry(action).right(), native.rect().right())
+        self.assertEqual(native.y(), old_y)
+        self.assertIs(native.activeAction(), action)
+        self.assertEqual(action.data(), "Fictional Keeper")
+        self.assertIn("…", action.text())
+        self.assertTrue(action.text().endswith("Fictional Keeper"))
+        self.assertIn(level, action.toolTip())
+        for rect in native.badge_rects(action):
+            self.assertTrue(native.rect().contains(rect.toAlignedRect()))
+        native.hide()
+        self.app.processEvents()
+
+    def test_initial_long_level_reserves_visible_badges_and_keeps_literal_selection(self):
+        self.window.set_zone("Sungreet Strand")
+        self.window.set_appearance(0.85, 2.0)
+        level = " / ".join(str(n) for n in range(10, 30))
+        self.window.set_notable_npcs("Sungreet Strand", ["Fictional Keeper"],
+                                     levels={"Fictional Keeper": level},
+                                     unique_loot=["Fictional Keeper"], quests=["Fictional Keeper"])
+        menu = self.window.notable_npcs_menu
+        area = self.narrow_screen(menu)
+        menu.popup(QPoint(area.right() - 3, area.bottom() - 3))
+        self.app.processEvents()
+        self.assertTrue(area.contains(menu.geometry()))
+        action = menu.actions()[0]
+        self.assertIn("…", action.text())
+        self.assertTrue(action.text().endswith("Fictional Keeper"))
+        for rect in menu.badge_rects(action):
+            self.assertTrue(menu.rect().contains(rect.toAlignedRect()))
+        action.trigger()
+        self.assertEqual(self.selections, ["Fictional Keeper"])
+        menu.hide()
+        self.app.processEvents()
 
 
 if __name__ == "__main__":

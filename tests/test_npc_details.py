@@ -1,5 +1,6 @@
 """Cache-first presentation, request deduplication and stale asynchronous results."""
 import os
+import gc
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from mnmparse.app.npc_details import NpcDetailsController
-from mnmparse.npc_wiki import WikiPageMissing
+from mnmparse.npc_wiki import NpcDetails, NotableNpcs, WikiPageMissing
 from mnmparse.parser import parse_line
 
 
@@ -45,9 +46,11 @@ class Map(QObject):
     def __init__(self):
         super().__init__()
         self.zones = {}
+        self.metadata = {}
 
-    def set_notable_npcs(self, zone, names, status=""):
+    def set_notable_npcs(self, zone, names, status="", *, levels=None, unique_loot=(), quests=()):
         self.zones[zone] = (names, status)
+        self.metadata[zone] = (levels or {}, tuple(unique_loot), tuple(quests))
 
 
 class Repository:
@@ -102,6 +105,74 @@ class NpcDetailsTests(unittest.TestCase):
         self.controller.shutdown()
         self.repo.release.set()
         self.app.processEvents()
+
+    def test_attached_maps_share_retained_metadata_and_route_selection_once(self):
+        from unittest.mock import Mock
+
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", ("Guard Amber",), levels=(("Guard Amber", "12"),))
+        self.repo.npcs["Guard Amber"] = NpcDetails("Guard Amber", unique_drops=("Sample staff",), quests=("Sample quest",))
+        self.controller._started = True  # No network work is needed to prove cache presentation.
+        self.controller.show_notables("Night Harbor")
+        additional = Map()
+        self.controller.attach_map(additional)
+        self.controller.attach_map(additional)
+        self.assertIs(self.controller.map_overlay, self.map)
+        self.assertEqual(additional.zones, self.map.zones)
+        self.assertEqual(additional.metadata, self.map.metadata)
+        self.assertEqual(additional.metadata["Night Harbor"], ({"Guard Amber": "12"}, ("Guard Amber",), ("Guard Amber",)))
+        self.panel.show_npc = Mock(wraps=self.panel.show_npc)
+        additional.npc_selected.emit("Guard Amber")
+        self.panel.show_npc.assert_called_once_with("Guard Amber")
+        self.controller.detach_map(additional)
+        self.panel.show_npc.reset_mock()
+        additional.npc_selected.emit("Guard Amber")
+        self.panel.show_npc.assert_not_called()
+
+    def test_attached_map_destruction_removes_it_before_background_updates(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        additional = Map()
+        self.controller.attach_map(additional)
+        additional.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(self.controller._map_views, [self.map])
+        self.controller._present_notables("Night Harbor", NotableNpcs("Night Harbor", ("Guard Amber",)), "")
+        self.assertEqual(self.map.zones["Night Harbor"][0], ("Guard Amber",))
+
+    def test_map_destroyed_callback_is_disconnected_when_controller_is_deleted_first(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        additional = Map()
+        controller = NpcDetailsController(self.repo, self.panel, additional)
+        self.assertEqual(additional.receivers("2destroyed(QObject*)"), 1)
+        controller.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(additional.receivers("2destroyed(QObject*)"), 0)
+        additional.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_shutdown_disconnects_native_view_and_panel_callbacks_before_collection(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from shiboken6 import isValid
+
+        for _ in range(6):
+            panel, view = Panel(), Map()
+            controller = NpcDetailsController(self.repo, panel, view)
+            self.assertEqual(view.receivers("2destroyed(QObject*)"), 1)
+            self.assertEqual(panel.receivers("2item_hovered(QString)"), 1)
+            controller.shutdown()
+            controller.shutdown()  # Repeated teardown must not disconnect twice.
+            self.assertEqual(controller._map_views, [])
+            self.assertEqual(view.receivers("2destroyed(QObject*)"), 0)
+            self.assertEqual(view.receivers("2npc_selected(QString)"), 0)
+            self.assertEqual(view.receivers("2npc_zone_requested(QString)"), 0)
+            self.assertEqual(panel.receivers("2item_hovered(QString)"), 0)
+            for obj in (controller, view, panel):
+                obj.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            self.assertFalse(isValid(controller))
+            del obj, controller, view, panel
+            gc.collect()
 
     def wait_done(self):
         self.repo.release.set()
@@ -159,6 +230,92 @@ class NpcDetailsTests(unittest.TestCase):
         self.assertEqual(self.map.zones["Night Harbor"][0], ("Named Monster",))
         self.assertIs(self.panel.items[item.name], item)
         self.wait_done()
+
+    def test_notable_metadata_is_immediate_from_zone_and_npc_caches(self):
+        self.controller._started = True  # Network cannot finish during presentation.
+        names = ("Test Keeper", "Test Captain", "Test Shadow")
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", names, levels=(("Test Keeper", "12"), ("Test Captain", "Unknown")))
+        self.repo.npcs["Test Keeper"] = NpcDetails("Test Keeper", "99", common_drops=("Shared Token",),
+                                                  unique_drops=("shared_token", "Rare Staff"), quests=("Test Errand",))
+        self.repo.npcs["Test Captain"] = NpcDetails("Test Captain", "7–9", common_drops=("Shared Token",),
+                                                   unique_drops=("Shared_Token",))
+        self.repo.npcs["Test Shadow"] = NpcDetails("Test Shadow", unique_drops=("Unknown", "None", "N/A"),
+                                                  quests=("Not available in wiki data", "None known"))
+        self.controller.show_notables("Night Harbor")
+        levels, unique_loot, quests = self.map.metadata["Night Harbor"]
+        self.assertEqual(levels, {"Test Keeper": "12", "Test Captain": "7–9"})
+        self.assertEqual(unique_loot, ("Test Keeper",))
+        self.assertEqual(quests, ("Test Keeper",))
+        self.assertEqual(self.panel.name, "")
+        self.assertFalse(self.repo.calls)
+        self.assertEqual(self.controller._queue[0], ("notables", "Night Harbor"))
+
+    def test_background_npc_metadata_updates_menu_without_opening_panel(self):
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", ("Test Keeper", "Test Shadow"))
+        self.controller.show_notables("Night Harbor")
+        self.assertEqual(self.map.metadata["Night Harbor"], ({}, (), ()))
+        self.repo.npcs["Test Keeper"] = NpcDetails("Test Keeper", "18+", unique_drops=("Rare Staff",),
+                                                  quests=("Test Errand", "Test Hunt"))
+        self.wait_done()
+        self.assertEqual(self.map.metadata["Night Harbor"], ({"Test Keeper": "18+"}, ("Test Keeper",), ("Test Keeper",)))
+        self.assertEqual(self.panel.name, "")
+        self.assertIsNone(self.panel.details)
+        self.assertEqual(self.repo.calls.count(("npc", "Test Keeper")), 1)
+        self.controller.show_notables("Night Harbor")
+        self.assertEqual(self.repo.calls.count(("npc", "Test Keeper")), 1)
+
+    def test_npc_result_updates_all_retained_zone_metadata_without_changing_selection(self):
+        self.controller._started = True
+        for zone in ("Night Harbor", "Shaded Dunes"):
+            self.repo.zones[zone] = NotableNpcs(zone, ("Test Keeper",))
+            self.controller.show_notables(zone)
+        self.controller.show_npc("Another NPC")
+        self.controller._finished("npc", "Test Keeper", NpcDetails("Test Keeper", "14", quests=("Test Hunt",)), "")
+        for zone in ("Night Harbor", "Shaded Dunes"):
+            self.assertEqual(self.map.metadata[zone], ({"Test Keeper": "14"}, (), ("Test Keeper",)))
+        self.assertEqual(self.panel.name, "Another NPC")
+        self.assertIsNone(self.panel.details)
+
+    def test_notable_enrichment_queue_is_bounded_and_foreground_consider_is_promoted(self):
+        from mnmparse.app.npc_details import MAX_QUEUED
+        self.controller._started = True
+        names = tuple(f"Test NPC {number}" for number in range(MAX_QUEUED + 20))
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", names)
+        self.controller.show_notables("Night Harbor")
+        self.assertEqual(len(self.controller._queue), MAX_QUEUED)
+        promoted = names[10]
+        self.controller.show_npc(promoted)
+        self.assertEqual(self.controller._queue[0], ("npc", promoted))
+        self.assertNotIn(("npc", promoted), self.controller._enrichment)
+        self.assertEqual(list(self.controller._queue).count(("npc", promoted)), 1)
+
+    def test_outage_stops_enrichment_batch_but_foreground_requests_and_later_recovery_work(self):
+        names = tuple(f"Test NPC {number}" for number in range(100))
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", names)
+        self.repo.error = True
+        self.controller.show_notables("Night Harbor")
+        self.wait_done()
+        self.assertLessEqual(sum(kind == "npc" for kind, _name in self.repo.calls), 2)
+        self.assertGreater(self.controller._enrichment_retry_at, time.monotonic())
+        self.controller.show_npc("Explicit NPC")
+        self.wait_done()
+        self.assertIn(("npc", "Explicit NPC"), self.repo.calls)
+        self.assertEqual(self.panel.name, "Explicit NPC")
+        self.repo.error = False
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", ("Recovered NPC",))
+        self.repo.npcs["Recovered NPC"] = NpcDetails("Recovered NPC", "8", unique_drops=("Rare Token",))
+        self.controller._enrichment_retry_at = 0
+        self.controller.show_notables("Night Harbor")
+        self.wait_done()
+        self.assertEqual(self.map.metadata["Night Harbor"], ({"Recovered NPC": "8"}, ("Recovered NPC",), ()))
+
+    def test_missing_npc_does_not_suppress_other_notable_metadata(self):
+        self.controller._started = True
+        self.repo.zones["Night Harbor"] = NotableNpcs("Night Harbor", ("Missing NPC", "Test Keeper"))
+        self.controller.show_notables("Night Harbor")
+        self.controller._finished("npc", "Missing NPC", None, "page_missing")
+        self.assertEqual(self.controller._enrichment_retry_at, 0)
+        self.assertIn(("npc", "Test Keeper"), self.controller._pending)
 
     def test_unnamed_considers_and_disabled_panel_do_not_lookup(self):
         self.controller.on_message(None, SimpleNamespace(kind="consider", target=None))

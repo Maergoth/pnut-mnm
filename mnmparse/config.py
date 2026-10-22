@@ -137,6 +137,7 @@ class Config:
     npc_unique_drops: bool = True
     npc_quests: bool = False
     npc_reputation: bool = False
+    npc_celebration_sound: bool = True  #: generated cue after a confirmed current-zone notable NPC kill
     log_break_minutes: float = 60.0  #: start a new log file after this long without messages
     log_max_mb: float = 5.0  #: start a new log file when the raw log reaches this size
     overlay_click_through: bool = False  #: overlay ignores the mouse entirely (no tabs, no tooltips)

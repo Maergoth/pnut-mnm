@@ -116,6 +116,7 @@ _widgets_mod = _optional_import("mnmparse.app.widgets", ["StatusChip", "ToggleSw
 _pages_mod = _optional_import(
     "mnmparse.app.pages", ["LivePage", "SessionPage", "FeedPage", "TriggersPage", "LeaderboardPage", "SettingsPage", "AboutPage"]
 )
+_pages_mod.update(_optional_import("mnmparse.app.zones_page", ["ZonesPage"]))
 
 LOG_FILE_BYTES = 1_000_000
 LOG_FILE_BACKUPS = 3
@@ -136,6 +137,7 @@ PAGES: tuple[tuple[str, str], ...] = (
     ("feed", "Feed"),
     ("triggers", "Triggers"),
     ("leaderboard", "Leaderboard"),
+    ("zones", "Zones"),
     ("settings", "Settings"),
     ("about", "About"),
 )
@@ -341,6 +343,8 @@ class _MissingEngine(QObject):
     """Stand-in with the Engine's signals when ``mnmparse.app.engine`` is unavailable."""
 
     message = Signal(object, object)
+    live_group_kill = Signal(object, str)
+    live_group_activity = Signal(object, str)
     snapshot = Signal(object)
     encounter_closed = Signal(object)
     low_health = Signal(float)
@@ -417,6 +421,14 @@ def _paint_nav_glyph(painter: QPainter, name: str, size: float, color: QColor) -
         for i, frac in enumerate((1.0, 0.7, 0.88)):
             y = m + inner * (0.15 + 0.35 * i)
             painter.drawLine(QPointF(m, y), QPointF(m + inner * frac, y))
+    elif name == "zones":
+        path = QPainterPath()
+        path.moveTo(m, m + inner * .2)
+        for x, y in ((.34, 0), (.66, .2), (1, 0), (1, .8), (.66, 1), (.34, .8), (0, 1), (0, .2)):
+            path.lineTo(m + inner * x, m + inner * y)
+        painter.drawPath(path)
+        painter.drawLine(QPointF(m + inner * .34, m), QPointF(m + inner * .34, m + inner * .8))
+        painter.drawLine(QPointF(m + inner * .66, m + inner * .2), QPointF(m + inner * .66, m + inner))
     elif name == "session":
         # a loot bag: rounded body with a tied neck
         body = QRectF(m + inner * 0.1, m + inner * 0.3, inner * 0.8, inner * 0.68)
@@ -550,12 +562,14 @@ class MainWindow(QMainWindow):
         cfg: Config,
         settings: QSettings,
         parent: QWidget | None = None,
+        *, map_repository: Any | None = None,
     ) -> None:
         super().__init__(parent)
         self._engine = engine
         self._overlay = overlay
         self._cfg = cfg
         self._settings = settings
+        self._map_repository = map_repository
         self._quitting = False
         self._state = "stopped"
         self._scrolled_back = False  #: the chat does not show its newest line (engine status)
@@ -928,7 +942,7 @@ class MainWindow(QMainWindow):
             reason = _IMPORT_ERRORS.get("mnmparse.app.pages", f"{cls_name} not found")
             return _MissingPage(label, reason)
         try:
-            return cls(self._engine, self._cfg, self._settings)
+            return cls(self._engine, self._cfg, self._settings, repository=self._map_repository) if key == "zones" else cls(self._engine, self._cfg, self._settings)
         except Exception as exc:  # noqa: BLE001 - a broken page must not take the shell down
             log.exception("%s could not be created", cls_name)
             return _MissingPage(label, f"{type(exc).__name__}: {exc}")
@@ -1383,21 +1397,27 @@ class App(QApplication):
         from mnmparse.app.map_downloads import MapDownloadController
         from mnmparse.app.app_updates import AppUpdateController
         self.map_overlay = MapOverlay(self.settings)
-        if self.overlay is not None and hasattr(self.overlay, "npc_panel"):
-            from mnmparse.app.npc_details import NpcDetailsController
-            from mnmparse.npc_wiki import WikiRepository
-            self.npc_details = NpcDetailsController(
-                WikiRepository(project_path("npc_cache")), self.overlay.npc_panel, self.map_overlay,
-                self if isinstance(self, QObject) else None)
+        from mnmparse.app.npc_details import NpcDetailsController
+        from mnmparse.app.zones_page import BrowserOnlyNpcPanel
+        from mnmparse.npc_wiki import WikiRepository
+        panel = getattr(self.overlay, "npc_panel", None)
+        if panel is None:
+            panel = BrowserOnlyNpcPanel(self if isinstance(self, QObject) else None)
+        self.npc_details = NpcDetailsController(
+            WikiRepository(project_path("npc_cache")), panel, self.map_overlay,
+            self if isinstance(self, QObject) else None)
         self.map_downloads = MapDownloadController(self.map_overlay.repo, self)
         self.app_updates = AppUpdateController(self)
         self.triggers = self._make_trigger_runner()
         from mnmparse.app.revenge import RevengeController, RevengePopoutWindow
         self.revenge = RevengeController(cfg, self.config_path.parent / "revenge.json", self if isinstance(self, QObject) else None)
-        self.window = MainWindow(self.engine, self.overlay, cfg, self.settings)
+        self.window = MainWindow(self.engine, self.overlay, cfg, self.settings, map_repository=self.map_overlay.repo)
         leaderboard = self.window.page("leaderboard")
         if self._leaderboard_client is not None and callable(getattr(leaderboard, "bind", None)):
             leaderboard.bind(self._leaderboard_ledger, self._leaderboard_client)
+        zones = self.window.page("zones")
+        if callable(getattr(zones, "bind", None)):
+            zones.bind(self.npc_details)
         self.revenge_popout = RevengePopoutWindow(self.revenge, self.settings)
         self.tray = TrayIcon(self.icon, self)
         self._wire()
@@ -1587,6 +1607,21 @@ class App(QApplication):
             npc_details = self.__dict__.get("npc_details")
             if npc_details is not None:
                 engine.message.connect(npc_details.on_message)
+                from mnmparse.app.notable_kills import NotableKillController
+
+                self.notable_kills = NotableKillController(
+                    npc_details,
+                    current_zone=lambda: getattr(self.engine, "current_zone", ""),
+                    active=lambda: (self.engine.state == "running" and not self._shut_down
+                                    and not self.__dict__.get("_quit_pending", False)
+                                    and not self.__dict__.get("_demo_active", False)
+                                    and not self._selftest),
+                    parent=window)
+                self._connect_optional(engine, "live_group_kill", self.notable_kills.on_kill)
+                self._connect_optional(engine, "live_group_activity", self.notable_kills.on_activity)
+                self._connect_optional(engine, "zone_changed", self.notable_kills.set_zone)
+                engine.state_changed.connect(self.notable_kills.on_state)
+                self.notable_kills.celebrated.connect(self._on_notable_kill)
             self._connect_optional(overlay, "copy_requested", self.copy_snapshot)
             self._connect_optional(overlay, "group_override_requested", self.set_group_override)
             self._connect_optional(overlay, "pet_owner_requested", self.set_pet_owner)
@@ -1914,6 +1949,9 @@ class App(QApplication):
                 page.set_map_download_status(message, False)
         if self.map_overlay is not None:
             self.map_overlay.reload_cached_map()
+        zones = self.window.page("zones") if self.window is not None else None
+        if zones is not None and hasattr(zones, "map"):
+            zones.map.reload_cached_map()
 
     @staticmethod
     def _connect_optional(obj: Any, signal_name: str, slot: Callable[..., Any]) -> bool:
@@ -2218,6 +2256,12 @@ class App(QApplication):
         except Exception:  # noqa: BLE001 - sound is a nicety
             log.debug("could not play %s", name, exc_info=True)
 
+    def _on_notable_kill(self, _name: str) -> None:
+        """The controller already checked live ownership, zone membership and duplicate notices."""
+        if (self.triggers is not None and not self.triggers.muted
+                and self.settings.value("npc/celebration_sound", self.cfg.npc_celebration_sound, type=bool)):
+            self.play_sound("Victory fanfare")
+
     def _on_message_for_overlay(self, msg: Any, ev: Any) -> None:
         if self.overlay is None:
             return
@@ -2313,6 +2357,10 @@ class App(QApplication):
                 self.settings.setValue("attack_bar/weapon_delay", int(value))
             self._sync_overlay_settings()
             return
+        if key == "npc_celebration_sound":
+            self.settings.setValue("npc/celebration_sound", bool(value))
+            self._sync_overlay_settings()
+            return
         if key in {f"npc_{part}" for part in
                    ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")}:
             self.settings.setValue("npc/" + key[4:], bool(value))
@@ -2353,13 +2401,17 @@ class App(QApplication):
     def _sync_overlay_settings(self) -> None:
         """Mirror the overlay's current state into Settings > Overlay."""
         overlay = self.overlay
+        zones = self.window.page("zones") if self.window is not None else None
+        if callable(getattr(zones, "set_config", None)):
+            zones.set_config(self.cfg)
         page = self.window.page("settings") if self.window is not None else None
         sync = getattr(page, "sync_overlay", None)
         if not callable(sync):
             return
         from mnmparse.app.attack_bar import saved_weapon_delay
 
-        sync(weapon_delay=saved_weapon_delay(self.settings))
+        sync(weapon_delay=saved_weapon_delay(self.settings), npc_celebration_sound=self.settings.value(
+            "npc/celebration_sound", self.cfg.npc_celebration_sound, type=bool))
         if overlay is None:
             sync(locked=self._current_overlay_lock(),
                  opacity=self.settings.value("overlay/opacity", self.cfg.overlay_opacity, type=float),
@@ -2712,8 +2764,14 @@ class App(QApplication):
         npc_details = self.__dict__.get("npc_details")
         if npc_details is not None:
             npc_details.shutdown()
+        notable_kills = self.__dict__.get("notable_kills")
+        if notable_kills is not None:
+            notable_kills.shutdown()
         if self.map_overlay is not None:
             self.map_overlay.shutdown()
+        zones = self.window.page("zones") if self.window is not None else None
+        if callable(getattr(zones, "shutdown", None)):
+            zones.shutdown()
         if self.overlay is not None:
             try:
                 self.overlay.close()

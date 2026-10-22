@@ -3,19 +3,20 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from io import BytesIO
 from typing import Any
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMenu,
+    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from mnmparse.app import theme
 from mnmparse.app.monster_icon import monster_icon as _monster_icon
+from mnmparse.app.notable_npc_menu import NotableNpcMenu, npc_title_key
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
 from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title, zone_from_who
@@ -137,12 +138,14 @@ class _Result(QObject):
 
 class _Load:
     def __init__(self, token: int, repo: MapRepository, zone: str, entry: MapImage | None,
-                 refresh: bool, slots: threading.Semaphore, preferred_url: str = "") -> None:
+                 refresh: bool, slots: threading.Semaphore, preferred_url: str = "", *,
+                 cached_first: bool = False) -> None:
         self.signal = _Result()
         self.token, self.repo, self.zone, self.entry, self.refresh = token, repo, zone, entry, refresh
         self.cancelled = threading.Event()
         self.slots = slots
         self.preferred_url = preferred_url
+        self.cached_first = cached_first
 
     def start(self) -> None:
         # A stalled public wiki must never hold the application open on exit.
@@ -162,7 +165,9 @@ class _Load:
         try:
             if self.cancelled.is_set():
                 return
-            maps = self.repo.maps(self.zone, refresh=self.refresh) if self.entry is None else [self.entry]
+            maps = self.repo.known_maps(self.zone) if self.cached_first and not self.refresh and self.entry is None else None
+            if maps is None:
+                maps = self.repo.maps(self.zone, refresh=self.refresh) if self.entry is None else [self.entry]
             if self.cancelled.is_set():
                 return
             selected = next((m for m in maps if m.url == self.preferred_url), maps[0] if maps else None)
@@ -243,12 +248,18 @@ class MapOverlay(QWidget):
     npc_selected = Signal(str)
     npc_zone_requested = Signal(str)
 
-    def __init__(self, settings: QSettings, repository: MapRepository | None = None) -> None:
-        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint |
-                         Qt.WindowType.FramelessWindowHint)
-        self.setWindowTitle(window_title("map"))
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    def __init__(self, settings: QSettings, repository: MapRepository | None = None, *,
+                 embedded: bool = False, parent: QWidget | None = None,
+                 settings_group: str | None = None) -> None:
+        flags = Qt.WindowType.Widget if embedded else (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint |
+                                                       Qt.WindowType.FramelessWindowHint)
+        super().__init__(parent if embedded else None, flags)
+        self.embedded = bool(embedded)
+        self._settings_group = settings_group or ("zones" if embedded else "map")
+        if not embedded:
+            self.setWindowTitle(window_title("map"))
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.settings = settings
         self._locked = settings.value("overlay/locked", False, type=bool)
@@ -268,18 +279,22 @@ class MapOverlay(QWidget):
         self._editing_zone = False
         self._normal_geometry = QRect()
         self._closing = False
-        self._current_zone = str(settings.value("map/zone", "") or "")
-        self._notable_npcs: dict[str, tuple[tuple[str, ...], str]] = {}
-        self._saved_view = self._read_view_state(settings.value("map/view", {}))
+        self._current_zone = str(settings.value(self._key("zone"), "") or "")
+        self._notable_npcs: dict[str, tuple[tuple[str, ...], str, dict[str, str], frozenset[str], frozenset[str]]] = {}
+        self._notable_menu_zone = ""
+        self._saved_view = self._read_view_state(settings.value(self._key("view"), {}))
         self._restore_view = self._saved_view
-        self.setMinimumSize(360, 240)
-        self.resize(900, 650)
+        self.setMinimumSize(260 if embedded else 360, 220 if embedded else 240)
+        if not embedded:
+            self.resize(900, 650)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         self.view = MapView(self)
         layout.addWidget(self.view)
         # Floating controls never change the map viewport when they appear/disappear.
         self.header = _MapHeader(self)
+        if embedded:
+            layout.insertWidget(0, self.header)
         top = QHBoxLayout(self.header)
         top.setContentsMargins(6, 6, 6, 6)
         top.setSpacing(6)
@@ -296,7 +311,7 @@ class MapOverlay(QWidget):
         self.notable_npcs.setCursor(Qt.CursorShape.PointingHandCursor)
         self.notable_npcs.setAccessibleName("Notable NPCs")
         self.notable_npcs.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.notable_npcs_menu = QMenu(self.notable_npcs)
+        self.notable_npcs_menu = NotableNpcMenu(self.notable_npcs)
         self.notable_npcs_menu.setAccessibleName("Notable NPCs in the selected zone")
         self.notable_npcs_menu.aboutToShow.connect(self._open_notable_npcs)
         self.notable_npcs_menu.aboutToHide.connect(self._header_hide_after_menu)
@@ -312,7 +327,8 @@ class MapOverlay(QWidget):
         self.zone.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.zone.setMinimumWidth(0)
         self.zone.setAccessibleName("Select zone")
-        self.zone.setToolTip("Select a map manually, or let the Combat chat's zone-entry line choose it")
+        self.zone.setToolTip("Browse a zone without changing the live map" if embedded else
+                             "Select a map manually, or let the Combat chat's zone-entry line choose it")
         if self._current_zone:
             self.zone.setCurrentText(self._current_zone)
         self.zone.textActivated.connect(self.set_zone)
@@ -334,7 +350,8 @@ class MapOverlay(QWidget):
         self.fullscreen.clicked.connect(self.toggle_fullscreen)
         self._update_fullscreen_icon()
         top.addWidget(self.fullscreen)
-        self.status = QLabel("Select a zone, or enter one in game.", self)
+        self.status = QLabel("Select a zone to browse its maps and notable NPCs." if embedded else
+                             "Select a zone, or enter one in game.", self)
         self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -348,13 +365,16 @@ class MapOverlay(QWidget):
                        self.wiki_link, self.notable_npcs):
             widget.setMouseTracking(True)
             widget.installEventFilter(self)
-        self.header.hide()
-        self.set_appearance(settings.value("overlay/opacity", 0.85, type=float),
-                            settings.value("overlay/font_scale", 1.0, type=float))
+        self.header.setVisible(embedded)
+        self.fullscreen.setVisible(not embedded)
+        self.set_appearance(1.0 if embedded else settings.value("overlay/opacity", 0.85, type=float),
+                            1.0 if embedded else settings.value("overlay/font_scale", 1.0, type=float))
         self.set_locked(self._locked)
+        if embedded:
+            return
         QShortcut(QKeySequence("F11"), self).activated.connect(self.toggle_fullscreen)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self.exit_fullscreen)
-        rect = settings.value("map/geometry")
+        rect = settings.value(self._key("geometry"))
         screens = [screen.availableGeometry() for screen in QGuiApplication.screens()]
         if (isinstance(rect, QRect) and rect.isValid()
                 and any(area.contains(rect.center()) for area in screens)):
@@ -362,13 +382,16 @@ class MapOverlay(QWidget):
         else:
             screen = QGuiApplication.primaryScreen()
             self.move(screen.availableGeometry().topLeft() if screen is not None else QPoint())
-        if settings.value("map/fullscreen", False, type=bool):
+        if settings.value(self._key("fullscreen"), False, type=bool):
             self._normal_geometry = self.geometry()
             # Set the state without showing: a previously closed map stays closed.
             self.setWindowState(self.windowState() | Qt.WindowState.WindowFullScreen)
             self._update_fullscreen_icon()
             self.drag_handle.hide()
             self._position_chrome()
+
+    def _key(self, name: str) -> str:
+        return f"{self._settings_group}/{name}"
 
     @staticmethod
     def _read_view_state(value: Any) -> dict[str, Any] | None:
@@ -395,12 +418,12 @@ class MapOverlay(QWidget):
         self._locked = bool(locked)
         if self._locked:
             self._end_drag()
-        self.drag_handle.setVisible(not self._locked and not self.isFullScreen())
+        self.drag_handle.setVisible(not self.embedded and not self._locked and not self.isFullScreen())
         self._position_chrome()
 
     def set_appearance(self, opacity: float, font_scale: float) -> None:
         """Share the overlay's glass and text styling; map pixels stay opaque."""
-        self._opacity = min(1.0, max(0.2, float(opacity)))
+        self._opacity = 1.0 if self.embedded else min(1.0, max(0.2, float(opacity)))
         self._font_scale = min(2.0, max(0.6, float(font_scale)))
         px = max(9, round(theme.OVERLAY_FONT_PX * self._font_scale))
         self.setStyleSheet(theme.overlay_qss(self._opacity) + f"""
@@ -426,12 +449,17 @@ class MapOverlay(QWidget):
         self.notable_npcs.setFixedSize(size, size)
         icon_size = max(20, round(px * 1.54))
         self.notable_npcs.setIconSize(QSize(icon_size, icon_size))
+        self.notable_npcs_menu.set_badge_size(max(14, round(px * 1.35)))
+        if self.embedded:
+            self.zone.setMinimumHeight(self.zone.lineEdit().minimumSizeHint().height() + 12)
         self.drag_handle.setFixedSize(max(24, round(px * 1.85)), size)
         self.fullscreen.setFixedSize(size, size)
         self._position_chrome()
         self.update()
 
     def on_message(self, msg: Any, event: Any) -> None:
+        if self.embedded:
+            return
         if event is not None and getattr(event, "kind", "") == "zone" and getattr(event, "target", ""):
             self.set_zone(event.target)
             return
@@ -454,9 +482,10 @@ class MapOverlay(QWidget):
         self._current_zone = title
         self._update_wiki_link()
         self._update_notable_npcs()
-        self.settings.setValue("map/zone", title)
+        self.settings.setValue(self._key("zone"), title)
         self.zone.setCurrentText(title)
-        self.setWindowTitle(window_title("map"))
+        if not self.embedded:
+            self.setWindowTitle(window_title("map"))
         # Clear immediately so a late response cannot show the previous zone's map.
         self._token += 1
         self._cancel_loads()
@@ -470,7 +499,9 @@ class MapOverlay(QWidget):
             self.npc_zone_requested.emit(title)
             self.load()
 
-    def set_notable_npcs(self, zone: str, names: Sequence[str], status: str = "") -> None:
+    def set_notable_npcs(self, zone: str, names: Sequence[str], status: str = "", *,
+                        levels: Mapping[str, str] | None = None,
+                        unique_loot: Iterable[str] = (), quests: Iterable[str] = ()) -> None:
         """Accept cached or refreshed names without replacing another zone's menu.
 
         An empty status with no names means a successfully loaded empty list.
@@ -484,9 +515,13 @@ class MapOverlay(QWidget):
         for name in names:
             name = str(name).strip()
             if name:
-                unique.setdefault(name.casefold(), name)
+                unique.setdefault(npc_title_key(name), name)
         rows = tuple(sorted(unique.values(), key=str.casefold))
-        value = (rows, str(status).strip())
+        value = (rows, str(status).strip(),
+                 {npc_title_key(name): str(level).strip() for name, level in (levels or {}).items()
+                  if npc_title_key(name) and level is not None},
+                 frozenset(npc_title_key(name) for name in unique_loot),
+                 frozenset(npc_title_key(name) for name in quests))
         if self._notable_npcs.get(title) == value:
             return
         self._notable_npcs[title] = value
@@ -497,12 +532,23 @@ class MapOverlay(QWidget):
         zone = self._current_zone
         self.notable_npcs.setEnabled(bool(zone))
         self.notable_npcs.setToolTip(f"Notable NPCs in {zone}" if zone else "Select a zone to browse notable NPCs")
+        names, status, levels, unique_loot, quests = self._notable_npcs.get(
+            zone, ((), "Loading notable NPCs…", {}, frozenset(), frozenset()))
+        # Metadata changes keep native actions and their vertical hit targets.
+        # Membership/status changes wait until close/open so no item underneath
+        # the pointer can become a different NPC while the user selects it.
+        if self.notable_npcs_menu.isVisible():
+            if self._notable_menu_zone == zone:
+                self.notable_npcs_menu.refresh_metadata(levels, unique_loot, quests)
+            return
         self.notable_npcs_menu.clear()
-        names, status = self._notable_npcs.get(zone, ((), "Loading notable NPCs…"))
+        self._notable_menu_zone = zone
         for name in names:
-            # Ampersands are NPC name text, not keyboard mnemonic markers.
-            action = self.notable_npcs_menu.addAction(name.replace("&", "&&"))
+            key = npc_title_key(name)
+            action = self.notable_npcs_menu.addAction("")
             action.setData(name)
+            self.notable_npcs_menu.set_action_label(action, name, levels.get(key, ""))
+            self.notable_npcs_menu.set_badges(action, unique_loot=key in unique_loot, quests=key in quests)
             action.triggered.connect(lambda _checked=False, name=name, zone=zone: self._select_npc(zone, name))
         if status or not names:
             if names:
@@ -516,11 +562,13 @@ class MapOverlay(QWidget):
 
     def _open_notable_npcs(self) -> None:
         self._show_header()
+        self._update_notable_npcs()
         if self._current_zone and not self._closing:
             self.npc_zone_requested.emit(self._current_zone)
 
     def _header_hide_after_menu(self) -> None:
         self._header_hide.start()
+        QTimer.singleShot(0, self._update_notable_npcs)
 
     def load(self, *, refresh: bool = False, entry: MapImage | None = None,
              preserve_view: bool = False) -> None:
@@ -535,7 +583,8 @@ class MapOverlay(QWidget):
         preferred_url = self._selected_url if preserve_view else ""
         if not preferred_url and self._saved_view and self._saved_view["zone"] == self._current_zone:
             preferred_url = self._saved_view["url"]
-        worker = _Load(self._token, self.repo, self._current_zone, entry, refresh, self._slots, preferred_url)
+        worker = _Load(self._token, self.repo, self._current_zone, entry, refresh, self._slots, preferred_url,
+                       cached_first=self.embedded)
         worker.signal.ready.connect(self._ready)
         self._loads[self._token] = worker
         worker.start()
@@ -651,6 +700,8 @@ class MapOverlay(QWidget):
             gear.raise_()
 
     def _hide_header(self) -> None:
+        if self.embedded:
+            return
         # A popup extends beyond the header; keep its controls until it closes.
         if (self._drag_offset is not None or self._editing_zone
                 or self.notable_npcs_menu.isVisible()
@@ -663,7 +714,7 @@ class MapOverlay(QWidget):
 
     def _resize_edges(self, point: QPoint) -> Qt.Edge:
         edges = Qt.Edge(0)
-        if not self._locked and not self.isFullScreen():
+        if not self.embedded and not self._locked and not self.isFullScreen():
             if point.x() < 5:
                 edges |= Qt.Edge.LeftEdge
             elif point.x() >= self.width() - 5:
@@ -675,7 +726,7 @@ class MapOverlay(QWidget):
         return edges
 
     def _begin_drag(self, widget: QWidget, point: QPoint) -> None:
-        if self._locked or self.isFullScreen():
+        if self.embedded or self._locked or self.isFullScreen():
             return
         self._drag_press = point
         self._drag_offset = point - self.frameGeometry().topLeft()
@@ -694,6 +745,8 @@ class MapOverlay(QWidget):
         self._header_hide.start()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if self.embedded:
+            return super().eventFilter(watched, event)
         kind = event.type()
         if self._drag_offset is not None:
             if kind == QEvent.Type.MouseMove:
@@ -749,12 +802,15 @@ class MapOverlay(QWidget):
 
     def _position_chrome(self) -> None:
         self.layout().activate()
-        self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
-        self.status.setGeometry(16, self.header.height(), self.width() - 32,
-                                max(40, self.height() - self.header.height() * 2))
+        if self.embedded:
+            self.status.setGeometry(self.view.geometry().adjusted(16, 16, -16, -16))
+        else:
+            self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
+            self.status.setGeometry(16, self.header.height(), self.width() - 32,
+                                    max(40, self.height() - self.header.height() * 2))
         # A child widget's rectangular paint is not clipped by the parent's rounded
         # background. Clip the map itself so zoomed images cannot square off the frame.
-        if self.isFullScreen():
+        if self.embedded or self.isFullScreen():
             self.view.clearMask()
         else:
             clip = QPainterPath()
@@ -767,6 +823,9 @@ class MapOverlay(QWidget):
         self.update()
 
     def paintEvent(self, event: Any) -> None:  # noqa: N802
+        if self.embedded:
+            super().paintEvent(event)
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
@@ -782,6 +841,8 @@ class MapOverlay(QWidget):
             self.load(entry=self._entries[index])
 
     def toggle_fullscreen(self) -> None:
+        if self.embedded:
+            return
         self._end_drag()
         if self.isFullScreen():
             self.exit_fullscreen()
@@ -794,6 +855,8 @@ class MapOverlay(QWidget):
             self.save_state()
 
     def exit_fullscreen(self) -> None:
+        if self.embedded:
+            return
         if self.isFullScreen():
             self.showNormal()
             if self._normal_geometry.isValid():
@@ -821,9 +884,10 @@ class MapOverlay(QWidget):
 
     def save_state(self) -> None:
         rect = self._normal_geometry if self.isFullScreen() else self.geometry()
-        if rect.isValid():
-            self.settings.setValue("map/geometry", rect)
-        self.settings.setValue("map/fullscreen", self.isFullScreen())
+        if not self.embedded:
+            if rect.isValid():
+                self.settings.setValue(self._key("geometry"), rect)
+            self.settings.setValue(self._key("fullscreen"), self.isFullScreen())
         if self._loaded_zone == self._current_zone and self._selected_url and self.view.scene().items():
             rect = self.view.sceneRect()
             centre = self.view.mapToScene(self.view.viewport().rect().center())
@@ -834,7 +898,7 @@ class MapOverlay(QWidget):
                 "y": min(1.0, max(0.0, (centre.y() - rect.top()) / rect.height())),
             }
             self._saved_view = state
-            self.settings.setValue("map/view", state)
+            self.settings.setValue(self._key("view"), state)
 
     def shutdown(self) -> None:
         self._closing = True

@@ -44,6 +44,15 @@ runs at **4× speed**; timer colors and warning thresholds are customizable.
 **Map overlay.** A compact header provides zone and map selectors, a drag grip when unlocked,
 and fullscreen. The map follows zone changes and remembers its last state.
 
+**Zones in the main app.** Open **Zones** to browse the same maps and notable-NPC
+menu in a normal window. Its selected zone, map floor and zoom are saved separately
+from the live map. The first known game zone fills an empty browser once; later game
+zone changes leave your browsing choice alone. Selecting a notable NPC shows its
+details beside the map, including cached item hover tooltips and wiki links, even
+when overlays are hidden or the NPC overlay is disabled. The detail pane uses your
+**Settings > Considered NPC** field choices. Cached maps and NPC details appear first;
+new information loads in the background. Map updates in Settings refresh both views.
+
 ![PNUT map overlay with its compact header expanded](docs/images/map-overlay.png)
 
 Map artwork: [Shaded Dunes Map, Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/File:Shaded_Dunes_Map.jpg).
@@ -686,10 +695,22 @@ respects click-through and hides when the pointer leaves the panel.
 
 The map header's **monster icon** opens notable NPCs for its selected zone. Choosing
 one displays the same card and respects the same field settings as considering it.
+Known levels appear before each name. A sparkled sword marks unique loot, and a feather
+marks NPCs that offer quests or are needed by quests. Cached details appear immediately;
+missing details fill in through background wiki requests.
+When you, your party or an owned pet slay a notable NPC in your current captured zone,
+PNUT plays a short synthesized victory fanfare and opens that NPC's cached card to inspect
+its drops. **Settings > Considered NPC > Notable NPC victory fanfare** toggles the sound;
+master volume, output device and mute still apply. The card respects **Show NPC details**
+and the selected fields. Zone membership comes from that zone's wiki list, not the zone
+you happen to be browsing on the map. Old logs, imports, demos and startup chat do not
+celebrate past kills. Cached notable lists work offline; a first lookup needs the wiki.
 NPC records, notable lists and item stats are saved in `npc_cache/` beside the app.
 Cached records display immediately, then a background check compares wiki revisions
-and template modification timestamps before fetching changed content. Successful
-lookups are rechecked at most every five minutes; failed requests retry after a minute.
+and template modification timestamps before fetching changed content. Recent references
+are automatically rechecked about every five minutes, without another consider or hover;
+failed requests retry after a minute. Checks share a bounded queue, and an outage pauses
+automatic batches while cached details remain available.
 The app warms tooltip data for displayed loot. An unavailable wiki preserves cached
 records; a first lookup without a cache needs the wiki to recover. Public page-title
 requests can include the considered target's name; see the [Privacy Policy](legal/privacy.md).

@@ -2915,7 +2915,8 @@ class SettingsPage(QWidget):
         )
         for key, label in (("enabled", "Show NPC details"), ("level", "Level / level range"),
                            ("common_drops", "Common drops"), ("unique_drops", "Unique drops"),
-                           ("quests", "Required by quests"), ("reputation", "Reputation gained / lost")):
+                           ("quests", "Quests"), ("reputation", "Reputation gained / lost"),
+                           ("celebration_sound", "Notable NPC victory fanfare")):
             control = ToggleSwitch()
             setattr(self, f"npc_{key}", control)
             self._row(npc_form, label, control)
@@ -2944,7 +2945,7 @@ class SettingsPage(QWidget):
         "attack_bar": "attack_bar",
         "weapon_delay": "weapon_delay",
         **{f"npc_{key}": f"npc_{key}" for key in
-           ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
+           ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation", "celebration_sound")},
     }
 
     def _emit_overlay_setting(self, key: str, value: Any) -> None:
@@ -3299,7 +3300,7 @@ class SettingsPage(QWidget):
             from mnmparse.app.attack_bar import saved_weapon_delay
 
             self.weapon_delay.setValue(saved_weapon_delay(self._settings))
-            for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation"):
+            for key in ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation", "celebration_sound"):
                 getattr(self, f"npc_{key}").setChecked(bool(getattr(cfg, f"npc_{key}")))
             self.feed_max_lines.setValue(int(_cfg_get(cfg, "feed_max_lines", 500)))
             self.log_break.setValue(float(_cfg_get(cfg, "log_break_minutes", 60.0)))
@@ -3368,7 +3369,7 @@ class SettingsPage(QWidget):
             "dummy_fix": self.dummy_fix.isChecked(),
             "attack_bar": self.attack_bar.isChecked(),
             **{f"npc_{key}": getattr(self, f"npc_{key}").isChecked() for key in
-               ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation")},
+               ("enabled", "level", "common_drops", "unique_drops", "quests", "reputation", "celebration_sound")},
             "feed_max_lines": int(self.feed_max_lines.value()),
             "log_break_minutes": float(self.log_break.value()),
             "log_max_mb": float(self.log_max.value()),
