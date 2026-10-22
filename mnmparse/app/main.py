@@ -1734,7 +1734,7 @@ class App(QApplication):
         self._update_notice.begin(version)
         if not self.app_updates.automatic_restart_allowed(version):
             self._show_update_failure(
-                f"PNUT {version} previously failed to update. Automatic retry is paused. "
+                f"PNUT {version} is downloaded. Automatic retry is paused after an earlier update or restoration. "
                 "Choose Restart now to try again, or Later to keep this version running.")
             return
         message = f"PNUT {version} downloaded. Restarting in 10 seconds to install; choose Later to postpone."

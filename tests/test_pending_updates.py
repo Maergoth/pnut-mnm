@@ -449,6 +449,51 @@ class PendingUpdateTests(unittest.TestCase):
             self.assertTrue(controller.prepare_restart())
         process.assert_called_once()
 
+    def test_restart_during_worker_completion_cannot_discard_newer_pending_download(self):
+        self.download()
+        self.failed_release()
+        controller = self.restore()
+        messages = []
+        controller.finished.connect(messages.append)
+        with patch.object(updates.threading, "Thread"):
+            self.assertTrue(controller.start())
+        self.offer_release("9.8.8")
+        # The worker publishes verified bytes before its queued GUI completion.
+        result = updates.download_update(threading.Event(), lambda _message: None,
+                                         installation=self.install, retained_version=self.version)
+        pending = self.receipt.read_bytes()
+        with patch.object(updates.subprocess, "Popen") as process:
+            self.assertFalse(controller.prepare_restart())
+            self.assertIn("Wait for it to finish", messages[-1])
+            self.assertTrue(controller.is_running)
+            self.assertEqual(controller.ready_version, self.version)
+            self.assertEqual(self.receipt.read_bytes(), pending)
+            process.assert_not_called()
+            controller._on_completed(result, "PNUT 9.8.8 is ready.")
+            self.assertTrue(controller.prepare_restart())
+        process.assert_called_once()
+
+    def test_restored_version_does_not_automatically_reapply_the_replaced_release(self):
+        self.download()
+        atomic_json(self.install / ".pnut-update.json", {
+            "schema": 1, "token": "d" * 32, "status": "healthy", "version": "9.8.6",
+            "previous_version": self.version,
+        })
+        pending = self.receipt.read_bytes()
+        with patch.object(updates.subprocess, "Popen") as process:
+            prepared, message = updates.prepare_pending_update()
+        self.assertFalse(prepared)
+        self.assertIn("Automatic retry is paused", message)
+        self.assertNotIn("failed", message)
+        self.assertEqual(self.receipt.read_bytes(), pending)
+        process.assert_not_called()
+        controller = self.restore()
+        self.assertFalse(controller.automatic_restart_allowed(self.version))
+        self.assertTrue(controller.automatic_restart_allowed("9.8.8"))
+        with patch.object(updates.subprocess, "Popen") as process:
+            self.assertTrue(controller.prepare_restart())
+        process.assert_called_once()
+
     def test_failed_helper_spawn_restores_pending_download_for_retry(self):
         self.download()
         controller = self.restore()

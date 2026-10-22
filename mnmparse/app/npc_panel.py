@@ -393,6 +393,8 @@ class NpcPanel(DockedPanel):
         try:
             margin = 10
             title_h = int(QFontMetricsF(self._title_font).height()) + 13
+            if getattr(self, "_settings_gear", None) is not None:
+                title_h = max(title_h, 30)
             note_h = int(QFontMetricsF(self._note_font).height()) + 8 if self._status else 0
             area = self._available_area()
             available_h = area.height()

@@ -220,6 +220,21 @@ class NpcPanelTests(unittest.TestCase):
         self.assertIsNone(self.panel._link_at(QPoint(16, 16)))
         self.assertEqual(self.panel._link_at(self.panel._name_rect().center().toPoint()), ("npc", "Sample Keeper"))
 
+    def test_small_font_keeps_first_data_row_below_the_settings_gear(self):
+        from mnmparse.app.overlay_settings import OverlaySettingsGear
+
+        self.panel.show_npc("Sample Keeper")
+        self.panel.set_details(self.details())
+        gear = OverlaySettingsGear(self.panel, lambda: None, label="Considered NPC")
+        self.panel._settings_gear = gear
+        self.panel._settings_gear_changed()
+        self.panel.set_font_px(7.8)
+        first_row = self.panel._row_rects[0][0].translated(0, self.panel._body.top())
+        self.assertGreater(first_row.top(), gear.geometry().bottom())
+        self.assertFalse(first_row.intersects(gear.geometry()))
+        self.assertGreater(self.panel._title_rect().left(), gear.geometry().right())
+        self.assertEqual(self.panel._link_at(self.panel._name_rect().center().toPoint()), ("npc", "Sample Keeper"))
+
     def test_preferences_filter_sections_without_discarding_cached_details(self) -> None:
         details = self.details()
         self.panel.show_npc(details.name)

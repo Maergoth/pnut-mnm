@@ -143,6 +143,7 @@ class AutomaticUpdateApplyTests(unittest.TestCase):
         notice = self.ready()
         self.assertTrue(notice.isVisible())
         self.assertIn("Automatic retry is paused", notice.status_label.text())
+        self.assertNotIn("failed", notice.status_label.text())
         self.expire()
         self.host.app_updates.prepare_restart.assert_not_called()
         notice.restart_button.click()

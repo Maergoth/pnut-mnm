@@ -127,7 +127,9 @@ in a backup folder for recovery; **Restore previous app version** is in Settings
 The main window reopens after the update, keeping its saved size and maximized state.
 **On startup** checks, downloads and applies updates automatically with the same countdown;
 it is unchecked by default. Unsaved Settings changes or a failed save pause the restart.
-A failed release that rolled back requires an explicit retry. Source checkouts are updated
+A failed release that rolled back requires an explicit retry. Restoring an older app also
+pauses automatic reinstallation of the version you just replaced. A later release can still
+update automatically. Source checkouts are updated
 through Git instead. You can also download a newer ZIP
 from Releases, close PNUT, and replace the executable and entire `_internal` folder manually.
 

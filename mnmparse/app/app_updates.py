@@ -239,9 +239,9 @@ def download_update(cancelled: threading.Event, progress: Callable[[str], None],
     if release is None:
         return None
     if retained_version:
-        # A failed download remains available for a deliberate retry while we
-        # check for a fixed release. Do not download its large archive again or
-        # replace it with an older release if the failed release was withdrawn.
+        # A deferred download remains available for a deliberate retry while we
+        # check for a newer release. Do not download its large archive again or
+        # replace it with an older release if the deferred release was withdrawn.
         if version_tuple(release.version) < version_tuple(retained_version):
             return None
         if release.version == retained_version:
@@ -390,8 +390,8 @@ def prepare_pending_update(arguments: list[str] | None = None) -> tuple[bool, st
     try:
         restored = controller.restore_pending()
         if restored and not controller.automatic_restart_allowed(controller.ready_version):
-            return False, (f"PNUT {controller.ready_version} previously failed to update. "
-                           "Automatic retry is paused; open Settings > App updates to retry.")
+            return False, (f"PNUT {controller.ready_version} is downloaded. Automatic retry is paused "
+                           "after an earlier update or restoration; open Settings > App updates to retry.")
         prepared = restored and controller.prepare_restart(arguments)
         return bool(prepared), messages[-1] if messages else ""
     finally:
@@ -846,18 +846,25 @@ class AppUpdateController(QObject):
         return self._ready_version
 
     def automatic_restart_allowed(self, version: str) -> bool:
-        """Avoid retrying a failed release automatically; explicit retry stays available."""
+        """Avoid failed-release retries or undoing a restoration without an explicit retry."""
         try:
             target = version_tuple(version)
             record = _receipt(installed_directory())
         except (OSError, UpdateError):
             return False
-        if record is None or record["status"] not in {"rolled_back", "failed"}:
+        if record is None:
             return True
         try:
-            return version_tuple(record.get("version")) != target
+            recorded = version_tuple(record.get("version"))
+            if record["status"] in {"rolled_back", "failed"}:
+                return recorded != target
+            if record["status"] in {"healthy", "pending"}:
+                previous = version_tuple(record.get("previous_version"))
+                if recorded < previous and target == previous:
+                    return False  # Do not immediately undo a deliberate downgrade.
+            return True
         except UpdateError:
-            return True  # A malformed version is not evidence this target failed.
+            return True  # Malformed versions do not establish a prior recovery.
 
     def restore_pending(self) -> bool:
         """Recover readiness without contacting GitHub or executing the package."""
@@ -926,6 +933,9 @@ class AppUpdateController(QObject):
 
     def prepare_restart(self, arguments: list[str] | None = None) -> bool:
         if self._closed or self._ready_package is None or self._restart_prepared:
+            return False
+        if self.is_running:
+            self.finished.emit("An application update check is still running. Wait for it to finish before restarting.")
             return False
         claimed: tuple[dict, Path] | None = None
         try:

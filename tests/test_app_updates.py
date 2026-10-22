@@ -297,6 +297,26 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(ready, [])
         self.assertIsNone(controller.ready_package)
 
+    def test_deliberate_downgrade_defers_reapplying_the_version_just_replaced(self):
+        controller = updates.AppUpdateController()
+        self.addCleanup(controller.shutdown)
+        with tempfile.TemporaryDirectory() as temp:
+            installation = Path(temp)
+            receipt = installation / ".pnut-update.json"
+            with patch.object(updates, "installed_directory", return_value=installation):
+                for status in ("healthy", "pending"):
+                    with self.subTest(status=status):
+                        # pending covers the short interval after acknowledgement
+                        # before the helper records the restored app as healthy.
+                        receipt.write_text(json.dumps({"schema": 1, "token": "b" * 32, "status": status,
+                            "version": "9.8.6", "previous_version": "9.8.7", "reported": True}))
+                        self.assertFalse(controller.automatic_restart_allowed("9.8.7"))
+                        self.assertFalse(controller.automatic_restart_allowed("v9.8.7"))
+                        self.assertTrue(controller.automatic_restart_allowed("9.8.8"))
+                receipt.write_text(json.dumps({"schema": 1, "token": "b" * 32, "status": "healthy",
+                    "version": "9.8.7", "previous_version": "9.8.6"}))
+                self.assertTrue(controller.automatic_restart_allowed("9.8.7"))
+
     def test_helper_is_prepared_without_changing_install_and_starts_once(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
