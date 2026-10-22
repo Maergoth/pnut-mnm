@@ -2919,7 +2919,20 @@ class SettingsPage(QWidget):
                            ("celebration_sound", "Notable NPC victory fanfare")):
             control = ToggleSwitch()
             setattr(self, f"npc_{key}", control)
-            self._row(npc_form, label, control)
+            if key == "celebration_sound":
+                self.npc_celebration_preview = QPushButton("Preview sound")
+                self.npc_celebration_preview.setObjectName("Chip")
+                self.npc_celebration_preview.setAccessibleName("Preview notable NPC victory fanfare")
+                self.npc_celebration_preview.clicked.connect(
+                    lambda: self.sound_preview_requested.emit("Victory fanfare"))
+                sound_row = QHBoxLayout()
+                sound_row.setSpacing(8)
+                sound_row.addWidget(control)
+                sound_row.addWidget(self.npc_celebration_preview)
+                sound_row.addStretch(1)
+                self._row(npc_form, label, sound_row)
+            else:
+                self._row(npc_form, label, control)
             control.toggled.connect(self._on_form_changed)
             control.toggled.connect(lambda value, k=key: self._emit_overlay_setting(f"npc_{k}", bool(value)))
         live = (

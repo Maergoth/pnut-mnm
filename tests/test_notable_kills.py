@@ -383,6 +383,38 @@ class NotableKillWiringTests(unittest.TestCase):
         save_config(cfg, str(path))
         self.assertFalse(load_config(str(path)).npc_celebration_sound)
 
+    def test_settings_preview_plays_fanfare_while_disabled_without_a_kill_or_preference_change(self):
+        page = self.host.window.page("settings")
+        page.npc_celebration_sound.setChecked(False)
+        before = page.form_config()
+        self.runner.store.volume = 37
+        self.runner.store.output_device = "Sample output"
+        self.runner._apply_audio_settings()
+        self.runner.audio.configure.assert_called_with(volume=37, voice="", rate=0.0, device="Sample output")
+        with patch.object(self.host.npc_details, "show_npc") as show, patch.object(self.runner, "fire") as fire:
+            page.npc_celebration_preview.click()
+        self.runner.audio.play_builtin.assert_called_once_with("Victory fanfare")
+        show.assert_not_called()
+        fire.assert_not_called()
+        self.assertEqual(self.runner.board.timers, [])
+        self.assertTrue(page.npc_celebration_preview.isEnabled())
+        self.assertIn("victory fanfare", page.npc_celebration_preview.accessibleName())
+        self.assertEqual(page.form_config(), before)
+        self.assertFalse(self.fixture.settings.value("npc/celebration_sound", True, type=bool))
+        path = Path(self.fixture.temp.name) / "preview-options.json"
+        save_config(page.form_config(), str(path))
+        self.assertFalse(load_config(str(path)).npc_celebration_sound)
+
+    def test_settings_preview_uses_existing_manual_preview_mute_convention(self):
+        page = self.host.window.page("settings")
+        page.npc_celebration_sound.setChecked(False)
+        self.runner.set_muted(True)
+        self.runner.audio.configure.assert_called_with(volume=0, voice="", rate=0.0, device="")
+        page.npc_celebration_preview.click()
+        self.runner.audio.play_builtin.assert_called_once_with("Victory fanfare")
+        self.assertTrue(self.runner.muted)
+        self.assertFalse(page.npc_celebration_sound.isChecked())
+
     def test_demo_history_import_and_late_stopped_signals_do_not_celebrate(self):
         event = parse_line(f"You have slain {NPC}!", 100, PLAYER)
         self.host.engine.message.emit(Message(event.text, 100, 2), event)
