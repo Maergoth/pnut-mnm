@@ -1,6 +1,6 @@
 # PNUT M&M Privacy Policy
 
-Effective date: October 22, 2026
+Effective date: October 23, 2026
 
 PNUT M&M processes captured game text on your computer. PNUT has no built-in telemetry or automatic upload of screenshots, combat logs, settings, or diagnostic reports to the project maintainers. Some features download maps or updates from external services. The optional leaderboard publishes an anonymous stat snapshot only when you choose Submit, as described below.
 
@@ -31,6 +31,8 @@ Preference backups are available in either mode. The default backup contains con
 ## External connections
 
 Map features request zone pages and map images from the Monsters & Memories Wiki at `monstersandmemories.miraheze.org` and its image hosts, `static.wikitide.net` and `static.miraheze.org`. Showing a map or following a zone change can download a missing map automatically. Refreshes and the optional startup download also make requests. These requests identify the requested zone or image.
+
+Selecting the optional MnM Atlas provider opens `www.mnmatlas.com` inside PNUT. Its map URLs identify the selected zone and, when used, the NPC search name. The site and its resource providers receive your IP address and ordinary browser request metadata under their own policies. PNUT does not send captured frames, chat, combat logs or settings to Atlas. Its dedicated local `atlas_cache/` folder holds browser storage, including Atlas notes and cookies, plus a bounded HTTP cache. This storage is shared by PNUT's map views and retained when you hide the map; you can remove it with PNUT closed. PNUT's saved image labels remain separate and are not transferred to Atlas. Opening Atlas in your external browser uses that browser's storage and privacy settings instead.
 
 NPC reference features request public page titles from the same wiki: a considered target's name, the selected map zone, and item names in its displayed drops. Named NPCs and players cannot always be distinguished from the captured text, so considering a player can also request that name. Disable Show NPC details in Settings to stop automatic considered-target lookups. Opening a map still checks that zone's notable-NPC list. Details are cached locally in `npc_cache/`; cached records appear before background revision checks, and unchanged records do not download their content again. These requests do not include combat messages, logs, screenshots, or performance results.
 

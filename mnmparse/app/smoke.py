@@ -36,6 +36,44 @@ WINDOWS_MODULES = (
 )
 
 
+def _exercise_atlas(report: dict[str, Any], temporary_root: Path) -> None:
+    """Exercise the native Windows renderer in its own hidden-window process."""
+    if sys.platform != "win32":
+        report["atlas"] = {"windows_renderer_skipped": True}
+        return
+    import subprocess
+
+    target = temporary_root / "atlas-renderer.json"
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command += ["-m", "mnmparse.app"]
+    command += ["--atlas-smoke", "--report", str(target), "--storage", str(temporary_root / "atlas-smoke")]
+    child = subprocess.run(command, capture_output=True, timeout=12,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+    result = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+    if child.returncode or not result.get("ok"):
+        raise RuntimeError("Packaged Atlas renderer failed: " + result.get("error", "No diagnostic report"))
+    report["atlas"] = {key: result[key] for key in ("renderer", "javascript", "network")}
+    # The shared runtime releases its profile files asynchronously after the
+    # last controller/process closes. Retire only this diagnostic's own folder.
+    import shutil
+    profile = (temporary_root / "atlas-smoke").resolve()
+    if profile.parent != temporary_root.resolve() or profile.is_symlink() or profile.is_junction():
+        raise RuntimeError("Unexpected Atlas diagnostic storage path")
+    for attempt in range(60):
+        try:
+            shutil.rmtree(profile)
+            break
+        except FileNotFoundError:
+            break
+        except OSError as exc:
+            # The broker may finish its final writes while retiring, producing
+            # either a sharing violation or a briefly nonempty directory.
+            if getattr(exc, "winerror", None) not in (5, 32, 145) or attempt == 59:
+                raise
+            time.sleep(0.05)
+
+
 def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
     """Run real native crypto/storage on synthetic data, without capture or network."""
     if sys.platform != "win32":
@@ -672,6 +710,8 @@ def _exercise(report: dict[str, Any]) -> None:
                                                                       overlay.npc_panel]]
             if not all(re.fullmatch(r"[0-9a-f]{24}", title) for title in report["window_titles"]):
                 raise RuntimeError("An application window is missing its randomized session title")
+            report["stage"] = "exercise offline Atlas renderer"
+            _exercise_atlas(report, Path(temporary))
         finally:
             # Any geometry writes go to the temporary INI file, never the real registry.
             for window in reversed(windows):

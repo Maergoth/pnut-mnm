@@ -83,7 +83,7 @@ class ZonesPageTests(unittest.TestCase):
         view = self.page.map
         self.assertFalse(view.isWindow())
         self.assertTrue(view.header.isVisible())
-        self.assertLess(view.header.geometry().bottom(), view.view.geometry().top())
+        self.assertLess(view.header.geometry().bottom(), view._map_stack.geometry().top())
         self.assertFalse(view.drag_handle.isVisible())
         self.assertFalse(view.fullscreen.isVisible())
         self.assertFalse(view.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))

@@ -95,6 +95,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Building with PyInstaller ..."
+& $python scripts/build_atlas_webview.py
+if ($LASTEXITCODE -ne 0) { throw "Native Atlas adapter build failed ($LASTEXITCODE)" }
 & $python scripts/generate_legal_notices.py
 if ($LASTEXITCODE -ne 0) { throw "License notice generation failed ($LASTEXITCODE)" }
 & $python scripts/build_provenance.py

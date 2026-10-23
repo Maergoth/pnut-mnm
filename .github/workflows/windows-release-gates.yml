@@ -31,6 +31,56 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
           if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+      - name: Verify Evergreen WebView2 runtime for native browser gates
+        # CI prerequisite only: the desktop app never installs a runtime silently.
+        # Microsoft documents these per-machine/per-user keys and /silent /install:
+        # https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-WebView2Version {
+            $runtimeKeys = @(
+              'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+              'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+            )
+            foreach ($runtimeKey in $runtimeKeys) {
+              $candidate = Get-ItemPropertyValue -LiteralPath $runtimeKey -Name pv -ErrorAction SilentlyContinue
+              $parsedVersion = $null
+              if ([version]::TryParse([string]$candidate, [ref]$parsedVersion) -and $parsedVersion -gt [version]'0.0.0.0') {
+                return $parsedVersion.ToString()
+              }
+            }
+            return $null
+          }
+          $runtimeVersion = Get-WebView2Version
+          if (-not $runtimeVersion) {
+            $bootstrapper = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper -TimeoutSec 60 -MaximumRedirection 5
+            if ((Get-Item -LiteralPath $bootstrapper).Length -gt 8MB) { throw 'Unexpected WebView2 bootstrapper size' }
+            $signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation(?:,|$)') {
+              throw 'The WebView2 bootstrapper does not have a valid Microsoft signature'
+            }
+            $installer = Start-Process -FilePath $bootstrapper -ArgumentList @('/silent', '/install') -PassThru -WindowStyle Hidden
+            if (-not $installer.WaitForExit(180000)) {
+              Stop-Process -Id $installer.Id -Force -ErrorAction SilentlyContinue
+              throw 'The CI WebView2 installation exceeded three minutes'
+            }
+            if ($installer.ExitCode -notin @(0, 3010)) { throw "WebView2 installer failed ($($installer.ExitCode))" }
+            for ($attempt = 0; $attempt -lt 15 -and -not $runtimeVersion; $attempt++) {
+              $runtimeVersion = Get-WebView2Version
+              if (-not $runtimeVersion) { Start-Sleep -Seconds 2 }
+            }
+          }
+          if (-not $runtimeVersion) { throw 'Evergreen WebView2 runtime was not detected after installation' }
+          Write-Host "Evergreen WebView2 runtime: $runtimeVersion"
+      - name: Build native adapter for source regression checks
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe scripts/build_atlas_webview.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native adapter compilation failed' }
       - name: Run regression suite without game capture
         # Regressions gate the PR; release runs verify the merged executable
         # and portable package without repeating the full test suite.

@@ -72,6 +72,10 @@ for pyd in glob.glob(os.path.join(site_packages, "_winrt*.pyd")):
 
 datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
+atlas_adapter = ROOT / "build" / "atlas_webview" / "pnut_atlas_webview.dll"
+if not atlas_adapter.is_file():
+    raise RuntimeError("Run scripts/build_atlas_webview.py before freezing")
+binaries.append((str(atlas_adapter), "atlas"))
 for package in ("winrt", "windows_capture"):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)

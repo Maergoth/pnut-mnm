@@ -21,6 +21,7 @@ import tarfile
 import tomllib
 import urllib.request
 import urllib.error
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "legal" / "licenses"
@@ -42,11 +43,14 @@ OPENSSL_VERSION = "OpenSSL 3.0.18 30 Sep 2025"
 CRYPTOGRAPHY_OPENSSL_VERSION = "OpenSSL 4.0.3 29 Sep 2026"
 FFMPEG_VERSION = "7.1.5"
 QT_MODULES = ("qtbase", "qtsvg", "qtmultimedia", "qtspeech", "pyside-setup")
+WEBVIEW2_VERSION = "1.0.4258.31"
+WEBVIEW2_NOTICE = f"Microsoft.Web.WebView2-{WEBVIEW2_VERSION}.txt"
 STATIC_FILES = tuple(f"Qt-6.11.2-{m}.txt" for m in QT_MODULES) + (
     "FFmpeg-7.1.5.txt", "OpenSSL-3.0.18.txt", "PyWinRT-3.2.1.txt",
     "windows-capture-2.0.1-Rust-dependencies.txt",
     "cryptography-50.0.2-Rust-dependencies.txt", "OpenSSL-4.0.3.txt",
     "cffi-2.1.1-native-notices.txt",
+    WEBVIEW2_NOTICE,
 )
 
 
@@ -216,6 +220,31 @@ def cryptography_openssl_version() -> str:
     return backend.openssl_version_text()
 
 
+def webview2_pin() -> dict[str, str]:
+    pin = json.loads((ROOT / "native/atlas_webview/sdk.json").read_text(encoding="utf-8"))
+    expected_url = ("https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/"
+                    f"{WEBVIEW2_VERSION}/microsoft.web.webview2.{WEBVIEW2_VERSION}.nupkg")
+    if (pin.get("package") != "Microsoft.Web.WebView2" or pin.get("version") != WEBVIEW2_VERSION
+            or pin.get("url") != expected_url or len(pin.get("sha256", "")) != 64):
+        raise RuntimeError("WebView2 SDK changed; review and regenerate its full notices before shipping")
+    return pin
+
+
+def webview2_notices(data: bytes | None = None) -> tuple[str, bytes, str, str]:
+    pin = webview2_pin()
+    if data is None:
+        request = urllib.request.Request(pin["url"], headers={"User-Agent": "PNUT-license-notices"})
+        with urllib.request.urlopen(request, timeout=45) as response:
+            data = response.read(32 * 1024 * 1024 + 1)
+    if len(data) > 32 * 1024 * 1024 or digest(data) != pin["sha256"]:
+        raise RuntimeError("WebView2 SDK does not match its pinned checksum")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        selected = {name: archive.read(name) for name in ("LICENSE.txt", "NOTICE.txt")}
+    return WEBVIEW2_NOTICE, combine(
+        f"Microsoft.Web.WebView2 {WEBVIEW2_VERSION} SDK and static loader notices", selected
+    ), pin["url"], pin["sha256"]
+
+
 def refresh_upstream() -> None:
     jobs = [lambda module=m: qt_notices(module) for m in QT_MODULES]
     jobs.extend((
@@ -225,6 +254,7 @@ def refresh_upstream() -> None:
         rust_notices,
         lambda: rust_notices("cryptography", "50.0.2"),
         cffi_native_notices,
+        webview2_notices,
     ))
     results = []
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -245,6 +275,10 @@ def verify_upstream() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     if set(manifest) != set(STATIC_FILES):
         raise RuntimeError("Upstream notice manifest does not match the pinned dependencies")
+    sdk = webview2_pin()
+    if (manifest[WEBVIEW2_NOTICE]["source"] != sdk["url"]
+            or manifest[WEBVIEW2_NOTICE]["source_sha256"] != sdk["sha256"]):
+        raise RuntimeError("WebView2 SDK notice provenance does not match the pinned build SDK")
     for filename, provenance in manifest.items():
         if digest((DEST / filename).read_bytes()) != provenance["notice_sha256"]:
             raise RuntimeError(f"Missing or changed upstream notice: {filename}")

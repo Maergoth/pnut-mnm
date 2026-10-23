@@ -82,6 +82,39 @@ keep their name and notes in the hover tooltip. A context menu captures the disp
 file and scene point before opening an editor; later zone/load changes must never
 retarget it to another image.
 
+### Optional MnM Atlas browser
+
+`atlas.py` owns documented Atlas URLs and an explicit zone-ID mapping.
+`app/atlas_view.py` and `app/atlas_native.py` form a lazy WebView2 boundary:
+importing or constructing the widget never starts a renderer, makes requests
+or creates a profile. MapOverlay
+constructs/activates it only for the visible Atlas provider; `map/source` and
+`zones/source` are independent preferences defaulting to `images`. Hidden views
+stop loading and ask the runtime to suspend their page. The dedicated shared
+user-data folder preserves notes between views; close native controllers before
+destroying their host widgets. Missing runtime detection offers a Microsoft link
+and the saved-map fallback, without installing software automatically.
+
+Use the real remote compact document, without a wiki-origin iframe, injected
+bridge or private captured data. Keep Atlas's credits visible and external
+navigation in the system browser. Native image labels must never be projected
+onto Atlas's unrelated coordinate system. The native child stays inside a
+five-pixel overlay resize border; the unlocked header retains its drag handle.
+
+`native/atlas_webview` hosts the shared Evergreen runtime through a small C ABI,
+with cancellable navigation, SPA source changes, external-link routing and
+asynchronous lifetime guards. `scripts/build_atlas_webview.py` verifies a pinned
+official SDK package and compiles with Visual Studio C++ Build Tools before
+freezing. The app bundles only this adapter and its SDK notices, not a browser.
+
+`smoke._exercise_atlas` launches a hidden native-window diagnostic child that
+loads only a synthetic offline document and verifies JavaScript, using temporary
+profile data. This child uses Windows Qt because offscreen Qt has no native HWND.
+The packaging spec must continue excluding Qt WebEngine/Quick/QML. CI verifies
+the shared runtime before running the renderer gate.
+See [provider assessment](MAPS_AND_WIKI_ASSESSMENT.md)
+before introducing any new wiki data provider or credentials.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL

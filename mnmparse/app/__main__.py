@@ -12,6 +12,17 @@ from typing import Sequence
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch diagnostics before importing Qt, so DLL failures become reports."""
     args = list(sys.argv[1:] if argv is None else argv)
+    if "--atlas-smoke" in args:
+        import argparse
+        from pathlib import Path
+        from mnmparse.app.atlas_smoke import run_native_smoke
+
+        parser = argparse.ArgumentParser(description="Check the shared Windows web renderer offline")
+        parser.add_argument("--atlas-smoke", action="store_true", required=True)
+        parser.add_argument("--report", type=Path, required=True)
+        parser.add_argument("--storage", type=Path, required=True)
+        parsed = parser.parse_args(args)
+        return run_native_smoke(parsed.report, parsed.storage)
     from mnmparse.app.launch_identity import LaunchError, launch_if_needed, report_launch_error
 
     try:

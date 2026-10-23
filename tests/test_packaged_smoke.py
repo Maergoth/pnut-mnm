@@ -127,6 +127,7 @@ with patch('mnmparse.app.smoke._exercise', side_effect=lambda report: time.sleep
             })
             self.assertEqual(report["legal_documents"], ["open-source", "privacy", "terms"])
             self.assertTrue(report["image_processing"])
+            self.assertEqual(report["atlas"], {"renderer": True, "javascript": True, "network": False})
             self.assertEqual(set(report["player_status"]), {
                 "reader", "dual_scale_xp", "fresh_hp", "thirty_second_rate", "carebear_own_xp", "passive_flash",
             })
