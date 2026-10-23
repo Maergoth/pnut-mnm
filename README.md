@@ -758,6 +758,13 @@ Incomplete, unknown-zone and game-wide summaries do not select a map. You can al
 zone manually and select another map or floor when the wiki has several. Directional Night
 Harbor names use the same city map.
 
+Right-click a point on the displayed image and choose **Add label…** to save a name,
+notes and a preset icon. The icon stays visible; hover it to read the name and notes,
+or right-click it to edit or delete the label. Labels belong to that specific map
+file, so alternate drawings and floors keep separate labels. Their positions follow
+the image as you pan, zoom or resize. Labels persist across restarts and appear in
+both the map overlay and **Zones** when viewing the same image.
+
 Maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
 Maps are cached in `map_cache/` for offline use. Opening an unchanged cached map reuses its
 image; a valid remote file hash lets PNUT check for changes before downloading it. At the top of

@@ -73,6 +73,15 @@ and passive kill notices within two seconds are paired; fresh damage re-arms pai
 and distinct same-form kills remain separate. The victory cue is synthesized from the
 user-supplied two-bar score at 130 BPM; no external recording or MIDI is downloaded.
 
+Map labels belong to canonical original image URLs, independently of zone names.
+`map_labels.py` stores each UUID in its own `map_labels/` QSettings entry; shared
+store notifications update the overlay and embedded Zones map together. Keep label
+positions normalized to the image rectangle. Markers ignore view transforms so their
+icons stay legible when zoomed, accept no mouse buttons so panning still works, and
+keep their name and notes in the hover tooltip. A context menu captures the displayed
+file and scene point before opening an editor; later zone/load changes must never
+retarget it to another image.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
