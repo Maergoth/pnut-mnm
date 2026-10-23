@@ -113,14 +113,14 @@ class StatCardTests(unittest.TestCase):
         self.assertIn("Submit shares these personal bests", self.page.local_tabs.tabToolTip(1))
         self.assertIn("current mini stats", self.page.copy_button.toolTip())
 
-    def test_paint_repeats_full_alias_bold_and_gold_on_each_line(self):
+    def test_paint_stacks_larger_alias_words_bold_and_gold(self):
         class RecordingPainter(QPainter):
             def drawText(self, *args):
-                if args[-1] == entry["alias"]:
-                    drawn.append((args[0].y(), self.font().bold(), self.pen().color().name()))
+                if args[-1] in entry["alias"].split():
+                    drawn.append((args[-1], args[0].y(), self.font(), self.pen().color().name()))
                 return super().drawText(*args)
 
-        entry = sample(10, alias="Fictional Golden Antelope")
+        entry = sample(10, alias="Curious Peach Cheetah")
         self.page.model.set_records([entry])
         option = QStyleOptionViewItem()
         option.font = self.page.font()
@@ -131,9 +131,11 @@ class StatCardTests(unittest.TestCase):
         painter = RecordingPainter(pixmap)
         LeaderboardCardDelegate().paint(painter, option, self.page.model.index(0, 0))
         painter.end()
-        self.assertEqual(len(drawn), 3)
-        self.assertEqual(len({row[0] for row in drawn}), 3)
-        self.assertTrue(all(bold and color == theme.ACCENT for _y, bold, color in drawn))
+        self.assertEqual([word for word, _y, _font, _color in drawn], ["Curious", "Peach", "Cheetah"])
+        self.assertEqual(len({row[1] for row in drawn}), 3)
+        self.assertTrue(all(font.bold() and color == theme.ACCENT for _word, _y, font, color in drawn))
+        self.assertTrue(all(font.pointSizeF() > option.font.pointSizeF() if option.font.pointSizeF() > 0
+                            else font.pixelSize() > option.font.pixelSize() for _word, _y, font, _color in drawn))
 
     def test_narrow_view_scrolls_full_values_and_keyboard_selects_whole_cards(self):
         # Force real overflow even when a previous shell test installed a smaller font.
