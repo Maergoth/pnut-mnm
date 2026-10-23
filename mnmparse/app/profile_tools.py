@@ -20,7 +20,7 @@ from mnmparse.storage import atomic_json
 # No actor names, raw trigger content, history, map/view or respawn custom labels.
 UI_KEYS = {
     "main/page", "main/maximized", "main/overlay_visible", "main/rect",
-    "map/visible", "map/fullscreen", "map/download_on_startup", "map/geometry",
+    "map/visible", "map/fullscreen", "map/download_on_startup", "map/geometry", "map/default_source",
     "app/update_on_startup", "overlay/locked", "overlay/click_through", "overlay/view_mode",
     "overlay/opacity", "overlay/font_scale", "overlay/tab", "overlay/sort_key", "overlay/sort_desc",
     "overlay/geometry", "attack_bar/enabled", "attack_bar/weapon_delay", "live/list_split",

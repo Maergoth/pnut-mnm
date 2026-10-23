@@ -44,6 +44,7 @@ class ZonesPageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.temp.name) / "ui.ini"), QSettings.Format.IniFormat)
+        self.settings.setValue("map/default_source", "images")
         self.cfg = Config(npc_enabled=False, overlay_enabled=False)
         self.engine = _ZoneEngine()
         self.repo = MapRepository(Path(self.temp.name) / "maps")
@@ -275,6 +276,7 @@ def _bootstrap_probe(root: Path):
     from mnmparse.app.tray import TrayIcon
     from mnmparse.app.zones_page import BrowserOnlyNpcPanel
     settings = QSettings(str(root / "ui.ini"), QSettings.Format.IniFormat)
+    settings.setValue("map/default_source", "images")
     settings.setValue("app/whats_new_version", APP_VERSION)
     reference = Repository()
     reference.npcs["Fictional Keeper"] = NpcDetails("Fictional Keeper", "12–15", unique_drops=("Gilded Staff",))

@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 
-from .grammar import CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, NPC, NPC_WORD, PLAYER, PLAYER_WORD, RULES, Event, is_you, lemmatize, starts_message
+from .grammar import BARE_NAME, CC_OUTCOMES, COIN_IN_COPPER, DAMAGE_EFFECT_OUTCOMES, DEBUFF_OUTCOMES, NPC, NPC_WORD, PLAYER, PLAYER_WORD, RULES, Event, is_you, lemmatize, starts_message
 
 #: "... and you receive 2 copper coins ... as your split": the number and the word after it (a
 #: denomination, or the OCR's remains of one: "2 coppe", "1 cc", "3 COI", "O coins", "4 cavalier's")
@@ -510,7 +510,7 @@ class NameCompleter:
                 continue
             if _NPC_START_RX.match(raw):
                 self._npcs[raw] = self._npcs.get(raw, 0) + 1
-            elif re.fullmatch(PLAYER, raw):
+            elif re.fullmatch(BARE_NAME, raw):
                 self._players[raw] = self._players.get(raw, 0) + 1
         if ev.kind in _SKILL_SOURCE_KINDS and ev.skill:
             self._skills[ev.skill] = self._skills.get(ev.skill, 0) + 1
@@ -549,6 +549,10 @@ class NameCompleter:
             value = getattr(ev, field)
             if not value or value[-1:] not in _BANG_GLYPHS or not clean.endswith(value):
                 continue
+            # An independently observed full spelling wins over a shorter one:
+            # both So and Sol may be real names, even without terminal punctuation.
+            if self._known(value, field):
+                return
             stem = value[:-1].rstrip()
             if stem and self._known(stem, field):
                 setattr(ev, field, stem)

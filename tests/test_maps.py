@@ -97,6 +97,7 @@ class MapWindowTests(unittest.TestCase):
         from mnmparse.app.map_overlay import MapOverlay
         self.temp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.temp.name) / "settings.ini"), QSettings.Format.IniFormat)
+        self.settings.setValue("map/default_source", "images")
         self.window = MapOverlay(self.settings, MapRepository(Path(self.temp.name) / "cache"))
 
     def tearDown(self):

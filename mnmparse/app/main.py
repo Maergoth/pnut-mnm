@@ -1653,6 +1653,7 @@ class App(QApplication):
             self._connect_optional(settings_page, "low_health_preview_requested", self._preview_revenge_alert)
             self._connect_optional(settings_page, "overlay_reset_requested", self.reset_overlay_position)
             self._connect_optional(settings_page, "overlay_setting_changed", self._on_overlay_setting)
+            self._connect_optional(settings_page, "map_source_changed", self._on_map_source_changed)
             if self.app_updates is not None:
                 self._connect_optional(settings_page, "app_update_requested", self.app_updates.start)
                 self._connect_optional(settings_page, "app_restart_requested", self.restart_for_update)
@@ -1941,6 +1942,13 @@ class App(QApplication):
     def restart_for_recovery(self) -> None:
         if self.app_updates is not None and self.app_updates.prepare_recovery(arguments=["--config", str(self.config_path)]):
             self.request_quit()
+
+    def _on_map_source_changed(self, source: str) -> None:
+        if self.map_overlay is not None:
+            self.map_overlay.set_source(source)
+        zones = self.window.page("zones") if self.window is not None else None
+        if zones is not None and hasattr(zones, "map"):
+            zones.map.set_source(source)
 
     def _on_map_download_finished(self, message: str) -> None:
         if self.window is not None:
@@ -2542,6 +2550,9 @@ class App(QApplication):
         log.info("Configuration updated from the Settings page")
 
     def _on_preferences_restored(self, cfg: Config) -> None:
+        from mnmparse.app.map_preferences import default_map_source
+
+        self._on_map_source_changed(default_map_source(self.settings))
         self.engine.update_config(cfg)
         reload_preferences = getattr(self.engine, "reload_preferences", None)
         if callable(reload_preferences):

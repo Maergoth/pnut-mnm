@@ -88,8 +88,10 @@ retarget it to another image.
 `app/atlas_view.py` and `app/atlas_native.py` form a lazy WebView2 boundary:
 importing or constructing the widget never starts a renderer, makes requests
 or creates a profile. MapOverlay
-constructs/activates it only for the visible Atlas provider; `map/source` and
-`zones/source` are independent preferences defaulting to `images`. Hidden views
+constructs/activates it only for the visible Atlas provider. `map/default_source`
+is shared by Map and Zones and defaults to `atlas`; Settings > Update maps applies
+it immediately. Globe-menu overrides are independent and last for the current run.
+Legacy `map/source` and `zones/source` values no longer select the startup provider. Hidden views
 stop loading and ask the runtime to suspend their page. The dedicated shared
 user-data folder preserves notes between views; close native controllers before
 destroying their host widgets. Missing runtime detection offers a Microsoft link
@@ -483,7 +485,8 @@ synchronous API's 150 ms line budget; its bounded queue reports overflow explici
 `grammar.py` holds every line shape observed, each rule with a verbatim example, and
 `tests/test_parser.py` checks them.
 Short version of the families (names: players and bare named NPCs use capitalized words,
-including internal apostrophes and hyphens; article-led NPCs may also use lowercase words;
+including internal apostrophes and hyphens; bare NPC titles also permit bounded lowercase
+connectors such as "of the"; article-led NPCs may also use lowercase words;
 "You/Your/YOU" is the viewer). Message-start detection keeps bare names to one word so a
 clipped damage type cannot become part of the following actor's name.
 

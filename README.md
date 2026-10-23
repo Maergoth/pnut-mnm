@@ -758,8 +758,10 @@ Incomplete, unknown-zone and game-wide summaries do not select a map. You can al
 zone manually and select another map or floor when the wiki has several. Directional Night
 Harbor names use the same city map.
 
-The header's globe menu switches between **Saved maps** (the default) and
-**MnM Atlas (online)**, independently in the overlay and main **Zones** browser.
+**MnM Atlas (online)** is the default for the overlay and main **Zones** browser.
+Choose **Saved maps (offline)** in **Settings > Update maps > Default map** to use
+downloaded images at startup instead. This choice applies to both views immediately.
+The header's globe menu can switch either view temporarily for the current run.
 Atlas provides interactive floors, location markers, search and its own local notes;
 selecting a notable NPC in PNUT also searches for it in Atlas. Its header stays
 visible while Atlas is selected. Atlas needs an internet connection; **Use saved maps**

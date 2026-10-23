@@ -34,6 +34,10 @@ class _MapWindow(QWidget):
         self.repo = object()
         self.locked = None
         self.appearance = None
+        self.source = "atlas"
+
+    def set_source(self, source):
+        self.source = source
 
     def set_locked(self, locked):
         self.locked = locked
@@ -446,6 +450,19 @@ class MapLockWiringTests(unittest.TestCase):
         self.qt_app.processEvents()
         self.assertTrue(host.map_overlay.isVisible())
         self.assertTrue(host.map_overlay.isFullScreen())
+
+    def test_default_map_choice_updates_both_maps_through_settings(self):
+        host = self.bootstrap()
+        options = host.window.page("settings")
+        zones = host.window.page("zones")
+        self.assertEqual(options.map_default_source.currentData(), "atlas")
+        options.map_default_source.setCurrentIndex(options.map_default_source.findData("images"))
+        self.assertEqual(host.map_overlay.source, "images")
+        self.assertEqual(zones.map.source, "images")
+        self.assertEqual(self.settings.value("map/default_source"), "images")
+        options.map_default_source.setCurrentIndex(options.map_default_source.findData("atlas"))
+        self.assertEqual(host.map_overlay.source, "atlas")
+        self.assertEqual(zones.map.source, "atlas")
 
     def test_hidden_overlay_stays_hidden_when_timers_revenge_alerts_and_prompts_arrive(self):
         from mnmparse.app.triggers_runtime import TriggerRunner

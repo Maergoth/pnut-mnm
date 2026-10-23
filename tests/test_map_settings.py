@@ -54,6 +54,25 @@ class MapSettingsTests(unittest.TestCase):
             reopened.close()
             reopened.deleteLater()
 
+    def test_default_map_applies_immediately_and_survives_restart(self):
+        self.assertEqual(self.page.map_default_source.currentData(), "atlas")
+        changes = []
+        self.page.map_source_changed.connect(changes.append)
+        self.page.map_default_source.setCurrentIndex(self.page.map_default_source.findData("images"))
+        self.assertEqual(changes, ["images"])
+        self.assertFalse(self.page.has_unsaved_changes())
+        self.settings.sync()
+        reloaded = QSettings(self.settings_path, QSettings.Format.IniFormat)
+        cfg = Config(player_name="Maergoth")
+        reopened = SettingsPage(_MissingEngine(cfg), cfg, reloaded)
+        try:
+            self.assertEqual(reopened.map_default_source.currentData(), "images")
+            reopened.map_default_source.setCurrentIndex(reopened.map_default_source.findData("atlas"))
+            self.assertEqual(reloaded.value("map/default_source"), "atlas")
+        finally:
+            reopened.close()
+            reopened.deleteLater()
+
     def test_update_restart_can_distinguish_saved_settings_from_a_draft(self):
         self.assertFalse(self.page.has_unsaved_changes())
         original = self.page.player_name.text()
@@ -120,6 +139,7 @@ class MapSettingsTests(unittest.TestCase):
         self.assertTrue(top_panel.isAncestorOf(self.page.app_update_on_startup))
         self.assertTrue(map_panel.isAncestorOf(self.page.map_download_button))
         self.assertTrue(map_panel.isAncestorOf(self.page.map_download_on_startup))
+        self.assertTrue(map_panel.isAncestorOf(self.page.map_default_source))
         self.assertTrue(self.page.map_download_source.openExternalLinks())
         self.assertIn("/wiki/Category:Zones", self.page.map_download_source.text())
 

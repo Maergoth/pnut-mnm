@@ -34,6 +34,7 @@ def _probe(scenario: str, output: Path) -> None:
     from mnmparse.config import Config
 
     settings = QSettings(str(output.with_suffix(".ini")), QSettings.Format.IniFormat)
+    settings.setValue("map/default_source", "images")
     with patch("mnmparse.app.main.QSettings", return_value=settings):
         app = App([])
     cfg = Config(start_capture_on_launch=False)

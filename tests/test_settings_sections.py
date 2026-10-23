@@ -50,7 +50,7 @@ class SettingsSectionsTests(unittest.TestCase):
         panels = self.panels()
         self.assertIs(panels[2], self.page.morality)
         expected = (
-            "App updates", "Map updates", "General", "Overlay", "Considered NPC", "Revenge List",
+            "App updates", "Update maps", "General", "Overlay", "Considered NPC", "Revenge List",
             "Combat & session", "Mini stat window", "Clipboard", "Capture", "OCR", "Crop", "Logs & feed", "Status",
         )
         headings = []

@@ -83,6 +83,7 @@ class MapDecodeCacheTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             settings = QSettings(str(root / "map.ini"), QSettings.Format.IniFormat)
+            settings.setValue("map/default_source", "images")
             repo = MapRepository(root / "cache")
             entry = MapImage("Ancient Crypt", "https://static.wikitide.net/map.png", "")
             original = _png((3, 2))

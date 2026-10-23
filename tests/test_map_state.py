@@ -33,6 +33,7 @@ class MapStateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.temp.name) / "map.ini"), QSettings.Format.IniFormat)
+        self.settings.setValue("map/default_source", "images")
         self.entries = [MapImage("Ground", "https://example.invalid/ground.png", ""),
                         MapImage("Upper floor", "https://example.invalid/upper.png", "")]
         self.repo = Mock()

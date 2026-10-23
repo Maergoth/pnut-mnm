@@ -33,6 +33,7 @@ class MapLabelIntegrationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.settings_path = str(Path(self.temp.name) / "map.ini")
         self.settings = QSettings(self.settings_path, QSettings.Format.IniFormat)
+        self.settings.setValue("map/default_source", "images")
         self.worker = patch("mnmparse.app.map_overlay._Load.start")
         self.worker.start()
         self.windows = []

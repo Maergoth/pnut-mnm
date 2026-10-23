@@ -108,6 +108,7 @@ class ProfileToolsTests(unittest.TestCase):
         self.widget.load(self.current)
         self.assertTrue(self.widget.full_backup.isChecked())
         self.settings.setValue("overlay/opacity", .7)
+        self.settings.setValue("map/default_source", "images")
         self.settings.setValue("attack_bar/weapon_delay", 36)
         self.settings.setValue("triggers/private-editor", "Teammate")
         data_root = Path(self.current.log_dir)
@@ -123,6 +124,7 @@ class ProfileToolsTests(unittest.TestCase):
         current_dir = str(self.root / "current-logs")
         self.current = dataclasses.replace(self.current, log_dir=current_dir)
         self.settings.setValue("overlay/opacity", .4)
+        self.settings.setValue("map/default_source", "atlas")
         self.settings.setValue("attack_bar/weapon_delay", 50)
         refreshed = []
         self.widget.restored.connect(refreshed.append)
@@ -131,6 +133,7 @@ class ProfileToolsTests(unittest.TestCase):
         self.assertTrue(cfg.casual_mode)
         self.assertFalse(cfg.casual_mode_confirmed)
         self.assertEqual(self.settings.value("overlay/opacity", type=float), .7)
+        self.assertEqual(self.settings.value("map/default_source"), "images")
         self.assertEqual(self.settings.value("attack_bar/weapon_delay", type=int), 36)
         self.assertEqual(json.loads((Path(current_dir) / "party.json").read_text())["manual_in"], ["Teammate"])
         self.assertEqual(refreshed, [cfg])
