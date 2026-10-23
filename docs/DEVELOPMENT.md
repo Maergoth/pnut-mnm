@@ -82,6 +82,29 @@ keep their name and notes in the hover tooltip. A context menu captures the disp
 file and scene point before opening an editor; later zone/load changes must never
 retarget it to another image.
 
+### Optional MnM Atlas browser
+
+`atlas.py` owns documented Atlas URLs and an explicit zone-ID mapping.
+`app/atlas_view.py` is a lazy WebEngine boundary: importing or constructing the
+widget never starts Chromium, makes requests or creates a profile. MapOverlay
+constructs/activates it only for the visible Atlas provider; `map/source` and
+`zones/source` are independent preferences defaulting to `images`. Hidden views
+stop loading and freeze their page. One persistent profile per storage path
+shares local notes between views; destroy pages before releasing the profile.
+
+Use the real remote compact document, without a wiki-origin iframe, injected
+bridge or private captured data. Keep Atlas's credits visible and external
+navigation in the system browser. Native image labels must never be projected
+onto Atlas's unrelated coordinate system. Browser render descendants inherit
+overlay edge/Alt-drag filters while ordinary locked/embedded input stays native.
+
+`smoke._exercise_atlas` starts the actual bundled renderer on `about:blank`,
+blocks network requests and verifies JavaScript, using temporary profile data.
+The packaging spec must retain WebEngine helper/resources/locales and native Qt
+dependencies. `AA_ShareOpenGLContexts` must be set before QApplication because
+WebEngine is loaded later. See [provider assessment](MAPS_AND_WIKI_ASSESSMENT.md)
+before introducing any new wiki data provider or credentials.
+
 ### Building and publishing Windows releases
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL

@@ -9,13 +9,14 @@ from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
+from PySide6.QtGui import QActionGroup, QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMenu, QMessageBox,
-    QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from mnmparse.app import theme
+from mnmparse.app.atlas_view import AtlasView
 from mnmparse.app.map_labels import MapLabelDialog, MapLabelItem, label_icon
 from mnmparse.app.monster_icon import monster_icon as _monster_icon
 from mnmparse.app.notable_npc_menu import NotableNpcMenu, npc_title_key
@@ -84,6 +85,20 @@ def _wiki_icon() -> QIcon:
     painter.drawLine(18, 22, 32, 8)
     painter.drawLine(22, 8, 32, 8)
     painter.drawLine(32, 8, 32, 18)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+def _map_source_icon() -> QIcon:
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(theme.qcolor(theme.MUTED), 2.4))
+    painter.drawEllipse(QRectF(5, 5, 30, 30))
+    painter.drawEllipse(QRectF(13, 5, 14, 30))
+    painter.drawLine(5, 20, 35, 20)
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return QIcon(pixmap)
@@ -296,6 +311,9 @@ class MapOverlay(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.settings = settings
+        source = str(settings.value(self._key("source"), "images"))
+        self._source = source if source in ("images", "atlas") else "images"
+        self._atlas: AtlasView | None = None
         self.label_store = MapLabelStore.for_settings(settings)
         self._label_menu: QMenu | None = None
         self._locked = settings.value("overlay/locked", False, type=bool)
@@ -325,10 +343,12 @@ class MapOverlay(QWidget):
             self.resize(900, 650)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
-        self.view = MapView(self)
+        self._map_stack = QStackedWidget(self)
+        self.view = MapView(self._map_stack)
         self.view.label_context_requested.connect(self._label_context_menu)
         self.label_store.changed.connect(self._refresh_labels)
-        layout.addWidget(self.view)
+        self._map_stack.addWidget(self.view)
+        layout.addWidget(self._map_stack)
         # Floating controls never change the map viewport when they appear/disappear.
         self.header = _MapHeader(self)
         if embedded:
@@ -356,6 +376,26 @@ class MapOverlay(QWidget):
         self.notable_npcs.setMenu(self.notable_npcs_menu)
         self._update_notable_npcs()
         top.addWidget(self.notable_npcs)
+        self.source_button = QToolButton()
+        self.source_button.setAccessibleName("Map source")
+        self.source_button.setIcon(_map_source_icon())
+        self.source_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.source_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._source_menu = QMenu(self.source_button)
+        self._source_menu.setAccessibleName("Map source")
+        source_group = QActionGroup(self._source_menu)
+        source_group.setExclusive(True)
+        self._source_actions = {}
+        for key, title in (("images", "Saved maps"), ("atlas", "MnM Atlas (online)")):
+            action = self._source_menu.addAction(title)
+            action.setCheckable(True)
+            source_group.addAction(action)
+            action.triggered.connect(lambda _checked=False, source=key: self.set_source(source))
+            self._source_actions[key] = action
+        self._source_menu.aboutToShow.connect(self._show_header)
+        self._source_menu.aboutToHide.connect(self._header_hide_after_menu)
+        self.source_button.setMenu(self._source_menu)
+        top.addWidget(self.source_button)
         self.drag_handle = _DragHandle(self.header)
         top.addWidget(self.drag_handle)
         self.zone = _MapCombo()
@@ -400,7 +440,7 @@ class MapOverlay(QWidget):
         self._header_hide.timeout.connect(self._hide_header)
         for widget in (self, self.view.viewport(), self.header, self.zone,
                        self.zone.lineEdit(), self.variants, self.fullscreen, self.drag_handle,
-                       self.wiki_link, self.notable_npcs):
+                       self.wiki_link, self.notable_npcs, self.source_button):
             widget.setMouseTracking(True)
             widget.installEventFilter(self)
         self.header.setVisible(embedded)
@@ -408,6 +448,7 @@ class MapOverlay(QWidget):
         self.set_appearance(1.0 if embedded else settings.value("overlay/opacity", 0.85, type=float),
                             1.0 if embedded else settings.value("overlay/font_scale", 1.0, type=float))
         self.set_locked(self._locked)
+        self._layout_source()
         if embedded:
             return
         QShortcut(QKeySequence("F11"), self).activated.connect(self.toggle_fullscreen)
@@ -452,6 +493,77 @@ class MapOverlay(QWidget):
     def locked(self) -> bool:
         return self._locked
 
+    @property
+    def source(self) -> str:
+        return self._source
+
+    def _layout_source(self) -> None:
+        docked = self.embedded or self._source == "atlas"
+        layout = self.layout()
+        if docked:
+            if layout.indexOf(self.header) < 0:
+                layout.insertWidget(0, self.header)
+            self.header.show()
+        else:
+            layout.removeWidget(self.header)
+            self.header.hide()
+        self.variants.setVisible(self._source == "images")
+        self._source_actions[self._source].setChecked(True)
+        self.source_button.setToolTip("Map source: " + ("MnM Atlas (online)" if self._source == "atlas" else "Saved maps"))
+        self._position_chrome()
+
+    def _ensure_atlas(self) -> AtlasView:
+        if self._atlas is None:
+            self._atlas = AtlasView(self._map_stack)
+            self._atlas.zone_changed.connect(self._atlas_zone_changed)
+            self._atlas.fallback_requested.connect(lambda: self.set_source("images"))
+            self._map_stack.addWidget(self._atlas)
+            self._watch_atlas_input(self._atlas)
+        return self._atlas
+
+    def _watch_atlas_input(self, widget: QWidget) -> None:
+        """Keep the overlay's edge resize and Alt-drag on browser render children."""
+        if self.embedded:
+            return
+        widget.setMouseTracking(True)
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+    def _atlas_zone_changed(self, zone: str) -> None:
+        if (not self._closing and self.isVisible() and self._source == "atlas"
+                and zone and zone_title(zone) != self._current_zone):
+            self.set_zone(zone)
+
+    def set_source(self, source: str) -> None:
+        if source not in ("images", "atlas"):
+            raise ValueError("Unknown map source")
+        if self._closing:
+            return
+        self.save_state()
+        self._token += 1
+        self._cancel_loads()
+        self._source = source
+        self.settings.setValue(self._key("source"), source)
+        self._layout_source()
+        if source == "images":
+            if self._atlas is not None:
+                self._atlas.deactivate()
+            self._map_stack.setCurrentWidget(self.view)
+            if self._loaded_zone == self._current_zone and not self.view._image_rect.isEmpty():
+                self._set_status("")
+            elif not self._current_zone or self._current_zone == "World":
+                self._set_status("Select a zone to browse its saved maps.")
+            elif self.isVisible():
+                self.load()
+        else:
+            self._set_status("")
+            if self.isVisible():
+                atlas = self._ensure_atlas()
+                self._map_stack.setCurrentWidget(atlas)
+                atlas.activate(self._current_zone)
+
     def set_locked(self, locked: bool) -> None:
         self._locked = bool(locked)
         if self._locked:
@@ -485,8 +597,10 @@ class MapOverlay(QWidget):
         size = max(30, round(px * 2.3))
         self.wiki_link.setFixedSize(size, size)
         self.notable_npcs.setFixedSize(size, size)
+        self.source_button.setFixedSize(size, size)
         icon_size = max(20, round(px * 1.54))
         self.notable_npcs.setIconSize(QSize(icon_size, icon_size))
+        self.source_button.setIconSize(QSize(icon_size, icon_size))
         self.notable_npcs_menu.set_badge_size(max(14, round(px * 1.35)))
         if self.embedded:
             self.zone.setMinimumHeight(self.zone.lineEdit().minimumSizeHint().height() + 12)
@@ -534,7 +648,8 @@ class MapOverlay(QWidget):
         self.view.set_image(QImage())
         self._set_status(f"{title} — open the map to load it.")
         if self.isVisible():
-            self.npc_zone_requested.emit(title)
+            if title != "World":
+                self.npc_zone_requested.emit(title)
             self.load()
 
     def set_notable_npcs(self, zone: str, names: Sequence[str], status: str = "", *,
@@ -568,8 +683,9 @@ class MapOverlay(QWidget):
 
     def _update_notable_npcs(self) -> None:
         zone = self._current_zone
-        self.notable_npcs.setEnabled(bool(zone))
-        self.notable_npcs.setToolTip(f"Notable NPCs in {zone}" if zone else "Select a zone to browse notable NPCs")
+        has_zone = bool(zone) and zone != "World"
+        self.notable_npcs.setEnabled(has_zone)
+        self.notable_npcs.setToolTip(f"Notable NPCs in {zone}" if has_zone else "Select a zone to browse notable NPCs")
         names, status, levels, unique_loot, quests = self._notable_npcs.get(
             zone, ((), "Loading notable NPCs…", {}, frozenset(), frozenset()))
         # Metadata changes keep native actions and their vertical hit targets.
@@ -597,11 +713,13 @@ class MapOverlay(QWidget):
     def _select_npc(self, zone: str, name: str) -> None:
         if zone == self._current_zone and not self._closing:
             self.npc_selected.emit(name)
+            if self._source == "atlas" and self.isVisible():
+                self._ensure_atlas().focus_npc(name)
 
     def _open_notable_npcs(self) -> None:
         self._show_header()
         self._update_notable_npcs()
-        if self._current_zone and not self._closing:
+        if self._current_zone and self._current_zone != "World" and not self._closing:
             self.npc_zone_requested.emit(self._current_zone)
 
     def _header_hide_after_menu(self) -> None:
@@ -610,7 +728,17 @@ class MapOverlay(QWidget):
 
     def load(self, *, refresh: bool = False, entry: MapImage | None = None,
              preserve_view: bool = False) -> None:
+        if self._source == "atlas":
+            if not self._closing and self.isVisible():
+                atlas = self._ensure_atlas()
+                self._map_stack.setCurrentWidget(atlas)
+                self._set_status("")
+                atlas.activate(self._current_zone)
+            return
         if not self._current_zone or self._closing:
+            return
+        if self._current_zone == "World":
+            self._set_status("Select a zone to browse its saved maps.")
             return
         self._token += 1
         self._cancel_loads()
@@ -759,14 +887,15 @@ class MapOverlay(QWidget):
         self._header_hide.start()
 
     def _update_wiki_link(self) -> None:
-        self.wiki_link.setEnabled(bool(self._current_zone))
-        name = (f"Open {self._current_zone} on the wiki" if self._current_zone
+        has_zone = bool(self._current_zone) and self._current_zone != "World"
+        self.wiki_link.setEnabled(has_zone)
+        name = (f"Open {self._current_zone} on the wiki" if has_zone
                 else "Select a zone to open its wiki page")
         self.wiki_link.setAccessibleName(name)
         self.wiki_link.setToolTip(name)
 
     def _open_zone_wiki(self) -> None:
-        if self._current_zone:
+        if self._current_zone and self._current_zone != "World":
             QDesktopServices.openUrl(QUrl(wiki_url(self._current_zone)))
 
     def _update_fullscreen_icon(self) -> None:
@@ -799,11 +928,12 @@ class MapOverlay(QWidget):
             gear.raise_()
 
     def _hide_header(self) -> None:
-        if self.embedded:
+        if self.embedded or self._source == "atlas":
             return
         # A popup extends beyond the header; keep its controls until it closes.
         if (self._drag_offset is not None or self._editing_zone
                 or self.notable_npcs_menu.isVisible()
+                or self._source_menu.isVisible()
                 or any(combo.view().isVisible() for combo in (self.zone, self.variants))):
             self._header_hide.start()
         elif self.header.geometry().contains(self.mapFromGlobal(QCursor.pos())):
@@ -847,6 +977,11 @@ class MapOverlay(QWidget):
         if self.embedded:
             return super().eventFilter(watched, event)
         kind = event.type()
+        if kind == QEvent.Type.ChildPolished:
+            child = event.child()
+            if self._atlas is not None and isinstance(child, QWidget) and self._atlas.isAncestorOf(child):
+                self._watch_atlas_input(child)
+            return super().eventFilter(watched, event)
         if self._drag_offset is not None:
             if kind == QEvent.Type.MouseMove:
                 if event.buttons() & Qt.MouseButton.LeftButton:
@@ -878,7 +1013,7 @@ class MapOverlay(QWidget):
                     watched.setCursor(Qt.CursorShape.SizeBDiagCursor)
                 elif watched is self.drag_handle or (watched is self.header and not self._locked and not self.isFullScreen()):
                     watched.setCursor(Qt.CursorShape.SizeAllCursor)
-                elif watched in (self.wiki_link, self.notable_npcs):
+                elif watched in (self.wiki_link, self.notable_npcs, self.source_button):
                     watched.setCursor(Qt.CursorShape.PointingHandCursor)
                 else:
                     watched.unsetCursor()
@@ -901,8 +1036,8 @@ class MapOverlay(QWidget):
 
     def _position_chrome(self) -> None:
         self.layout().activate()
-        if self.embedded:
-            self.status.setGeometry(self.view.geometry().adjusted(16, 16, -16, -16))
+        if self.embedded or self._source == "atlas":
+            self.status.setGeometry(self._map_stack.geometry().adjusted(16, 16, -16, -16))
         else:
             self.header.setGeometry(5, 5, self.width() - 10, self.header.sizeHint().height())
             self.status.setGeometry(16, self.header.height(), self.width() - 32,
@@ -911,11 +1046,15 @@ class MapOverlay(QWidget):
         # background. Clip the map itself so zoomed images cannot square off the frame.
         if self.embedded or self.isFullScreen():
             self.view.clearMask()
+            self._map_stack.clearMask()
         else:
             clip = QPainterPath()
             radius = theme.RADIUS_PANEL - 2
             clip.addRoundedRect(QRectF(self.view.rect()), radius, radius)
             self.view.setMask(QRegion(clip.toFillPolygon().toPolygon()))
+            stack_clip = QPainterPath()
+            stack_clip.addRoundedRect(QRectF(self._map_stack.rect()), radius, radius)
+            self._map_stack.setMask(QRegion(stack_clip.toFillPolygon().toPolygon()))
 
     def _settings_gear_changed(self) -> None:
         """The hover gear floats above the unchanged map header."""
@@ -968,14 +1107,17 @@ class MapOverlay(QWidget):
     def showEvent(self, event: Any) -> None:  # noqa: N802
         super().showEvent(event)
         self.visibility_changed.emit(True)
-        if self.isVisible() and self._current_zone and not self._closing:
+        if self.isVisible() and self._current_zone and self._current_zone != "World" and not self._closing:
             self.npc_zone_requested.emit(self._current_zone)
-        if self._loaded_zone != self._current_zone and self._token not in self._loads:
+        if self._source == "atlas" or (self._loaded_zone != self._current_zone and self._token not in self._loads):
             self.load()
 
     def hideEvent(self, event: Any) -> None:  # noqa: N802
         self._end_drag()
         self.notable_npcs_menu.hide()
+        self._source_menu.hide()
+        if self._atlas is not None:
+            self._atlas.deactivate()
         if self._label_menu is not None:
             self._label_menu.close()
         if not self._closing:
@@ -989,7 +1131,8 @@ class MapOverlay(QWidget):
             if rect.isValid():
                 self.settings.setValue(self._key("geometry"), rect)
             self.settings.setValue(self._key("fullscreen"), self.isFullScreen())
-        if self._loaded_zone == self._current_zone and self._selected_url and self.view.scene().items():
+        if (self._source == "images" and self._loaded_zone == self._current_zone
+                and self._selected_url and self.view.scene().items()):
             rect = self.view.sceneRect()
             centre = self.view.mapToScene(self.view.viewport().rect().center())
             state = {
@@ -1002,7 +1145,11 @@ class MapOverlay(QWidget):
             self.settings.setValue(self._key("view"), state)
 
     def shutdown(self) -> None:
+        if self._closing:
+            return
         self._closing = True
+        if self._atlas is not None:
+            self._atlas.shutdown()
         self.notable_npcs_menu.hide()
         self._header_hide.stop()
         self._token += 1

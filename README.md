@@ -758,14 +758,25 @@ Incomplete, unknown-zone and game-wide summaries do not select a map. You can al
 zone manually and select another map or floor when the wiki has several. Directional Night
 Harbor names use the same city map.
 
+The header's globe menu switches between **Saved maps** (the default) and
+**MnM Atlas (online)**, independently in the overlay and main **Zones** browser.
+Atlas provides interactive floors, location markers, search and its own local notes;
+selecting a notable NPC in PNUT also searches for it in Atlas. Its header stays
+visible while Atlas is selected. Atlas needs an internet connection; **Use saved maps**
+returns to PNUT's cached image view if loading fails. Atlas notes persist locally in
+`atlas_cache/`. Map artwork and markers are provided by
+[MnM Atlas and the original map authors](https://www.mnmatlas.com/).
+
 Right-click a point on the displayed image and choose **Add label…** to save a name,
 notes and a preset icon. The icon stays visible; hover it to read the name and notes,
 or right-click it to edit or delete the label. Labels belong to that specific map
 file, so alternate drawings and floors keep separate labels. Their positions follow
 the image as you pan, zoom or resize. Labels persist across restarts and appear in
 both the map overlay and **Zones** when viewing the same image.
+These image labels stay with their original files when switching providers;
+Atlas has its own notes and coordinate system.
 
-Maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
+Saved maps come from the [Monsters & Memories Wiki](https://monstersandmemories.miraheze.org/wiki/Category:Zones).
 Maps are cached in `map_cache/` for offline use. Opening an unchanged cached map reuses its
 image; a valid remote file hash lets PNUT check for changes before downloading it. At the top of
 **Settings**, **Download latest maps** updates every known zone's maps in the background;
