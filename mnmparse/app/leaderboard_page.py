@@ -23,6 +23,7 @@ COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "
            ("resist_magic", "Magic"), ("resist_poison", "Poison"),
            ("stat_total", "Stat Total"), ("resist_total", "Resist Total"))
 LABELS = dict(COLUMNS)
+DEFAULT_SORT_COLUMN = next(column for column, (field, _label) in enumerate(COLUMNS) if field == "stat_total")
 CARD_LABELS = {**LABELS, "max_health": "HP", "max_mana": "Mana", "coin_looted": "Copper",
                "resist_corruption": "Corr", "resist_disease": "Dis", "resist_electricity": "Elec",
                "resist_magic": "Mag", "resist_poison": "Poi"}
@@ -85,7 +86,7 @@ class LeaderboardModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.records = []
-        self._column, self._order = 1, Qt.SortOrder.DescendingOrder
+        self._column, self._order = DEFAULT_SORT_COLUMN, Qt.SortOrder.DescendingOrder
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.records)
@@ -149,25 +150,32 @@ class LeaderboardModel(QAbstractTableModel):
 
 
 class LeaderboardCardDelegate(QStyledItemDelegate):
-    """One selectable record, painted as exactly three lines with repeated aliases."""
+    """One selectable record, with a large three-word name beside three stat rows."""
 
     def _layout(self, record, font):
         metrics = QFontMetrics(font)
-        bold = QFont(font)
-        bold.setBold(True)
-        alias_width = QFontMetrics(bold).horizontalAdvance(record.get("alias", "Anonymous name unavailable")) + 24
+        name_font = QFont(font)
+        name_font.setBold(True)
+        if font.pointSizeF() > 0:
+            name_font.setPointSizeF(font.pointSizeF() * 1.4)
+        else:
+            name_font.setPixelSize(max(1, round(font.pixelSize() * 1.4)))
+        names = record.get("alias", "Anonymous name unavailable").split(maxsplit=2)
+        name_metrics = QFontMetrics(name_font)
+        alias_width = max((name_metrics.horizontalAdvance(word) for word in names), default=0) + 24
         lines = tuple(tuple(f"{CARD_LABELS[field]}: {_value(record.get(field))}" for field in row) for row in RECORD_ROWS)
         # Each line grows naturally; large values remain reachable by horizontal scrolling.
         width = alias_width + max(sum(metrics.horizontalAdvance(text) + 18 for text in row) for row in lines) + 24
-        return bold, alias_width, lines, max(26, metrics.lineSpacing() + 10), width
+        return name_font, alias_width, names, lines, max(26, metrics.lineSpacing() + 10,
+                                                       name_metrics.lineSpacing() + 6), width
 
     def sizeHint(self, option, index):
-        _bold, _alias_width, _lines, line_height, width = self._layout(index.data(RECORD_ROLE) or {}, option.font)
+        _name_font, _alias_width, _names, _lines, line_height, width = self._layout(index.data(RECORD_ROLE) or {}, option.font)
         return QSize(width, line_height * 3 + 16)
 
     def paint(self, painter, option, index):
         record = index.data(RECORD_ROLE) or {}
-        bold, alias_width, lines, line_height, _width = self._layout(record, option.font)
+        name_font, alias_width, names, lines, line_height, _width = self._layout(record, option.font)
         painter.save()
         painter.setClipRect(option.rect)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
@@ -179,10 +187,10 @@ class LeaderboardCardDelegate(QStyledItemDelegate):
         metrics = QFontMetrics(option.font)
         for line, values in enumerate(lines):
             y = top + line * line_height
-            painter.setFont(bold)
+            painter.setFont(name_font)
             painter.setPen(QColor(theme.ACCENT))
             painter.drawText(QRect(x, y, alias_width - 12, line_height), Qt.AlignmentFlag.AlignVCenter,
-                             record.get("alias", "Anonymous name unavailable"))
+                             names[line] if line < len(names) else "")
             painter.setFont(option.font)
             painter.setPen(QColor(theme.TEXT))
             cursor = x + alias_width
@@ -270,7 +278,7 @@ class LeaderboardPage(QWidget):
         for column, (field, label) in enumerate(COLUMNS):
             if field != "captured_at":
                 self.sort_field.addItem(FULL_LABELS[field], column)
-        self.sort_field.setCurrentIndex(self.sort_field.findData(1))
+        self.sort_field.setCurrentIndex(self.sort_field.findData(DEFAULT_SORT_COLUMN))
         self.sort_order = QComboBox()
         self.sort_order.setAccessibleName("Leaderboard sort direction")
         self.sort_order.addItem("Descending", Qt.SortOrder.DescendingOrder)
