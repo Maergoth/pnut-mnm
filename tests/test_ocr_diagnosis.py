@@ -151,6 +151,7 @@ class EngineOcrDiagnosisTests(unittest.TestCase):
         self.assertIsNone(self.engine.ocr_diagnosis()["active_ocr"]["recognizer_language"])
 
     def test_stat_bar_evidence_distinguishes_missing_images_and_detaches_history(self) -> None:
+        from mnmparse.app.stat_reader_worker import StatReadResult
         from mnmparse.player_status import PlayerStatusReading
 
         cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(2, 3, 12, 13))
@@ -158,8 +159,23 @@ class EngineOcrDiagnosisTests(unittest.TestCase):
         frame = np.zeros((20, 20, 3), np.uint8)
         stats = np.zeros((10, 10, 3), np.uint8)
         reading = PlayerStatusReading(20, 100, (0, 0, 10, 10), (), 88.7, (1, 7, 9, 9), .08)
-        with mock.patch("mnmparse.player_status.read_status_crop", return_value=(reading, [])):
-            self.engine._process_frame(frame, cfg, status_frame=stats)
+        self.engine._state = "running"
+        self.engine._source = object()
+        self.engine._window_found = True
+
+        def complete_stat_read(request):
+            # Complete the independent worker deterministically. Its original
+            # capture context must still pass the production acceptance checks.
+            np.testing.assert_array_equal(request.crop, stats)
+            self.engine._accept_stat_result(StatReadResult(
+                request.captured_at, request.context, tuple(request.crop.shape), reading, .1))
+            return True
+
+        worker = SimpleNamespace(submit=mock.Mock(side_effect=complete_stat_read),
+                                 closed=False, clear_pending=mock.Mock())
+        self.engine._stat_worker = worker
+        self.engine._process_frame(frame, cfg, status_frame=stats)
+        worker.submit.assert_called_once()
         report = self.engine.ocr_diagnosis()
         evidence = report["recent_ocr_frames"][-1]["player_status"]
         self.assertTrue(evidence["frame_available"])
@@ -173,6 +189,7 @@ class EngineOcrDiagnosisTests(unittest.TestCase):
         stored = self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]["player_status"]
         self.assertEqual(stored, original)
         self.engine._process_frame(frame, cfg, cropped=True, status_frame=None)
+        worker.submit.assert_called_once()  # Missing pixels cannot reuse the previous OCR result.
         missing = self.engine.ocr_diagnosis()["recent_ocr_frames"][-1]["player_status"]
         self.assertFalse(missing["frame_available"])
         self.assertFalse(missing["panel_readable"])

@@ -11,7 +11,8 @@
   the final exclamation mark misread as `l` to be repaired without changing the
   original log text or trimming independently observed legitimate names.
 - Correctly recognized live notable kills can trigger the existing fanfare and
-  NPC details panel according to your settings. Hit deduplication is unchanged.
+  NPC details panel according to your settings, including the confirmed Keeper
+  kill whose final punctuation was misread. Hit deduplication is unchanged.
 - Separate mini-stat and chat readers now sample and recognize text on independent
   workers. A slow stat read cannot hold up Resist or other chat alerts, and stat
   warnings can confirm even while chat OCR is busy. The stat worker uses its own

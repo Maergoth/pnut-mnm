@@ -2430,7 +2430,7 @@ class Engine(QObject):
 
     def _handle_part(self, msg: Message, cfg: Config) -> None:
         """Parse, aggregate and announce one message (lock held)."""
-        from mnmparse.parser import parse_garbled_amount, parse_line
+        from mnmparse.parser import _BANG_GLYPHS, normalize_ocr, parse_garbled_amount, parse_line
 
         writer, stats = self._writer, self._stats
         if writer is None or stats is None:
@@ -2448,7 +2448,17 @@ class Engine(QObject):
             guess = parse_garbled_amount(msg.text, msg.first_seen, cfg.player_name)
             if guess is not None and stats.estimate_amount(guess):
                 ev = guess
+        original_target = ev.target
         self._names.observe(ev)
+        # The tracker conservatively marks a missing final ! as a fragment. A
+        # previously observed full name can prove this specific punctuation
+        # misread without relaxing fragment handling for chat or the ledger.
+        terminal_kill_repaired = bool(
+            ev.kind == "kill" and msg.frames_seen >= 2 and original_target and ev.target
+            and original_target[:-1] == ev.target
+            and original_target[-1] in _BANG_GLYPHS
+            and normalize_ocr(ev.text).endswith(original_target)
+        )
         ev.estimated_ts = bool(getattr(msg, "estimated_ts", False))
         self._protect_live_event(msg, ev)
         self._record_timing("parsing", parsing_started)
@@ -2507,19 +2517,21 @@ class Engine(QObject):
                     log.exception("session recovery fallback failed")
         self._observe_navigation(ev)
         self._messages += 1
-        self._emit_live_group_event(msg, ev, stats, cfg)
+        self._emit_live_group_event(msg, ev, stats, cfg, terminal_kill_repaired=terminal_kill_repaired)
         self.message.emit(msg, ev)
         for closed in stats.history[before:]:
             self._emit_closed(closed)
         if stats.current() is not None:
             self._snapshot_dirty = True
 
-    def _emit_live_group_event(self, msg: Message, event: Event, stats: Stats, cfg: Config) -> None:
+    def _emit_live_group_event(self, msg: Message, event: Event, stats: Stats, cfg: Config, *,
+                              terminal_kill_repaired: bool = False) -> None:
         from mnmparse.app.notable_kills import eligible_group_event, name_key
         from mnmparse.stats import DAMAGE_KINDS
 
         if (self.state != "running" or not self._leaderboard_frame_current(cfg)
-                or any(bool(getattr(msg, key, False)) for key in ("backlog", "fragment", "estimated_ts"))
+                or any(bool(getattr(msg, key, False)) for key in ("backlog", "estimated_ts"))
+                or (msg.fragment and not (event.kind == "kill" and terminal_kill_repaired))
                 or event.estimated or event.estimated_ts):
             return
         zone = self._current_zone()

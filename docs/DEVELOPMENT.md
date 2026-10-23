@@ -67,6 +67,9 @@ Notable kill celebrations consume `Engine.live_group_kill` and `live_group_activ
 emitted only after fresh captured events have been parsed and roster ownership checked.
 Their zone is captured under the engine lock; GUI delivery also verifies the current
 zone and running state. Keep history/import/demo and encounter rebuild paths separate.
+A two-read kill whose final exclamation mark was read as a name glyph can celebrate
+only when NameCompleter repairs exactly that trailing glyph from an earlier known
+full name. Its tracker fragment flag and protected-ledger exclusion remain intact.
 The NPC controller warms zone lists through its bounded cache queue, while the kill
 controller keeps at most 16 unresolved kills for 30 seconds. Only complementary active
 and passive kill notices within two seconds are paired; fresh damage re-arms pairing,
