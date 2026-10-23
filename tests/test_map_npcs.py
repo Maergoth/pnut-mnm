@@ -29,6 +29,7 @@ class MapNotableNPCTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.temp.name) / "map.ini"), QSettings.Format.IniFormat)
+        self.settings.setValue("map/default_source", "images")
         self.worker = patch("mnmparse.app.map_overlay._Load.start")
         self.worker.start()
         self.window = MapOverlay(self.settings, Mock())

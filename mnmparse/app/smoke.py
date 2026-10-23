@@ -25,7 +25,7 @@ APP_MODULES = (
     "triggers_runtime", "triggers_page", "trigger_share_dialog", "trigger_help", "legal_dialog",
     "map_overlay", "map_downloads", "app_updates", "main",
     "profile_tools", "setup_wizard", "low_health", "npc_panel", "npc_panel_lifetime", "npc_details",
-    "leaderboard_page", "leaderboard_client",
+    "leaderboard_page", "leaderboard_client", "stat_reader_worker",
 )
 NATIVE_MODULES = ("numpy", "cv2", "regex", "regex._regex")
 WINDOWS_MODULES = (
@@ -229,6 +229,65 @@ def _exercise_player_status(report: dict[str, Any], windows: list[Any]) -> None:
         raise RuntimeError("The low-HP flash remained active after stopping")
     report["player_status"] = {"reader": True, "dual_scale_xp": True, "fresh_hp": True,
                                "thirty_second_rate": True, "carebear_own_xp": True, "passive_flash": True}
+
+
+def _exercise_stat_reader(report: dict[str, Any]) -> None:
+    """Read generated pixels through the real worker without capture or audio."""
+    if sys.platform != "win32":
+        report["stat_reader"] = {"windows_ocr_skipped": True}
+        return
+
+    import cv2
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+
+    from mnmparse.app.stat_reader_worker import StatReadRequest, StatReaderWorker
+
+    panel = Image.new("RGB", (420, 240), (22, 22, 22))
+    draw = ImageDraw.Draw(panel)
+    font = ImageFont.truetype(str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf"), 20)
+    for y, text in ((15, "Health 8/100"), (50, "Mana 30/300"),
+                    (85, "Endurance 20/200"), (120, "Weight 101/100")):
+        draw.text((100, y), text, fill="white", font=font)
+    pixels = cv2.cvtColor(np.asarray(panel), cv2.COLOR_RGB2BGR)
+    gui_thread = threading.get_ident()
+    completed = threading.Event()
+    results = []
+    owners = []
+
+    def received(result) -> None:
+        owners.append(threading.get_ident())
+        results.append(result)
+        completed.set()
+
+    # Default factory creates the actual Windows recognizer on its owner
+    # thread. No test double can hide missing frozen WinRT/OCR dependencies.
+    worker = StatReaderWorker(on_result=received)
+    try:
+        for index in range(2):
+            context = ("offline-mini-stat-smoke", index)
+            captured_at = 100.0 + index
+            completed.clear()
+            if not worker.submit(StatReadRequest(pixels, captured_at, context)) or not completed.wait(4):
+                raise RuntimeError("Packaged mini-stat worker did not complete native OCR")
+            result = results[-1]
+            reading = result.reading
+            if result.error:
+                raise RuntimeError("Packaged mini-stat worker native OCR failed: " + result.error)
+            if (result.context is not context or result.captured_at != captured_at
+                    or result.shape != pixels.shape or len(results) != index + 1):
+                raise RuntimeError("Packaged mini-stat worker lost the original capture context")
+            if (reading is None or (reading.hp_current, reading.hp_max) != (8, 100)
+                    or (reading.weight_current, reading.weight_max) != (101, 100)):
+                raise RuntimeError("Packaged mini-stat worker did not recognize its generated panel")
+        if owners[0] == gui_thread or owners[0] != owners[1]:
+            raise RuntimeError("Packaged mini-stat OCR did not retain a dedicated owner thread")
+    finally:
+        if not worker.close(2) or not worker.wait_stopped() or worker.is_running:
+            raise RuntimeError("Packaged mini-stat OCR owner did not shut down")
+    report["stat_reader"] = {"native_ocr": True, "dedicated_owner": True, "reads": len(results),
+                             "context_preserved": True, "owner_closed": True,
+                             "fixture_only": True, "game_capture": False, "audio_played": False}
 
 
 def _exercise(report: dict[str, Any]) -> None:
@@ -704,6 +763,8 @@ def _exercise(report: dict[str, Any]) -> None:
             report["image_processing"] = True
             report["stage"] = "exercise personal mini stats and passive HP flash"
             _exercise_player_status(report, windows)
+            report["stage"] = "exercise independent native mini-stat OCR"
+            _exercise_stat_reader(report)
             if engine.is_running or engine._source is not None:
                 raise RuntimeError("Mini-stat startup check unexpectedly started capture")
             report["window_titles"] = [item.windowTitle() for item in [*windows, overlay.timer_panel, overlay.attack_bar,

@@ -73,6 +73,7 @@ class AtlasMapIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = QSettings(str(Path(self.temp.name) / "map.ini"), QSettings.Format.IniFormat)
+        self.settings.setValue("map/default_source", "images")
         FakeAtlasView.instances.clear()
         self.fake = patch("mnmparse.app.map_overlay.AtlasView", FakeAtlasView)
         self.fake.start()
@@ -132,7 +133,7 @@ class AtlasMapIntegrationTests(unittest.TestCase):
         self.app.sendEvent(child, event)
         return event
 
-    def test_default_saved_maps_never_constructs_atlas_even_when_visible(self):
+    def test_saved_maps_preference_never_constructs_atlas_even_when_visible(self):
         window = self.window()
         self.assertEqual(window.source, "images")
         self.assertIsNone(window._atlas)
@@ -142,8 +143,11 @@ class AtlasMapIntegrationTests(unittest.TestCase):
         self.assertIs(window._map_stack.currentWidget(), window.view)
         self.assertIsNotNone(window.source_button.menu())
 
-    def test_hidden_persisted_atlas_waits_until_visible_without_image_load(self):
-        self.settings.setValue("map/source", "atlas")
+    def test_default_atlas_waits_until_visible_without_image_load(self):
+        self.settings.remove("map/default_source")
+        # Old per-window choices must not override the new startup default.
+        self.settings.setValue("map/source", "images")
+        self.settings.setValue("zones/source", "images")
         self.settings.setValue("map/zone", "Night Harbor")
         window = self.window()
         self.assertEqual(window.source, "atlas")
@@ -157,19 +161,19 @@ class AtlasMapIntegrationTests(unittest.TestCase):
         self.assertIn(("activate", "Sungreet Strand", ""), window._atlas.calls)
         self.load_start.assert_not_called()
 
-    def test_hidden_source_selection_is_lazy_and_preferences_are_independent(self):
+    def test_temporary_source_selection_is_lazy_and_independent_of_startup_default(self):
+        self.settings.setValue("map/default_source", "atlas")
         overlay = self.window()
         browser = self.window(embedded=True)
-        overlay.set_source("atlas")
         self.assertEqual(overlay.source, "atlas")
-        self.assertEqual(browser.source, "images")
-        self.assertEqual(self.settings.value("map/source"), "atlas")
-        self.assertEqual(self.settings.value("zones/source", "images"), "images")
-        self.assertEqual(FakeAtlasView.instances, [])
-        browser.set_source("atlas")
+        self.assertEqual(browser.source, "atlas")
         overlay.set_source("images")
-        self.assertEqual(self.settings.value("map/source"), "images")
-        self.assertEqual(self.settings.value("zones/source"), "atlas")
+        self.assertEqual(browser.source, "atlas")
+        self.assertEqual(FakeAtlasView.instances, [])
+        browser.set_source("images")
+        self.assertEqual(self.settings.value("map/default_source"), "atlas")
+        self.assertEqual(self.window().source, "atlas")
+        self.assertEqual(self.window(embedded=True).source, "atlas")
         self.assertEqual(FakeAtlasView.instances, [])
 
     def test_provider_switch_preserves_saved_image_zoom_and_native_labels(self):
@@ -290,7 +294,7 @@ class AtlasMapIntegrationTests(unittest.TestCase):
         self.load_start.reset_mock()
         window._atlas.fallback_requested.emit()
         self.assertEqual(window.source, "images")
-        self.assertEqual(self.settings.value("map/source"), "images")
+        self.assertEqual(self.settings.value("map/default_source"), "images")
         self.assertIs(window._map_stack.currentWidget(), window.view)
         self.assertEqual(window._selected_url, MAP_URL)
         self.assertFalse(window._atlas.active)

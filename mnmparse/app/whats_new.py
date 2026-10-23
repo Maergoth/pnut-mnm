@@ -28,6 +28,18 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.28": ReleaseNotes(
+        changes=(
+            "Saved map images display correctly again, including after resizing or switching back from Atlas.",
+            "MnM Atlas is now the default. Choose either provider in Settings > Update maps > Default map; the globe switches either view temporarily.",
+            "Keeper of the Road and similar NPC titles now register kills, damage and loot, including a known name's misread final exclamation mark.",
+            "Separate mini-stat and chat readers run independently, so slow stat OCR no longer delays chat alerts. Two-read confirmation and deduplication remain unchanged.",
+        ),
+        settings_label="Map settings",
+        settings_target="map_default_source",
+        feature_page="zones",
+        feature_label="Zones",
+    ),
     "1.0.27": ReleaseNotes(
         changes=(
             "Choose MnM Atlas (online) from the map header's globe menu for interactive maps, floors, locations and search in Map or Zones.",

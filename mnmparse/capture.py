@@ -654,6 +654,32 @@ class WgcWindowSource:
                 raise ValueError(error)
         return tuple(None if part is None else part.copy() for part in parts)
 
+    def region_snapshot(self, crop: Rect) -> tuple[np.ndarray | None, int | None, float]:
+        """Peek one configured crop with its atomic native frame count and arrival time.
+
+        This is safe for an independent reader: it never changes the capture's
+        requested regions, waits for a frame, or requests a whole-window copy.
+        The capture owner must configure the crop through :meth:`latest_regions`
+        first. A changed configuration needs a new native frame before it can
+        supply a sample. Callers decide how old an available sample may be.
+        """
+        wanted = _normalise_regions((crop,))[0]
+        with self._lock:
+            if (not self.is_running or self._stop_requested or self._error is not None
+                    or self._frame_count <= 0 or self._last_kept <= 0
+                    or self._regions_cut != self._regions or wanted not in self._regions):
+                return None, None, 0.0
+            index = self._regions.index(wanted)
+            if index >= len(self._regions_frames) or index >= len(self._regions_errors):
+                return None, None, 0.0
+            error = self._regions_errors[index]
+            if error is not None:
+                raise ValueError(error)
+            part = self._regions_frames[index]
+            if part is None:
+                return None, None, 0.0
+            return part.copy(), self._frame_count, self._last_kept
+
     def wait_for_frame(self, timeout_s: float = 5.0) -> np.ndarray | None:
         """Block until a frame is available (or ``timeout_s`` elapses).
 
@@ -752,6 +778,16 @@ class MssRegionSource:
     def latest_region(self, crop: Rect) -> np.ndarray | None:
         """Return one private BGR crop from the current desktop frame."""
         return self.latest_regions((crop,))[0]
+
+    def region_snapshot(self, crop: Rect) -> tuple[np.ndarray | None, int | None, float]:
+        """Grab an independent desktop sample with its acquisition start time.
+
+        Each grab owns its MSS context, so a stat reader does not share native
+        capture handles with the chat thread. Desktop capture has no native
+        frame counter; every successful grab is a new observation.
+        """
+        captured_at = time.monotonic()
+        return self.latest_region(crop), None, captured_at
 
     def latest_regions(self, crops: Iterable[Rect]) -> tuple[np.ndarray | None, ...]:
         """Grab once, then copy each requested crop from the same BGRA frame."""

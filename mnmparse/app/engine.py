@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QObject, Signal
 
 from mnmparse.app.models import EncounterSnapshot, build_snapshot
+from mnmparse.app.stat_reader_worker import StatReaderWorker, StatReadRequest, StatReadResult
 from mnmparse.config import Config, project_path
 from mnmparse.player_telemetry import MAX_GAP, MAX_SAMPLE_GAP
 from mnmparse.replay import BACKLOG_S
@@ -70,6 +71,16 @@ DIAG_MESSAGE_LIMIT = 100
 DIAG_FRAME_LIMIT = 3
 DIAG_ROW_LIMIT = 100
 DIAG_TEXT_LIMIT = 2000
+
+
+@dataclasses.dataclass(frozen=True)
+class _StatCaptureContext:
+    epoch: int
+    source: Any
+    reader_key: tuple[Any, ...]
+    cfg: Config
+    session: Any
+    captured_monotonic: float
 
 #: What the tracker remembered when capture stopped (seq and text of the emitted rows), so a
 #: restart recognises the chat lines still on screen instead of logging them again.
@@ -360,6 +371,11 @@ class Engine(QObject):
         self._protected_ledger: Any = None
         self._player_reader_epoch = 0
         self._leaderboard_frame_context: tuple[int, Any, tuple[Any, ...]] | None = None
+        self._stat_worker: StatReaderWorker | None = None
+        self._stat_sampling_active = False
+        self._stat_source_sample: tuple[Any, ...] | None = None
+        self._last_stat_captured_at: float | None = None
+        self._stat_diagnostic: dict[str, Any] = {}
         self._player_crop_warned = False
         self._player_reader_warned = False
         self._low_health_alert_at = float("-inf")
@@ -529,6 +545,11 @@ class Engine(QObject):
 
     def _invalidate_leaderboard_reader(self) -> None:
         self._player_reader_epoch += 1
+        self._stat_source_sample = None
+        self._last_stat_captured_at = None
+        self._stat_diagnostic = {}
+        if self._stat_worker is not None:
+            self._stat_worker.clear_pending()
         self._stat_snapshot = None
         self._stat_snapshot_valid_until = None
         if self._protected_ledger is not None:
@@ -579,11 +600,14 @@ class Engine(QObject):
         finally:
             self._lock.release()
 
-    def _protect_live_stats(self, stats: dict[str, Any], cfg: Config | None = None) -> None:
+    def _protect_live_stats(self, stats: dict[str, Any], cfg: Config | None = None, *,
+                            capture_context: _StatCaptureContext | None = None) -> None:
         ledger = self._protected_ledger
         if ledger is not None:
             try:
-                ledger.set_capture_eligible(self._leaderboard_capture_eligible() and self._leaderboard_frame_current(cfg))
+                current = (self._leaderboard_frame_current(cfg) if capture_context is None
+                           else self._stat_context_current(capture_context))
+                ledger.set_capture_eligible(self._leaderboard_capture_eligible() and current)
                 ledger.record_stats(stats)
             except (OSError, ValueError) as exc:
                 ledger.error = str(exc)
@@ -728,6 +752,7 @@ class Engine(QObject):
                 self._player_reader_warned = False
             if (previous.low_health_threshold != cfg.low_health_threshold
                     or previous.low_health_enabled != cfg.low_health_enabled):
+                self._invalidate_leaderboard_reader()
                 self._telemetry().set_health_threshold(cfg.low_health_threshold)
                 self._set_low_health_active(False)
                 self._low_health_alert_at = float("-inf")
@@ -1678,6 +1703,8 @@ class Engine(QObject):
     def _capture_loop(self, source: FrameSource) -> None:
         """Frame loop; returns when stopped or when the game window disappears."""
         self._set_state("paused" if self._paused else "running")
+        with self._lock:
+            self._stat_sampling_active = True
         self._source_frame_count = None
         now = time.monotonic()
         last_frame_at = now
@@ -1689,6 +1716,13 @@ class Engine(QObject):
         while not self._stop_event.is_set():
             t0 = time.monotonic()
             cfg = self.config
+            if cfg.player_status_enabled and cfg.player_status_separate:
+                try:
+                    stat_worker = self._ensure_stat_worker()
+                    if stat_worker is not None:
+                        stat_worker.start()
+                except Exception:
+                    self._warn_stat_reader()
             if not self._paused:
                 # A source that can cut the crop out of each frame copies a few MB, not the
                 # whole 4K window (capture.WgcWindowSource.latest_region).
@@ -1808,6 +1842,156 @@ class Engine(QObject):
             self._player_crop_warned = True
             self.notice.emit("Mini stats region does not fit the game window; select it again in Settings.")
 
+    def _stat_context_current(self, context: _StatCaptureContext) -> bool:
+        """Validate a stat job without borrowing the chat thread's frame context."""
+        return (context.epoch == self._player_reader_epoch and context.source is self._source
+                and context.source is not None and context.session is self._session_stats
+                and context.reader_key == self._leaderboard_reader_key(self._cfg)
+                and self._cfg.player_status_enabled and self._cfg.player_status_separate
+                and self._state == "running" and self._window_found
+                and getattr(context.source, "is_running", True) is not False
+                and not self._paused and not self._stop_event.is_set())
+
+    def _stat_read_interval(self) -> float:
+        with self._lock:
+            return 1.0 / max(self._cfg.fps, .1)
+
+    def _ensure_stat_worker(self) -> StatReaderWorker | None:
+        """Retain even a closed native reader until its owner thread really exits."""
+        with self._lock:
+            worker = self._stat_worker
+            if worker is not None and worker.closed:
+                if worker.is_running:
+                    return None
+                self._stat_worker = worker = None
+            if worker is None:
+                worker = StatReaderWorker(on_result=self._accept_stat_result,
+                                          request_provider=self._next_stat_request,
+                                          interval_provider=self._stat_read_interval)
+                self._stat_worker = worker
+            return worker
+
+    def _close_stat_worker(self) -> None:
+        with self._lock:
+            self._stat_sampling_active = False
+            self._invalidate_leaderboard_reader()
+            worker = self._stat_worker
+        # A callback may be awaiting _lock. Never join while holding that lock;
+        # a slow optional recognizer must not hold up chat or application exit.
+        if worker is not None:
+            worker.close(timeout=.2)
+
+    def _stat_context(self, cfg: Config, captured_monotonic: float) -> _StatCaptureContext:
+        return _StatCaptureContext(self._player_reader_epoch, self._source,
+                                   self._leaderboard_reader_key(cfg), dataclasses.replace(cfg),
+                                   self._session_stats, captured_monotonic)
+
+    def _next_stat_request(self) -> StatReadRequest | None:
+        """Autonomously sample the source, without waiting for a chat OCR pass."""
+        with self._lock:
+            if not self._stat_sampling_active:
+                return None
+            cfg = self._capture_config(self._cfg)
+            context = self._stat_context(cfg, time.monotonic())
+            if not self._stat_context_current(context):
+                return None
+            source = context.source
+            sample = getattr(source, "region_snapshot", None)
+            crop = self._status_crop_for_source(source, cfg)
+            if not callable(sample) or crop is None:
+                return None
+        try:
+            raw, frame_count, captured_monotonic = sample(crop)
+        except ValueError:
+            with self._lock:
+                if self._stat_context_current(context):
+                    self._warn_player_crop()
+            return None
+        except Exception:
+            self._warn_stat_reader()
+            return None
+        now_mono, now = time.monotonic(), time.time()
+        if raw is None:
+            # An unreadable/missing crop breaks health confirmation, while XP
+            # and an existing warning keep their bounded missing-read behavior.
+            context = dataclasses.replace(context, captured_monotonic=now_mono)
+            self._accept_stat_result(StatReadResult(now, context, (), None, 0.0))
+            return None
+        if (type(captured_monotonic) not in (int, float) or not math.isfinite(captured_monotonic)
+                or not 0 < captured_monotonic <= now_mono):
+            return None
+        context = dataclasses.replace(context, captured_monotonic=captured_monotonic)
+        captured_at = now - (now_mono - captured_monotonic)
+        with self._lock:
+            if not self._stat_context_current(context):
+                return None
+            identity = (context.epoch, source, frame_count if type(frame_count) is int else captured_monotonic)
+            if identity == self._stat_source_sample:
+                return None  # A retained source frame is not a second observation.
+            self._stat_source_sample = identity
+        return StatReadRequest(raw, captured_at, context, cfg.ocr_engine, cfg.preprocess, cfg.ocr_scale)
+
+    def _submit_stat_frame(self, cfg: Config, raw: Any, captured_at: float,
+                           captured_monotonic: float) -> None:
+        """Compatibility/manual frame injection; live capture uses autonomous sampling."""
+        with self._lock:
+            if self._stat_sampling_active or not self._leaderboard_frame_current(cfg):
+                return
+            context = self._stat_context(cfg, captured_monotonic)
+            if not self._stat_context_current(context):
+                return
+        if raw is None:
+            self._accept_stat_result(StatReadResult(captured_at, context, (), None, 0.0))
+            return
+        worker = self._ensure_stat_worker()
+        if worker is not None:
+            try:
+                worker.submit(StatReadRequest(raw, captured_at, context, cfg.ocr_engine, cfg.preprocess, cfg.ocr_scale))
+            except Exception:
+                self._warn_stat_reader()
+
+    def _warn_stat_reader(self) -> None:
+        with self._lock:
+            if not self._player_reader_warned:
+                self._player_reader_warned = True
+                log.warning("Mini stat reading failed; continuing combat chat capture")
+                self.notice.emit("Could not read mini stats; chat capture is still running.")
+
+    def _accept_stat_result(self, result: StatReadResult) -> None:
+        context = result.context
+        if not isinstance(context, _StatCaptureContext):
+            return
+        with self._lock:
+            if not self._stat_context_current(context):
+                return
+            cfg = self._capture_config(self._cfg)
+            # Freshness starts at acquisition, never at delayed completion.
+            max_age = min(MAX_SAMPLE_GAP, max(MAX_GAP, 2.0 / max(cfg.fps, .1) + .25))
+            age = time.monotonic() - context.captured_monotonic
+            if (not 0 <= age <= max_age or not math.isfinite(result.captured_at)
+                    or self._last_stat_captured_at is not None
+                    and result.captured_at <= self._last_stat_captured_at):
+                return
+            self._last_stat_captured_at = result.captured_at
+            if result.error is not None:
+                self._warn_stat_reader()
+            self._observe_player_status(result.reading, cfg, result.captured_at, result.shape,
+                                        ocr_ms=result.ocr_ms, capture_context=context)
+            self._timings.setdefault("stat_ocr", deque(maxlen=256)).append(result.ocr_ms)
+            reading = result.reading
+            self._stat_diagnostic = {
+                "captured_at": result.captured_at, "read_at": time.time(),
+                "ocr_ms": round(result.ocr_ms, 1), "panel_readable": reading is not None,
+                "input_shape": list(result.shape),
+                "panel_rect": list(reading.panel_rect) if reading is not None else None,
+                "xp_bar_rect": list(reading.xp_bar_rect)
+                if reading is not None and reading.xp_bar_rect is not None else None,
+                "xp_percent": reading.xp_percent if reading is not None else None,
+                "xp_resolution_points": reading.xp_resolution_points if reading is not None else None,
+                "weight_current": getattr(reading, "weight_current", None),
+                "weight_max": getattr(reading, "weight_max", None),
+            }
+
     def _status_crop_for_source(self, source: Any, cfg: Config, frame: Any = None) -> Any:
         crop = cfg.player_status_crop if cfg.player_status_enabled and cfg.player_status_separate else None
         if crop is None:
@@ -1895,7 +2079,8 @@ class Engine(QObject):
             self._set_overburdened_active(True)
         self._weight_previous = (now, current, maximum)
 
-    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any, *, ocr_ms: float = 0.0) -> None:
+    def _observe_player_status(self, reading: Any, cfg: Config, now: float, shape: Any, *,
+                               ocr_ms: float = 0.0, capture_context: _StatCaptureContext | None = None) -> None:
         telemetry = self._telemetry()
         key = (tuple(cfg.crop), (cfg.player_status_separate, cfg.player_status_crop), tuple(shape),
                tuple(reading.panel_rect) if reading is not None else None)
@@ -1952,7 +2137,7 @@ class Engine(QObject):
                                    "captured_at": utc_stamp(datetime.fromtimestamp(now, timezone.utc)),
                                    "capture_backend": "window" if self._leaderboard_capture_eligible() else "screen"}
             self._stat_snapshot_valid_until = now + max_gap
-            self._protect_live_stats(self._stat_snapshot, cfg)
+            self._protect_live_stats(self._stat_snapshot, cfg, capture_context=capture_context)
         if reading is not None and (self._weight_sample_at is None or now > self._weight_sample_at):
             self._player_panel_valid_until = now + max_gap
         self._observe_weight(reading, cfg, now, max_gap)
@@ -2015,6 +2200,8 @@ class Engine(QObject):
         if ocr is None or tracker is None:
             return
         cfg = self._capture_config(cfg)
+        captured_monotonic = time.monotonic()
+        captured_at = time.time() if cfg.player_status_separate else 0.0
         preprocess_started = time.perf_counter()
         try:
             raw = frame if cropped else crop_frame(frame, tuple(cfg.crop))
@@ -2025,33 +2212,29 @@ class Engine(QObject):
         t1 = time.perf_counter()
         with self._lock:
             self._record_timing("preprocess", preprocess_started)
-        lines = ocr.read(img)
-        reading = None
         separate = cfg.player_status_separate
         status_raw = raw
-        if cfg.player_status_enabled:
-            from mnmparse.player_status import read_player_status, read_status_crop
+        if separate:
+            if cfg.player_status_crop is None:
+                status_frame = None
+            elif status_frame is None and not cropped:
+                if self._status_crop_for_source(None, cfg, frame) is not None:
+                    status_frame = crop_frame(frame, cfg.player_status_crop)
+            status_raw = status_frame
+            if fresh and cfg.player_status_enabled:
+                self._submit_stat_frame(cfg, status_raw, captured_at, captured_monotonic)
+        lines = ocr.read(img)
+        reading = None
+        if cfg.player_status_enabled and not separate:
+            from mnmparse.player_status import read_player_status
             try:
-                if separate:
-                    if cfg.player_status_crop is None:
-                        status_frame = None
-                    elif status_frame is None and not cropped:
-                        if self._status_crop_for_source(None, cfg, frame) is not None:
-                            status_frame = crop_frame(frame, cfg.player_status_crop)
-                    status_raw = status_frame
-                    if status_raw is not None:
-                        reading, status_lines = read_status_crop(ocr, status_raw, cfg.preprocess, cfg.ocr_scale)
-                else:
-                    reading = read_player_status(lines, raw, xp_bar_confirmed=True)
+                reading = read_player_status(lines, raw, xp_bar_confirmed=True)
             except Exception:  # noqa: BLE001 - optional mini stats cannot stop combat chat
-                if not self._player_reader_warned:
-                    self._player_reader_warned = True
-                    log.warning("Mini stat reading failed; continuing combat chat capture", exc_info=True)
-                    self.notice.emit("Could not read mini stats; chat capture is still running.")
+                self._warn_stat_reader()
         ocr_ms = (time.perf_counter() - t1) * 1000.0
         now = time.time()
         with self._lock:
-            if fresh and cfg.player_status_enabled and self._leaderboard_frame_current(cfg):
+            if fresh and cfg.player_status_enabled and not separate and self._leaderboard_frame_current(cfg):
                 self._observe_player_status(reading, cfg, now, status_raw.shape if status_raw is not None else (),
                                             ocr_ms=ocr_ms)
             self._timings.setdefault("ocr", deque(maxlen=256)).append(ocr_ms)
@@ -2093,6 +2276,7 @@ class Engine(QObject):
                     "weight_max": getattr(reading, "weight_max", None),
                     "overburdened_active": self.overburdened_active,
                     "measurements": dict(getattr(self._session_stats, "player_status", {})),
+                    **(self._stat_diagnostic if separate else {}),
                 },
                 "row_count": len(chat_lines),
                 "rows_truncated": len(chat_lines) > DIAG_ROW_LIMIT,
@@ -2246,7 +2430,7 @@ class Engine(QObject):
 
     def _handle_part(self, msg: Message, cfg: Config) -> None:
         """Parse, aggregate and announce one message (lock held)."""
-        from mnmparse.parser import parse_garbled_amount, parse_line
+        from mnmparse.parser import _BANG_GLYPHS, normalize_ocr, parse_garbled_amount, parse_line
 
         writer, stats = self._writer, self._stats
         if writer is None or stats is None:
@@ -2264,7 +2448,17 @@ class Engine(QObject):
             guess = parse_garbled_amount(msg.text, msg.first_seen, cfg.player_name)
             if guess is not None and stats.estimate_amount(guess):
                 ev = guess
+        original_target = ev.target
         self._names.observe(ev)
+        # The tracker conservatively marks a missing final ! as a fragment. A
+        # previously observed full name can prove this specific punctuation
+        # misread without relaxing fragment handling for chat or the ledger.
+        terminal_kill_repaired = bool(
+            ev.kind == "kill" and msg.frames_seen >= 2 and original_target and ev.target
+            and original_target[:-1] == ev.target
+            and original_target[-1] in _BANG_GLYPHS
+            and normalize_ocr(ev.text).endswith(original_target)
+        )
         ev.estimated_ts = bool(getattr(msg, "estimated_ts", False))
         self._protect_live_event(msg, ev)
         self._record_timing("parsing", parsing_started)
@@ -2323,19 +2517,21 @@ class Engine(QObject):
                     log.exception("session recovery fallback failed")
         self._observe_navigation(ev)
         self._messages += 1
-        self._emit_live_group_event(msg, ev, stats, cfg)
+        self._emit_live_group_event(msg, ev, stats, cfg, terminal_kill_repaired=terminal_kill_repaired)
         self.message.emit(msg, ev)
         for closed in stats.history[before:]:
             self._emit_closed(closed)
         if stats.current() is not None:
             self._snapshot_dirty = True
 
-    def _emit_live_group_event(self, msg: Message, event: Event, stats: Stats, cfg: Config) -> None:
+    def _emit_live_group_event(self, msg: Message, event: Event, stats: Stats, cfg: Config, *,
+                              terminal_kill_repaired: bool = False) -> None:
         from mnmparse.app.notable_kills import eligible_group_event, name_key
         from mnmparse.stats import DAMAGE_KINDS
 
         if (self.state != "running" or not self._leaderboard_frame_current(cfg)
-                or any(bool(getattr(msg, key, False)) for key in ("backlog", "fragment", "estimated_ts"))
+                or any(bool(getattr(msg, key, False)) for key in ("backlog", "estimated_ts"))
+                or (msg.fragment and not (event.kind == "kill" and terminal_kill_repaired))
                 or event.estimated or event.estimated_ts):
             return
         zone = self._current_zone()
@@ -2575,6 +2771,7 @@ class Engine(QObject):
         tracker state and the zone are saved for a restart of the app.  Ends with state
         ``stopped``.
         """
+        self._close_stat_worker()
         cfg = self._capture_config(self.config)
         try:
             with self._lock:

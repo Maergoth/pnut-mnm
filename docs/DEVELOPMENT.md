@@ -67,11 +67,30 @@ Notable kill celebrations consume `Engine.live_group_kill` and `live_group_activ
 emitted only after fresh captured events have been parsed and roster ownership checked.
 Their zone is captured under the engine lock; GUI delivery also verifies the current
 zone and running state. Keep history/import/demo and encounter rebuild paths separate.
+A two-read kill whose final exclamation mark was read as a name glyph can celebrate
+only when NameCompleter repairs exactly that trailing glyph from an earlier known
+full name. Its tracker fragment flag and protected-ledger exclusion remain intact.
 The NPC controller warms zone lists through its bounded cache queue, while the kill
 controller keeps at most 16 unresolved kills for 30 seconds. Only complementary active
 and passive kill notices within two seconds are paired; fresh damage re-arms pairing,
 and distinct same-form kills remain separate. The victory cue is synthesized from the
 user-supplied two-bar score at 130 BPM; no external recording or MIDI is downloaded.
+
+Separate mini-stat OCR runs in `app/stat_reader_worker.py` with its own owner-created,
+read and closed recognizer. Its provider samples autonomously, so neither stat
+confirmation nor chat recognition waits for the other OCR call. WGC's
+`region_snapshot` peeks an already configured crop with atomically matching pixels,
+frame counter and acquisition time; it never reconfigures chat capture. MSS snapshots
+use a fresh grab. Repeated source frames cannot confirm another stat reading.
+
+Worker results apply under the engine lock against their immutable source, reader
+epoch, settings, session and original acquisition time. They never overwrite the
+chat thread's frame context or renew an expired sample at completion time. Pending
+work is bounded and old work is discarded across transitions. Close and bounded join
+run outside the engine lock; a closed but still-running native reader remains owned
+so repeated restarts cannot accumulate threads. Shared-crop stat detection remains
+inline before chat-row filtering. Diagnostics keep chat and stat OCR timings separate
+and never retain the separate stat OCR rows or leaderboard attributes.
 
 Map labels belong to canonical original image URLs, independently of zone names.
 `map_labels.py` stores each UUID in its own `map_labels/` QSettings entry; shared
@@ -88,8 +107,10 @@ retarget it to another image.
 `app/atlas_view.py` and `app/atlas_native.py` form a lazy WebView2 boundary:
 importing or constructing the widget never starts a renderer, makes requests
 or creates a profile. MapOverlay
-constructs/activates it only for the visible Atlas provider; `map/source` and
-`zones/source` are independent preferences defaulting to `images`. Hidden views
+constructs/activates it only for the visible Atlas provider. `map/default_source`
+is shared by Map and Zones and defaults to `atlas`; Settings > Update maps applies
+it immediately. Globe-menu overrides are independent and last for the current run.
+Legacy `map/source` and `zones/source` values no longer select the startup provider. Hidden views
 stop loading and ask the runtime to suspend their page. The dedicated shared
 user-data folder preserves notes between views; close native controllers before
 destroying their host widgets. Missing runtime detection offers a Microsoft link
@@ -483,7 +504,8 @@ synchronous API's 150 ms line budget; its bounded queue reports overflow explici
 `grammar.py` holds every line shape observed, each rule with a verbatim example, and
 `tests/test_parser.py` checks them.
 Short version of the families (names: players and bare named NPCs use capitalized words,
-including internal apostrophes and hyphens; article-led NPCs may also use lowercase words;
+including internal apostrophes and hyphens; bare NPC titles also permit bounded lowercase
+connectors such as "of the"; article-led NPCs may also use lowercase words;
 "You/Your/YOU" is the viewer). Message-start detection keeps bare names to one word so a
 clipped damage type cannot become part of the following actor's name.
 

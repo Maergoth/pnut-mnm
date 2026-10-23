@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from mnmparse.app import theme
 from mnmparse.app.atlas_view import AtlasView
 from mnmparse.app.map_labels import MapLabelDialog, MapLabelItem, label_icon
+from mnmparse.app.map_preferences import default_map_source
 from mnmparse.app.monster_icon import monster_icon as _monster_icon
 from mnmparse.app.notable_npc_menu import NotableNpcMenu, npc_title_key
 from mnmparse.app.window_identity import window_title
@@ -311,8 +312,7 @@ class MapOverlay(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.settings = settings
-        source = str(settings.value(self._key("source"), "images"))
-        self._source = source if source in ("images", "atlas") else "images"
+        self._source = default_map_source(settings)
         self._atlas: AtlasView | None = None
         self.label_store = MapLabelStore.for_settings(settings)
         self._label_menu: QMenu | None = None
@@ -549,7 +549,6 @@ class MapOverlay(QWidget):
         self._token += 1
         self._cancel_loads()
         self._source = source
-        self.settings.setValue(self._key("source"), source)
         self._layout_source()
         if source == "images":
             if self._atlas is not None:
@@ -1048,14 +1047,14 @@ class MapOverlay(QWidget):
                                     max(40, self.height() - self.header.height() * 2))
         # A child widget's rectangular paint is not clipped by the parent's rounded
         # background. Clip the map itself so zoomed images cannot square off the frame.
+        # Clip only the shared stack: its current page is resized by QStackedLayout
+        # after this callback, so a separate view mask can retain the construction
+        # size (100x30) or the previous provider's geometry and hide valid pixels.
+        self.view.clearMask()
         if self.embedded or self.isFullScreen():
-            self.view.clearMask()
             self._map_stack.clearMask()
         else:
-            clip = QPainterPath()
             radius = theme.RADIUS_PANEL - 2
-            clip.addRoundedRect(QRectF(self.view.rect()), radius, radius)
-            self.view.setMask(QRegion(clip.toFillPolygon().toPolygon()))
             stack_clip = QPainterPath()
             stack_clip.addRoundedRect(QRectF(self._map_stack.rect()), radius, radius)
             self._map_stack.setMask(QRegion(stack_clip.toFillPolygon().toPolygon()))

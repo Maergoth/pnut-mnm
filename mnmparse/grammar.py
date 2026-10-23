@@ -15,7 +15,8 @@ Name forms (see SPEC section 3):
 
 * player names and bare named NPCs use capitalised words, which may contain
   internal apostrophes or hyphens (``Tovozen``, ``Tok'Nor``), including the
-  pronoun forms ``You`` / ``Your`` / ``YOU``;
+  pronoun forms ``You`` / ``Your`` / ``YOU``; bare NPC titles may also have
+  bounded lowercase connectors (``Keeper of the Road``);
 * NPC names are an article followed by words, including internal capitals,
   hyphens and apostrophes (``a stumbling zombie``, ``a Mur'Hua scavenger``).
 
@@ -35,6 +36,8 @@ __all__ = [
     "YOU_TOKENS",
     "PLAYER",
     "PLAYER_WORD",
+    "NAMED_NPC",
+    "BARE_NAME",
     "NPC_WORD",
     "NPC",
     "NAME",
@@ -189,6 +192,14 @@ PLAYER: str = rf"{PLAYER_WORD}(?:\s+{PLAYER_WORD}){{0,2}}"
 capitalised words (``Tok'Nor``, ``Toilmaster Verith``). Internal apostrophes are
 part of the name; a terminal ``'s`` belongs to a possessive rule."""
 
+NAMED_NPC: str = rf"{PLAYER}(?:\s+(?:of|the|and|in|on|at)(?:\s+(?:the|a|an))?\s+{PLAYER}){{1,2}}"
+"""A bare NPC title with lowercase connectors, each followed by a capitalised
+name segment. Sentence verbs and modifiers such as ``for`` / ``with`` cannot
+enter the name. Player-only message fields retain the narrower PLAYER shape."""
+
+BARE_NAME: str = rf"(?:{NAMED_NPC}|{PLAYER})"
+"""A player or a bare named NPC, without a pet/corpse possessive suffix."""
+
 _NPC_STOP: str = r"(?!(?:with|for|but|on|to|from|is|are|has|have|was|were)\b)"
 NPC: str = rf"(?:a|an|the)\s+{NPC_WORD}(?:\s+{_NPC_STOP}{NPC_WORD})*(?:'s\s+pet)?"
 """An NPC name: a lowercase article followed by one or more words, which may be
@@ -197,7 +208,7 @@ that introduce the rest of a sentence (``with their bow``, ``for 3 points``,
 ``but they absorb``) can never be part of the name. An NPC's unnamed pet
 (``a Bloodynose frightener's pet``) is a distinct combatant."""
 
-NAME: str = rf"(?:{PLAYER}(?:'s\s+pet)?|{NPC})"
+NAME: str = rf"(?:{BARE_NAME}(?:'s\s+pet)?|{NPC})"
 """Either name form, including a bare named combatant's unnamed pet.
 
 The literal ``'s pet`` remains part of that separate actor's name. It does not
@@ -547,15 +558,24 @@ _NPC_RX = re.compile(r"^(?:a|an|the)\s+[A-Za-z]")
 #: "You ...", "Your ...", "Name's Ability ...", "Name verbs ...", "a mob verbs ...", the
 #: framed loot line, "Starting/Stopped attacking".  Used to keep two messages apart that
 #: the OCR (or a cut-off line end) ran together.
+_TITLE_MESSAGE_START: str = (
+    rf"(?!(?:{_DTYPE_WORDS}|Damag|Poison|Disease|Electric|Electricity|Physical|Nature|"
+    rf"Arcane|Shadow|Divine)\b){NAMED_NPC}"
+)
+"""A connector title at a safe message boundary. Damage-type prefixes belong
+to the preceding hit's tail, even when followed by a real NPC title. This
+restriction is only for splitting/wrapping, not the general name grammar."""
+
 MESSAGE_START_RX = re.compile(
     r"^(?:"
     r"(?:You|Your)\b"
     r"|--"
     r"|(?:Starting|Stopped)\s+(?:to\s+)?attack"
     # Keep bare starts to one word: a clipped "Damage Tok'Nor's ..." must not
-    # invent a two-word actor while splitting fused messages.
-    rf"|{PLAYER_WORD}'s\s+[A-Z]"
-    rf"|{PLAYER_WORD}\s+(?:hits|slashes|crushes|pierces|punches|kicks|bashes|bites|claws|"
+    # invent a two-word actor while splitting fused messages. Connector-led
+    # titles are a separate bounded shape, not arbitrary capitalised prose.
+    rf"|(?:{_TITLE_MESSAGE_START}|{PLAYER_WORD})'s\s+[A-Z]"
+    rf"|(?:{_TITLE_MESSAGE_START}|{PLAYER_WORD})\s+(?:hits|slashes|crushes|pierces|punches|kicks|bashes|bites|claws|"
     r"mauls|stings|begins|tries|has|have|loots|crafts|heals|is|looks|loses|staggers|"
     r"casts|resists|awakens)\b"
     rf"|(?:a|an|the)\s+(?:{NPC_WORD}\s+){{1,4}}?(?:hits|slashes|crushes|pierces|punches|kicks|"

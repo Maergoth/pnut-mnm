@@ -2251,6 +2251,8 @@ class SettingsPage(QWidget):
     low_health_preview_requested = Signal(str, int)
     #: Download the latest wiki maps into the local cache without blocking Settings.
     map_download_requested = Signal()
+    #: Apply the startup map provider to both map windows immediately.
+    map_source_changed = Signal(str)
     #: Check GitHub for an app update and download it in the background.
     app_update_requested = Signal()
     #: Restart to install an app update that is ready.
@@ -2437,7 +2439,28 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(18, 12, 18, 12)
         layout.setSpacing(8)
-        layout.addWidget(_label("Map updates", "Heading"))
+        layout.addWidget(_label("Update maps", "Heading"))
+        from mnmparse.app.map_preferences import MAP_SOURCES, default_map_source
+
+        source_row = QHBoxLayout()
+        source_row.addWidget(_label("Default map"))
+        self.map_default_source = QComboBox()
+        self.map_default_source.setAccessibleName("Default map")
+        for source, title in MAP_SOURCES:
+            self.map_default_source.addItem(title, source)
+        self.map_default_source.setCurrentIndex(
+            self.map_default_source.findData(default_map_source(self._settings)))
+        self.map_default_source.setToolTip(
+            "Choose the map used at startup by the overlay and Zones tab. Applies immediately.")
+        self.map_default_source.currentIndexChanged.connect(self._on_map_default_source)
+        source_row.addWidget(self.map_default_source)
+        source_row.addStretch(1)
+        layout.addLayout(source_row)
+        source_hint = _label(
+            "The globe menu can switch either map temporarily. "
+            "Saved maps use downloaded images and support your map labels.", "Muted")
+        source_hint.setWordWrap(True)
+        layout.addWidget(source_hint)
         row = QHBoxLayout()
         row.setSpacing(8)
         self.map_download_button = QPushButton("Download latest maps")
@@ -2476,6 +2499,15 @@ class SettingsPage(QWidget):
         self.map_download_status.hide()
         layout.addWidget(self.map_download_status)
         self._content.addWidget(panel)
+
+    def _on_map_default_source(self, _index: int) -> None:
+        from mnmparse.app.map_preferences import MAP_SOURCE_KEY
+
+        if self._loading:
+            return
+        source = self.map_default_source.currentData()
+        self._settings.setValue(MAP_SOURCE_KEY, source)
+        self.map_source_changed.emit(source)
 
     def set_map_download_status(self, message: str, running: bool) -> None:
         """Show map download progress and prevent duplicate requests."""
@@ -3277,6 +3309,10 @@ class SettingsPage(QWidget):
         try:
             self.morality.set_config(cfg)
             self.profile_tools.load(cfg)
+            from mnmparse.app.map_preferences import default_map_source
+
+            self.map_default_source.setCurrentIndex(
+                self.map_default_source.findData(default_map_source(self._settings)))
             self.player_name.setText(cfg.player_name)
             self.start_on_launch.setChecked(bool(_cfg_get(cfg, "start_capture_on_launch", False)))
             self.minimize_to_tray.setChecked(bool(_cfg_get(cfg, "minimize_to_tray", True)))

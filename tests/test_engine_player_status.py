@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 
 from mnmparse.app.engine import Engine
 from mnmparse.app.low_health import LowHealthFlash
+from mnmparse.app.stat_reader_worker import StatReadResult
 from mnmparse.config import Config
 from mnmparse.ocr import OcrLine
 from mnmparse.player_status import PlayerStatusReading
@@ -39,22 +40,50 @@ class EnginePlayerStatusTests(unittest.TestCase):
     def reading(hp=8):
         return PlayerStatusReading(hp, 100, (0, 0, 8, 8), (0,), 20.0, (0, 6, 8, 8), .1)
 
+    @staticmethod
+    def synchronous_stats(engine, cfg, ocr):
+        """Keep observer tests deterministic at the async result boundary."""
+        engine.update_config(cfg)
+        engine._state = "running"
+        engine._source = object()
+        engine._window_found = True
+
+        def submit(request):
+            from mnmparse.player_status import read_status_crop
+            reading, error = None, None
+            try:
+                reading, _lines = read_status_crop(ocr, request.crop, request.preprocess, request.ocr_scale)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+            engine._accept_stat_result(StatReadResult(
+                request.captured_at, request.context, tuple(request.crop.shape), reading, .1, error))
+            return True
+
+        worker = SimpleNamespace(submit=submit, closed=False, clear_pending=Mock(),
+                                 close=Mock(return_value=True), wait_stopped=Mock(return_value=True))
+        engine._stat_worker = worker
+        return worker
+
     def test_second_region_uses_original_pixels_and_never_enters_chat(self):
         cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8), ocr_scale=2)
         chat = np.full((8, 8, 3), (8, 30, 60), np.uint8)
         stats = np.full((8, 8, 3), (2, 100, 200), np.uint8)
         chat_lines = [OcrLine(0, 0, 1, "You begin casting Heal.")]
         stat_lines = [OcrLine(0, 0, 1, "Health 8 / 100")]
-        self.engine._ocr = Mock(read=Mock(side_effect=[chat_lines, stat_lines]))
+        self.engine._ocr = Mock(read=Mock(return_value=chat_lines))
+        stats_ocr = Mock(read=Mock(return_value=stat_lines))
+        self.synchronous_stats(self.engine, cfg, stats_ocr)
         tracker_update = Mock(return_value=[])
         self.engine._tracker.update = tracker_update
         with patch("mnmparse.player_status.read_player_status", return_value=self.reading()) as reader:
             self.engine._process_frame(chat, cfg, cropped=True, status_frame=stats)
         self.assertEqual(tracker_update.call_args.args[0], chat_lines)
-        self.assertIs(reader.call_args.args[1], stats)
+        np.testing.assert_array_equal(reader.call_args.args[1], stats)
+        self.assertIsNot(reader.call_args.args[1], stats)  # Worker owns its capture pixels.
         self.assertEqual(tuple(stats[0, 0]), (2, 100, 200))
-        self.assertEqual(self.engine._ocr.read.call_count, 2)
-        processed = self.engine._ocr.read.call_args.args[0]
+        self.assertEqual(self.engine._ocr.read.call_count, 1)
+        self.assertEqual(stats_ocr.read.call_count, 1)
+        processed = stats_ocr.read.call_args.args[0]
         self.assertEqual(processed.shape, (12, 12, 3))  # Mini stats enlarge the active 1x OCR input to 1.5x.
         self.assertEqual(tuple(processed[0, 0]), (200, 200, 200))
 
@@ -230,8 +259,8 @@ class EnginePlayerStatusTests(unittest.TestCase):
         cfg = dataclasses.replace(self.cfg, player_status_separate=True, player_status_crop=(20, 0, 28, 8))
         chat = [OcrLine(0, 0, 1, "You begin casting Heal.")]
         frame = np.zeros((8, 8, 3), np.uint8)
-        self.engine._ocr = Mock(read=Mock(side_effect=[chat, RuntimeError("stats OCR unavailable"),
-                                                     chat, RuntimeError("stats OCR unavailable")]))
+        self.engine._ocr = Mock(read=Mock(return_value=chat))
+        self.synchronous_stats(self.engine, cfg, Mock(read=Mock(side_effect=RuntimeError("stats OCR unavailable"))))
         self.engine._tracker.update = Mock(return_value=[])
         notices = []
         self.engine.notice.connect(notices.append)
@@ -300,6 +329,7 @@ class EnginePlayerStatusTests(unittest.TestCase):
         engine = Engine(cfg)
         engine._tracker = Tracker()
         engine._ocr = Mock(read=Mock(return_value=[]))
+        self.synchronous_stats(engine, cfg, Mock())
         chat = np.zeros((8, 8, 3), np.uint8)
         stats = np.ones((8, 8, 3), np.uint8)
         now = [100.0]
