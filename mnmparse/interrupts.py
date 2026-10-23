@@ -69,8 +69,8 @@ DEFAULT_CC: dict[str, frozenset[str]] = {
          "pinning shot", "pinning throw"}
     ),
     "silence": frozenset({"silence", "mandate of silence"}),
-    "snare": frozenset({"snare", "lesser snare", "hamstring", "snaring shot"}),
-    "fear": frozenset({"fear", "terrify", "scare", "intimidate", "intimidation"}),
+    "snare": frozenset({"snare", "lesser snare", "snare the dead", "hamstring", "snaring shot"}),
+    "fear": frozenset({"fear", "fear the dead", "terrify", "scare", "intimidate", "intimidation"}),
     "charm": frozenset({"charm", "lesser charm"}),
     "blind": frozenset({"blind"}),
 }

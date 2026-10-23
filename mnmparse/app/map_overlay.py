@@ -6,19 +6,22 @@ import threading
 from collections.abc import Iterable, Mapping, Sequence
 from io import BytesIO
 from typing import Any
+from uuid import uuid4
 
-from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+    QComboBox, QDialog, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMenu, QMessageBox,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from mnmparse.app import theme
+from mnmparse.app.map_labels import MapLabelDialog, MapLabelItem, label_icon
 from mnmparse.app.monster_icon import monster_icon as _monster_icon
 from mnmparse.app.notable_npc_menu import NotableNpcMenu, npc_title_key
 from mnmparse.app.window_identity import window_title
 from mnmparse.config import project_path
+from mnmparse.map_labels import MapLabel, MapLabelStore, map_key
 from mnmparse.maps import MapImage, MapRepository, ZONES, wiki_url, zone_title, zone_from_who
 
 log = logging.getLogger(__name__)
@@ -190,6 +193,8 @@ class _Load:
 
 
 class MapView(QGraphicsView):
+    label_context_requested = Signal(QPointF, QPoint, object)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
@@ -202,15 +207,20 @@ class MapView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._fit = True
+        self._image_rect = QRectF()
+        self._label_items: list[MapLabelItem] = []
 
     def set_image(self, image: QImage, *, preserve_view: bool = False) -> None:
         previous = self.sceneRect()
         centre = self.mapToScene(self.viewport().rect().center())
         keep_zoom = preserve_view and not self._fit and not previous.isEmpty()
+        self._label_items.clear()
         self.scene().clear()
+        self._image_rect = QRectF()
         if not image.isNull():
             item = self.scene().addPixmap(QPixmap.fromImage(image))
-            self.scene().setSceneRect(item.boundingRect())
+            self._image_rect = item.boundingRect()
+            self.scene().setSceneRect(self._image_rect)
         else:
             self.scene().setSceneRect(0, 0, 1, 1)
         if keep_zoom:
@@ -219,6 +229,30 @@ class MapView(QGraphicsView):
                           centre.y() * current.height() / previous.height())
         else:
             self.fit()
+
+    def set_labels(self, labels: Sequence[MapLabel]) -> None:
+        for item in self._label_items:
+            self.scene().removeItem(item)
+            item.deleteLater()
+        self._label_items.clear()
+        if self._image_rect.isEmpty():
+            return
+        for label in labels:
+            item = MapLabelItem(label)
+            item.setPos(self._image_rect.left() + label.x * self._image_rect.width(),
+                        self._image_rect.top() + label.y * self._image_rect.height())
+            self.scene().addItem(item)
+            self._label_items.append(item)
+
+    def contextMenuEvent(self, event: Any) -> None:  # noqa: N802
+        point = self.mapToScene(event.pos())
+        if self._image_rect.isEmpty() or not self._image_rect.contains(point):
+            event.ignore()
+            return
+        item = self.itemAt(event.pos())
+        label = item.label if isinstance(item, MapLabelItem) else None
+        self.label_context_requested.emit(point, event.globalPos(), label)
+        event.accept()
 
     def fit(self) -> None:
         self._fit = True
@@ -262,6 +296,8 @@ class MapOverlay(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.settings = settings
+        self.label_store = MapLabelStore.for_settings(settings)
+        self._label_menu: QMenu | None = None
         self._locked = settings.value("overlay/locked", False, type=bool)
         self._opacity = 0.85
         self._font_scale = 1.0
@@ -290,6 +326,8 @@ class MapOverlay(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         self.view = MapView(self)
+        self.view.label_context_requested.connect(self._label_context_menu)
+        self.label_store.changed.connect(self._refresh_labels)
         layout.addWidget(self.view)
         # Floating controls never change the map viewport when they appear/disappear.
         self.header = _MapHeader(self)
@@ -631,6 +669,7 @@ class MapOverlay(QWidget):
                                                   and selected_url == self._selected_url))
         self._selected_url = selected_url
         self._loaded_zone = self._current_zone
+        self._refresh_labels()
         saved = self._restore_view
         self._restore_view = None
         if saved and saved["zone"] == self._current_zone and saved["url"] == selected_url and not saved["fit"]:
@@ -641,6 +680,66 @@ class MapOverlay(QWidget):
             self.view.centerOn(rect.left() + saved["x"] * rect.width(), rect.top() + saved["y"] * rect.height())
         self.save_state()
         self._set_status("")
+
+    def _refresh_labels(self, changed_map: str = "") -> None:
+        if self._closing:
+            return
+        if not self._selected_url or self._loaded_zone != self._current_zone:
+            self.view.set_labels([])
+        elif not changed_map or changed_map == map_key(self._selected_url):
+            self.view.set_labels(self.label_store.labels(self._selected_url))
+
+    def _label_context_menu(self, point: QPointF, global_pos: QPoint, label: MapLabel | None) -> None:
+        if (self._closing or not self._selected_url or self._loaded_zone != self._current_zone
+                or self.view._image_rect.isEmpty() or not self.view._image_rect.contains(point)):
+            return
+        map_url = self._selected_url
+        rect = self.view._image_rect
+        x, y = (point.x() - rect.left()) / rect.width(), (point.y() - rect.top()) / rect.height()
+        if self._label_menu is not None:
+            self._label_menu.close()
+        menu = QMenu(self)
+        self._label_menu = menu
+        menu.setAccessibleName("Map labels")
+        if label is not None and map_key(label.map_url) == map_key(map_url):
+            edit = menu.addAction("Edit label…")
+            edit.triggered.connect(lambda _checked=False: self._edit_label(map_url, label.x, label.y, label))
+            remove = menu.addAction("Delete label")
+            remove.triggered.connect(lambda _checked=False: self._remove_label(label))
+            menu.addSeparator()
+        add = menu.addAction(label_icon("pin"), "Add label…")
+        add.triggered.connect(lambda _checked=False: self._edit_label(map_url, x, y))
+        menu.aboutToHide.connect(lambda: self._label_menu_closed(menu))
+        menu.popup(global_pos)
+
+    def _label_menu_closed(self, menu: QMenu) -> None:
+        if self._label_menu is menu:
+            self._label_menu = None
+        menu.deleteLater()
+
+    def _edit_label(self, map_url: str, x: float, y: float, label: MapLabel | None = None) -> None:
+        if self._closing or (label is not None and self.label_store.get(label.id) is None):
+            return
+        dialog = MapLabelDialog(self, label=label)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted or self._closing:
+                return
+            values = dialog.value()
+            saved = MapLabel(label.id if label is not None else uuid4().hex,
+                             map_url, x, y, values["name"], values["notes"], values["icon"])
+            self.label_store.save(saved)
+        except (OSError, ValueError):
+            QMessageBox.warning(self, "Map labels", "The label could not be saved. Check that your settings folder is writable.")
+        finally:
+            dialog.deleteLater()
+
+    def _remove_label(self, label: MapLabel) -> None:
+        if self._closing:
+            return
+        try:
+            self.label_store.remove(label.id)
+        except OSError:
+            QMessageBox.warning(self, "Map labels", "The label could not be deleted. Check that your settings folder is writable.")
 
     def _set_status(self, text: str) -> None:
         self.status.setText(text)
@@ -877,6 +976,8 @@ class MapOverlay(QWidget):
     def hideEvent(self, event: Any) -> None:  # noqa: N802
         self._end_drag()
         self.notable_npcs_menu.hide()
+        if self._label_menu is not None:
+            self._label_menu.close()
         if not self._closing:
             self.save_state()
         super().hideEvent(event)

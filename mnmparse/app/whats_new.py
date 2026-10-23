@@ -28,6 +28,18 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.26": ReleaseNotes(
+        changes=(
+            "Right-click a map to add a persistent label with a preset icon, name and notes. Hover the icon for details; right-click to edit or delete.",
+            "Labels stay anchored to their map image through zooming and resizing. Alternate maps and floors keep separate labels; Zones shares the same saved labels.",
+            "Leaderboard names use larger gold text with one word per row. Stat Total, highest first, is the default sort.",
+            "Snare the Dead and Fear the Dead now earn utility credit when their effects land.",
+        ),
+        settings_label="Map settings",
+        settings_target="map_download_button",
+        feature_page="zones",
+        feature_label="Zones",
+    ),
     "1.0.25": ReleaseNotes(
         changes=(
             "Hover the combat-chat or mini-stat capture area to reveal its settings gear, even with other overlays hidden.",

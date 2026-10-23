@@ -157,6 +157,7 @@ CC_OUTCOMES: dict[str, str] = {
     "snared": "snare",
     "slowed": "snare",  # "You are slowed by a snaring shot."
     "feared": "fear",
+    "fearful": "fear",
     "intimidated": "fear",
     "charmed": "charm",
     "blinded": "blind",
@@ -277,7 +278,7 @@ _NPC_GREEDY: str = rf"(?:a|an|the)\s+{NPC_WORD}(?:\s+{NPC_WORD})*"
 after the name decides where the name ends)."""
 
 _CC_WORDS: str = (
-    r"stunned|mesmerized|rooted|immobilized|silenced|snared|feared|intimidated|charmed|dazed|held|pinned|bound|slowed|blinded"
+    r"stunned|mesmerized|rooted|immobilized|silenced|snared|feared|fearful|intimidated|charmed|dazed|held|pinned|bound|slowed|blinded"
 )
 """``X is <word>`` / ``X is no longer <word>``: a crowd-control result (see :data:`CC_OUTCOMES`)."""
 
@@ -386,6 +387,7 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("cc_fade", rf"^(?P<target>{NAME})\s+breaks?\s+free\s+of\s+(?P<skill>the\s+webs){_TAIL}"),
     ("cc_fade", rf"^(?P<target>{NAME})\s+comes?\s+(?P<outcome>unstuck){_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>{_CC_WORDS})(?:\s+to\s+the\s+ground)?(?:\s+by\s+(?P<skill>[a-z][a-z' ]+?))?{_TAIL}"),
+    ("cc", rf"^(?P<target>{NAME})\s+(?:is|are)\s+overcome\s+with\s+(?P<outcome>fear){_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?P<outcome>adhere)s?\s+to\s+the\s+ground{_TAIL}"),
     ("cc", rf"^(?P<target>{NAME})\s+(?:is|are)\s+(?P<outcome>anchored)\s+to\s+the\s+ground\s+by\s+(?P<skill>webs){_TAIL}"),
     # ---- CANNOT ATTACK (not a miss) -------------------------------------
