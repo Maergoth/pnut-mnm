@@ -12,3 +12,10 @@
   original log text or trimming independently observed legitimate names.
 - Correctly recognized live notable kills can trigger the existing fanfare and
   NPC details panel according to your settings. Hit deduplication is unchanged.
+- Separate mini-stat and chat readers now sample and recognize text on independent
+  workers. A slow stat read cannot hold up Resist or other chat alerts, and stat
+  warnings can confirm even while chat OCR is busy. The stat worker uses its own
+  recognizer and keeps only the newest pending frame, with stale results discarded.
+  Chat still requires two confirming reads and uses the same deduplication rules.
+  Shared-crop mode continues using one OCR result and excludes verified stat rows
+  before chat processing. Capture rate and trigger matching settings are unchanged.

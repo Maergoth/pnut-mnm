@@ -73,6 +73,22 @@ and passive kill notices within two seconds are paired; fresh damage re-arms pai
 and distinct same-form kills remain separate. The victory cue is synthesized from the
 user-supplied two-bar score at 130 BPM; no external recording or MIDI is downloaded.
 
+Separate mini-stat OCR runs in `app/stat_reader_worker.py` with its own owner-created,
+read and closed recognizer. Its provider samples autonomously, so neither stat
+confirmation nor chat recognition waits for the other OCR call. WGC's
+`region_snapshot` peeks an already configured crop with atomically matching pixels,
+frame counter and acquisition time; it never reconfigures chat capture. MSS snapshots
+use a fresh grab. Repeated source frames cannot confirm another stat reading.
+
+Worker results apply under the engine lock against their immutable source, reader
+epoch, settings, session and original acquisition time. They never overwrite the
+chat thread's frame context or renew an expired sample at completion time. Pending
+work is bounded and old work is discarded across transitions. Close and bounded join
+run outside the engine lock; a closed but still-running native reader remains owned
+so repeated restarts cannot accumulate threads. Shared-crop stat detection remains
+inline before chat-row filtering. Diagnostics keep chat and stat OCR timings separate
+and never retain the separate stat OCR rows or leaderboard attributes.
+
 Map labels belong to canonical original image URLs, independently of zone names.
 `map_labels.py` stores each UUID in its own `map_labels/` QSettings entry; shared
 store notifications update the overlay and embedded Zones map together. Keep label

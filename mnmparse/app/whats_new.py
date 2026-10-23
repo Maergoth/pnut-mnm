@@ -32,7 +32,8 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Saved map images display correctly again, including after resizing or switching back from Atlas.",
             "MnM Atlas is now the default. Choose either provider in Settings > Update maps > Default map; the globe switches either view temporarily.",
-            "Keeper of the Road and similar NPC titles now register kills, damage and loot. Known names recover a misread final exclamation mark so notable victories can trigger the fanfare.",
+            "Keeper of the Road and similar NPC titles now register kills, damage and loot, including a known name's misread final exclamation mark.",
+            "Separate mini-stat and chat readers run independently, so slow stat OCR no longer delays chat alerts. Two-read confirmation and deduplication remain unchanged.",
         ),
         settings_label="Map settings",
         settings_target="map_default_source",
