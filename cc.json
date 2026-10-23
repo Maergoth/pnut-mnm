@@ -17,8 +17,8 @@
   "mez": ["Mesmerize", "Entrance", "Enthrall", "Somniferous Serenade", "Lull"],
   "root": ["Root", "Entangle", "Ensnare", "Grasping Roots", "Lurching Impairment", "Net Shot", "Pinning Shot", "Pinning Throw"],
   "silence": ["Silence", "Mandate of Silence"],
-  "snare": ["Snare", "Lesser Snare", "Hamstring", "Snaring Shot"],
-  "fear": ["Fear", "Terrify", "Intimidate", "Intimidation"],
+  "snare": ["Snare", "Lesser Snare", "Snare the Dead", "Hamstring", "Snaring Shot"],
+  "fear": ["Fear", "Fear the Dead", "Terrify", "Intimidate", "Intimidation"],
   "charm": ["Charm", "Lesser Charm"],
   "blind": ["Blind"]
 }
