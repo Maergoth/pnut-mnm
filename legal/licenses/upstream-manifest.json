@@ -4,6 +4,11 @@
     "source": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n7.1.5",
     "source_sha256": "e3963a50831c985933e1a625ed566ec4c7adb5c012c34fa9f84438e1d61bdacc"
   },
+  "Microsoft.Web.WebView2-1.0.4258.31.txt": {
+    "notice_sha256": "17f6306a81fbef31ebb59d8807b33558ec32ef4a295316b32be38546fd06335a",
+    "source": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4258.31/microsoft.web.webview2.1.0.4258.31.nupkg",
+    "source_sha256": "56f7f4b8bf9aee4b8efefbbdd4f67d5f74ebd1b100ed0806da71bf76af481aa9"
+  },
   "OpenSSL-3.0.18.txt": {
     "notice_sha256": "bcb21c47be179d129738b9bc869134e4607161976c82823ef776909f3991b2f9",
     "source": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.0.18",
@@ -19,11 +24,6 @@
     "source": "https://raw.githubusercontent.com/pywinrt/pywinrt/v3.2.1/LICENSE",
     "source_sha256": "6e898069e8b3c6d8d23dc70ac7067cc2b7c9db14c36df873026758db82c0891d"
   },
-  "Qt-6.11.2-Chromium.txt": {
-    "notice_sha256": "de773b3223f92078cbc02c14e220895ffda6622929f1d359b9b987e17088adcf",
-    "source": "https://doc.qt.io/qt-6.11/qtwebengine-licensing.html",
-    "source_sha256": "dc3fc4a73cce79c1070d9b5f752907e629ddb3f1b5b828103a01dbc9ab99d1e7"
-  },
   "Qt-6.11.2-pyside-setup.txt": {
     "notice_sha256": "5b358f716cae4f160b8c0ee274778d858a5dd3e46438ce0f7f39fc284a795c8b",
     "source": "https://codeload.github.com/pyside/pyside-setup/tar.gz/refs/tags/v6.11.2",
@@ -34,20 +34,10 @@
     "source": "https://codeload.github.com/qt/qtbase/tar.gz/refs/tags/v6.11.2",
     "source_sha256": "06cd7aa6b3ab19cb5a1664a2891ef0df960f78c97fa31b80b1d6d7ee70688414"
   },
-  "Qt-6.11.2-qtdeclarative.txt": {
-    "notice_sha256": "724ab34a9ebea39153ea2bb2effe30fc96f7c078eca37504c61f06dfe7090077",
-    "source": "https://codeload.github.com/qt/qtdeclarative/tar.gz/refs/tags/v6.11.2",
-    "source_sha256": "c5a6678e253b20014904187bd261d65907e40849bf6bcdcd9845f3803e5f3cd5"
-  },
   "Qt-6.11.2-qtmultimedia.txt": {
     "notice_sha256": "27f2a7f4f0f02131c4b468a4c729d2b1ec13ac6fae635dbdd64bfeba8c4a0a5a",
     "source": "https://codeload.github.com/qt/qtmultimedia/tar.gz/refs/tags/v6.11.2",
     "source_sha256": "86dab3128cbe1b00cf2343a303d0df675c442ab0df2bf44afa35508673146cc0"
-  },
-  "Qt-6.11.2-qtpositioning.txt": {
-    "notice_sha256": "574611707672fd384398a2308143d15fcb09cc08068bee044d320beca4f9ec2b",
-    "source": "https://codeload.github.com/qt/qtpositioning/tar.gz/refs/tags/v6.11.2",
-    "source_sha256": "05ae0b5ea65df0bed1b9334f6aba74dbc876f6fdf20de312691325bafa8d61eb"
   },
   "Qt-6.11.2-qtspeech.txt": {
     "notice_sha256": "f13cf424337e26a291d12c231366551cf41c7ccf28779b5f743245d7ed811bfe",
@@ -58,16 +48,6 @@
     "notice_sha256": "afc399ef3a7f1beccc0e53198496ddab7a323d85b480043e4fdf83d45c203a4d",
     "source": "https://codeload.github.com/qt/qtsvg/tar.gz/refs/tags/v6.11.2",
     "source_sha256": "52a89c4efcb0cbe57bf85c71f5db50ef59184eeadf9972351202a9261a9bfa6e"
-  },
-  "Qt-6.11.2-qtwebchannel.txt": {
-    "notice_sha256": "3a8cc0cebafc92ff9858e7f3bcf026740707f0a2dd741ce1ee08a00b55bc9435",
-    "source": "https://codeload.github.com/qt/qtwebchannel/tar.gz/refs/tags/v6.11.2",
-    "source_sha256": "3de4370bad09333cbc9ac56561fccc83c7a7cdbab6fcb8a31e80ae2def8d99ec"
-  },
-  "Qt-6.11.2-qtwebengine.txt": {
-    "notice_sha256": "621063d62dfce8b56cf898f0f325e027907f802747c4a78a7adc81d5a24d3408",
-    "source": "https://codeload.github.com/qt/qtwebengine/tar.gz/refs/tags/v6.11.2",
-    "source_sha256": "183d7badc18192714e8aec4d3ece295375cc1b7e230949f4387b637e4f2f5413"
   },
   "cffi-2.1.1-native-notices.txt": {
     "notice_sha256": "b384fd0895bc4d7b2a2b3dfa614b19f79f50e13c83482370e1e43fe0cd4d8e91",

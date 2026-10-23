@@ -5,9 +5,10 @@ Build with ``build_exe.ps1`` or directly:
     .venv\\Scripts\\python -m PyInstaller mnmparser.spec --noconfirm
 
 Output: ``dist\\PNUT M&M\\PNUT M&M.exe`` (one-dir, windowed, icon).  Only the Qt modules
-the app imports are collected, including the lazily used Qt WebEngine browser and
-its runtime dependencies. Qt3D and other unused families are excluded, as are
-onnxruntime/rapidocr (the optional OCR fallback) and the old Tk crop picker.
+the app imports (QtCore/QtGui/QtWidgets, plus QtMultimedia/QtTextToSpeech for the trigger
+sounds and speech) are collected; the big optional ones (WebEngine, Qt3D, Quick/QML, ...) are
+excluded, as are onnxruntime/rapidocr (the optional OCR fallback) and tkinter (only the old CLI
+crop picker uses it).
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ import sys
 import sysconfig
 from pathlib import Path
 
-from PyInstaller.depend.bindepend import get_imports
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = Path(SPECPATH).resolve()
@@ -61,9 +61,6 @@ hiddenimports = [
     # Triggers: sounds (QSoundEffect / QMediaPlayer) and speech (QTextToSpeech: SAPI and WinRT voices)
     "PySide6.QtMultimedia",
     "PySide6.QtTextToSpeech",
-    # The Atlas widget imports these only after the user selects its provider.
-    "PySide6.QtWebEngineCore",
-    "PySide6.QtWebEngineWidgets",
     "mnmparse.app.triggers_runtime",
 ]
 
@@ -75,6 +72,10 @@ for pyd in glob.glob(os.path.join(site_packages, "_winrt*.pyd")):
 
 datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
+atlas_adapter = ROOT / "build" / "atlas_webview" / "pnut_atlas_webview.dll"
+if not atlas_adapter.is_file():
+    raise RuntimeError("Run scripts/build_atlas_webview.py before freezing")
+binaries.append((str(atlas_adapter), "atlas"))
 for package in ("winrt", "windows_capture"):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
@@ -117,7 +118,10 @@ excludes = [
     "PyQt5",
     "PyQt6",
     # PySide6 modules the app never imports.
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
     "PySide6.QtWebEngineQuick",
+    "PySide6.QtWebChannel",
     "PySide6.QtWebSockets",
     "PySide6.QtWebView",
     "PySide6.Qt3DCore",
@@ -126,9 +130,11 @@ excludes = [
     "PySide6.Qt3DLogic",
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DExtras",
+    "PySide6.QtQuick",
     "PySide6.QtQuick3D",
     "PySide6.QtQuickWidgets",
     "PySide6.QtQuickControls2",
+    "PySide6.QtQml",
     "PySide6.QtMultimediaWidgets",
     "PySide6.QtCharts",
     "PySide6.QtDataVisualization",
@@ -140,6 +146,7 @@ excludes = [
     "PySide6.QtHelp",
     "PySide6.QtBluetooth",
     "PySide6.QtNfc",
+    "PySide6.QtPositioning",
     "PySide6.QtLocation",
     "PySide6.QtSensors",
     "PySide6.QtSerialPort",
@@ -149,6 +156,9 @@ excludes = [
     "PySide6.QtXml",
     "PySide6.QtSvg",
     "PySide6.QtSvgWidgets",
+    "PySide6.QtOpenGL",
+    "PySide6.QtOpenGLWidgets",
+    "PySide6.QtPrintSupport",
     "PySide6.QtNetworkAuth",
     "PySide6.QtRemoteObjects",
     "PySide6.QtScxml",
@@ -175,7 +185,10 @@ a = Analysis(
 # Belt and braces: drop any Qt payload from the excluded module families that a hook pulled
 # in anyway (translations, plugins, DLLs).
 _DROP = (
+    "webengine",
     "qt3d",
+    "quick",
+    "qml",
     "multimediawidgets",
     "charts",
     "datavisualization",
@@ -184,12 +197,14 @@ _DROP = (
     "pdf",
     "virtualkeyboard",
     "location",
+    "positioning",
     "sensors",
     "serialport",
     "bluetooth",
     "remoteobjects",
     "scxml",
     "statemachine",
+    "webchannel",
     "websockets",
     "httpserver",
 )
@@ -200,50 +215,12 @@ def _keep(entry: tuple) -> bool:
     # PNUT uses OpenCV image transforms and PNG encoding, never its video backend.
     if name.startswith("cv2/opencv_videoio_ffmpeg"):
         return False
-    # Release WebEngine uses the ordinary packs; debug packs add ~80 MiB.
-    if "/resources/" in name and (".debug.pak" in name or ".debug.bin" in name):
-        return False
     if "pyside6" not in name and "/qt6/" not in name and not name.startswith("qt6"):
         return True
-    # QWebEngineWidgets builds its QQuickWidget content programmatically; PNUT
-    # does not import QML modules. QtQml's generic hook otherwise collects the
-    # whole installed QML tree, including unrelated GPL-only module families.
-    if "/qml/" in name or "/plugins/qmltooling/" in name:
-        return False
     return not any(tag in name for tag in _DROP)
 
 
-def _prune_qt_dlls(entries: list[tuple]) -> list[tuple]:
-    """Keep Qt DLLs reachable from retained extensions, helper EXEs and plugins.
-
-    Removing QML files alone leaves their native dependencies in Analysis. Use
-    the actual PE import graph rather than broad 'quick'/'qml' substring rules:
-    the Widgets browser needs Quick/QuickWidgets/Qml, but not Quick3D/Graphs.
-    Dynamically loaded plugin DLLs remain roots, including audio/TTS/TLS plugins.
-    """
-    def basename(entry):
-        return entry[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
-
-    qt_dlls = {basename(entry): entry for entry in entries
-               if basename(entry).startswith("qt6") and basename(entry).endswith(".dll")}
-    pending = [entry for entry in entries if basename(entry) not in qt_dlls]
-    needed = set()
-    seen = set()
-    while pending:
-        entry = pending.pop()
-        if entry[1] in seen:
-            continue
-        seen.add(entry[1])
-        for imported, _resolved in get_imports(entry[1], search_paths=[str(Path(entry[1]).parent)]):
-            name = imported.lower()
-            if name in qt_dlls and name not in needed:
-                needed.add(name)
-                pending.append(qt_dlls[name])
-    return [entry for entry in entries if basename(entry) not in qt_dlls or basename(entry) in needed]
-
-
 a.binaries = [b for b in a.binaries if _keep(b)]
-a.binaries = _prune_qt_dlls(a.binaries)
 a.datas = [d for d in a.datas if _keep(d) and Path(d[0]).name != "direct_url.json"]
 
 pyz = PYZ(a.pure)

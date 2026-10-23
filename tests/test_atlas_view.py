@@ -1,105 +1,81 @@
-"""Atlas lifecycle/navigation tests use Qt widgets with an entirely offline fake engine."""
+"""Atlas lifecycle/navigation tests never load a native DLL or use the network."""
 from __future__ import annotations
 
-from enum import Enum
-import ast
-import importlib.util
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QUrl, Signal
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import QCoreApplication, QEvent, QUrl, Qt
+from PySide6.QtWidgets import QApplication
 import shiboken6
 
-from mnmparse.app import atlas_view
+from mnmparse.app import atlas_native as native, atlas_view
 from mnmparse.atlas import atlas_url
 
 
-class FakeProfile(QObject):
-    downloadRequested = Signal(object)
-    HttpCacheType = types.SimpleNamespace(DiskHttpCache=1)
-    PersistentCookiesPolicy = types.SimpleNamespace(AllowPersistentCookies=1)
-    PersistentPermissionsPolicy = types.SimpleNamespace(StoreInMemory=1)
+class FakeHost:
+    instances = []
 
-    def __init__(self, name, parent):
-        super().__init__(parent)
-        self.values = {"name": name}
-
-    def __getattr__(self, name):
-        if name.startswith("set"):
-            return lambda value: self.values.__setitem__(name[3:], value)
-        raise AttributeError(name)
-
-
-class FakeSettings:
-    WebAttribute = types.SimpleNamespace(**{name: name for name in (
-        "JavascriptCanAccessClipboard", "JavascriptCanPaste", "LocalContentCanAccessFileUrls",
-        "LocalContentCanAccessRemoteUrls", "AllowWindowActivationFromJavaScript", "NavigateOnDropEnabled",
-        "PlaybackRequiresUserGesture")})
-
-    def __init__(self):
-        self.attributes = {}
-
-    def setAttribute(self, attr, value):
-        self.attributes[attr] = value
-
-
-class FakePage(QObject):
-    permissionRequested = Signal(object)
-    newWindowRequested = Signal(object)
-    loadStarted = Signal()
-    loadFinished = Signal(bool)
-    urlChanged = Signal(QUrl)
-    renderProcessTerminated = Signal(object, int)
-    class LifecycleState(Enum):
-        Active = 1
-        Frozen = 2
-    NavigationType = types.SimpleNamespace(NavigationTypeLinkClicked=1, NavigationTypeOther=2)
-
-    def __init__(self, profile, parent):
-        super().__init__(parent)
-        self.profile = profile
+    def __init__(self, hwnd, storage, callback):
+        self.hwnd, self.storage, self.callback = hwnd, Path(storage), callback
+        self.runtime_version = "150.0.0.0"
         self.calls = []
-        self._url = QUrl("about:blank")
-        self._settings = FakeSettings()
+        self.url = ""
+        self.closed = False
+        self.instances.append(self)
 
-    def settings(self):
-        return self._settings
+    def event(self, event, value=0, data=""):
+        return self.callback(event, value, data) if self.callback is not None else 0
 
-    def setLifecycleState(self, state):
-        self.state = state
+    def ready(self):
+        return self.event(native.READY)
 
-    def setVisible(self, visible):
-        self.visible = visible
+    def finish(self, url=None, ok=True):
+        self.url = self.url if url is None else url
+        self.event(native.URL_CHANGED, 0, self.url)
+        self.event(native.LOAD_DONE, int(ok), "" if ok else "Synthetic failure")
 
-    def setUrl(self, url):
-        self.calls.append(QUrl(url))
-        self._url = QUrl(url)
-        self.loadStarted.emit()
+    def navigate(self, url):
+        self.url = url
+        self.calls.append(("navigate", url))
+        self.event(native.LOAD_START, 0, url)
 
-    def url(self):
-        return self._url
+    def load_html(self, html):
+        self.calls.append(("load_html", html))
 
-    def finish(self, ok=True):
-        self.urlChanged.emit(self._url)
-        self.loadFinished.emit(ok)
+    def evaluate(self, script, request_id):
+        self.calls.append(("evaluate", script, request_id))
 
+    def resize(self):
+        self.calls.append(("resize",))
 
-class FakeBrowser(QWidget):
-    def setPage(self, page):
-        self.page = page
-        self.stopped = False
+    def set_visible(self, visible):
+        self.calls.append(("set_visible", visible))
+
+    def suspend(self):
+        self.calls.append(("suspend",))
 
     def stop(self):
-        self.stopped = True
+        self.calls.append(("stop",))
+
+    def resume(self):
+        self.calls.append(("resume",))
+
+    def close(self, *_args):
+        if not self.closed:
+            self.closed = True
+            self.calls.append(("close",))
+            self.callback = None
+
+    @property
+    def navigations(self):
+        return [call[1] for call in self.calls if call[0] == "navigate"]
 
 
 class AtlasViewTests(unittest.TestCase):
@@ -111,324 +87,323 @@ class AtlasViewTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name) / "atlas"
         self.views = []
-        self.modules = patch.dict(sys.modules, {
-            "PySide6.QtWebEngineCore": types.SimpleNamespace(QWebEnginePage=FakePage,
-                QWebEngineProfile=FakeProfile, QWebEngineSettings=FakeSettings),
-            "PySide6.QtWebEngineWidgets": types.SimpleNamespace(QWebEngineView=FakeBrowser),
-        })
-        self.modules.start()
+        FakeHost.instances.clear()
+        self.host_patch = patch.object(native, "NativeHost", FakeHost)
+        self.host_patch.start()
 
     def tearDown(self):
-        for view in self.views:
+        for view in reversed(self.views):
             if shiboken6.isValid(view):
                 view.shutdown()
                 shiboken6.delete(view)
-        if atlas_view._profiles is not None:
-            atlas_view._profiles.shutdown()
-            shiboken6.delete(atlas_view._profiles)
-            atlas_view._profiles = None
-        self.modules.stop()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.app.processEvents()
+        self.host_patch.stop()
+        FakeHost.instances.clear()
         self.temp.cleanup()
 
     def view(self, **kwargs):
         view = atlas_view.AtlasView(storage_path=self.path, **kwargs)
+        view.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
         self.views.append(view)
         return view
 
-    def test_import_and_construction_do_not_import_webengine_or_create_storage(self):
+    def loaded_view(self, zone="Night Harbor", npc=""):
+        view = self.view()
+        view.activate(zone, npc)
+        view._native.ready()
+        view._native.finish()
+        return view
+
+    def test_import_and_construction_are_offline_and_do_not_load_native_library(self):
         code = """
-import sys,tempfile
+import ctypes,sys,tempfile
 from pathlib import Path
+from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
-from mnmparse.app.atlas_view import AtlasView
 app=QApplication([])
-with tempfile.TemporaryDirectory() as directory:
-    path=Path(directory)/'absent'
-    view=AtlasView(storage_path=path)
-    view.set_zone('Night Harbor')
-    view.focus_npc('Fictional guardian')
-    assert not path.exists()
-    assert not any(name.startswith('PySide6.QtWebEngine') for name in sys.modules)
-    view.shutdown()
+with patch.object(ctypes,'WinDLL',side_effect=AssertionError('native DLL loaded'),create=True):
+    from mnmparse.app.atlas_view import AtlasView
+    with tempfile.TemporaryDirectory() as directory:
+        path=Path(directory)/'absent'
+        view=AtlasView(storage_path=path)
+        view.set_zone('Night Harbor')
+        view.focus_npc('Fictional guardian')
+        assert not path.exists()
+        assert view._native is None
+        assert not any(name.startswith('PySide6.QtWebEngine') for name in sys.modules)
+        view.shutdown()
 """
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_explicit_activation_loads_documented_url_and_native_credit(self):
+    def test_activation_waits_for_ready_and_uses_documented_url_and_credit(self):
         view = self.view()
         view.activate("Night Harbor", "Fictional guardian")
-        self.assertEqual(view._page.calls[0].toString(), atlas_url("Night Harbor", "Fictional guardian"))
-        self.assertEqual(view._stack.currentWidget(), view._notice)
-        view._page.finish()
-        self.assertEqual(view._stack.currentWidget(), view._browser)
-        self.assertTrue(view.open_button.isEnabled())
+        host = view._native
+        self.assertIsInstance(host.hwnd, int)
+        self.assertEqual(host.storage, self.path / "webview2")
+        self.assertEqual(host.navigations, [])
+        self.assertTrue(view._timeout.isActive())
+        self.assertIs(view._stack.currentWidget(), view._notice)
+        host.ready()
+        self.assertEqual(host.navigations, [atlas_url("Night Harbor", "Fictional guardian")])
+        host.finish()
+        self.assertIs(view._stack.currentWidget(), view._browser)
+        self.assertFalse(view._timeout.isActive())
         self.assertTrue(any(label.text() == "Maps by MnM Atlas" for label in view.findChildren(atlas_view.QLabel)))
 
-    def test_same_map_and_internal_zone_echo_preserve_page_view(self):
+    def test_zone_changed_before_ready_navigates_only_latest_requested_zone(self):
         view = self.view()
         view.activate("Night Harbor")
-        view._page.finish()
+        view.set_zone("Shaded Dunes")
+        host = view._native
+        self.assertEqual(len(FakeHost.instances), 1)
+        self.assertEqual(host.navigations, [])
+        host.ready()
+        self.assertEqual(host.navigations, [atlas_url("Shaded Dunes")])
+
+    def test_hidden_readiness_suspends_until_reactivated(self):
+        view = self.view()
+        view.activate("Night Harbor")
+        host = view._native
+        view.deactivate()
+        view.set_zone("Shaded Dunes")
+        host.ready()
+        self.assertEqual(host.navigations, [])
+        self.assertIn(("set_visible", False), host.calls)
+        self.assertIn(("suspend",), host.calls)
+        self.assertFalse(view._timeout.isActive())
+        view.activate("Shaded Dunes")
+        self.assertEqual(host.navigations, [atlas_url("Shaded Dunes")])
+
+    def test_same_map_and_spa_zone_echo_preserve_page_view(self):
+        view = self.loaded_view()
+        host = view._native
         view.set_zone("Night Harbor")
-        self.assertEqual(len(view._page.calls), 1)
+        self.assertEqual(len(host.navigations), 1)
         changes = []
         view.zone_changed.connect(changes.append)
-        view._page._url = QUrl("https://www.mnmatlas.com/shaded-dunes/?embed=1&floor=2&place=camp")
-        view._page.urlChanged.emit(view._page.url())
+        url = atlas_url("Shaded Dunes") + "&level=lower&x=120&y=240&z=2"
+        host.event(native.URL_CHANGED, 0, url)
         view.set_zone("Shaded Dunes")
         self.assertEqual(changes, ["Shaded Dunes"])
-        self.assertEqual(len(view._page.calls), 1)
-        self.assertIn("floor=2", view._page.url().toString())
+        self.assertEqual(len(host.navigations), 1)
+        self.assertEqual(view._document_url.toString(), url)
 
-    def test_world_view_does_not_reload_on_reactivation(self):
-        view = self.view()
-        view.activate("")
-        view._page.finish()
-        view.deactivate()
-        self.assertEqual(view._page.state, FakePage.LifecycleState.Frozen)
-        self.assertFalse(view._page.visible)
-        view.activate("")
-        self.assertEqual(len(view._page.calls), 1)
-        self.assertEqual(view._page.state, FakePage.LifecycleState.Active)
-
-    def test_explicit_world_navigation_survives_host_echo_and_reactivation(self):
-        view = self.view()
-        view.activate("Night Harbor")
-        view._page.finish()
-        changed = []
-        view.zone_changed.connect(changed.append)
-        view._page._url = QUrl(atlas_url("World"))
-        view._page.urlChanged.emit(view._page.url())
-        self.assertEqual(changed, ["World"])
-        view.set_zone("World")
+    def test_world_navigation_survives_hide_and_reactivation(self):
+        view = self.loaded_view()
+        host = view._native
+        changes = []
+        view.zone_changed.connect(changes.append)
+        host.event(native.URL_CHANGED, 0, atlas_url())
+        self.assertEqual(changes, ["World"])
+        self.assertEqual(view._zone, "World")
         view.deactivate()
         view.activate("World")
-        self.assertEqual(len(view._page.calls), 1)
+        self.assertEqual(len(host.navigations), 1)
+        self.assertIn(("suspend",), host.calls)
+        self.assertIn(("resume",), host.calls)
 
-    def test_unknown_game_zone_initial_world_fallback_keeps_host_context(self):
-        view = self.view()
-        changed = []
-        view.zone_changed.connect(changed.append)
-        view.activate("Uncharted fictional zone")
-        view._page.finish()
-        self.assertEqual(changed, [])
-        self.assertEqual(view._zone, "Uncharted fictional zone")
+    def test_programmatic_unsupported_zone_world_fallback_retains_context(self):
+        view = self.loaded_view()
+        changes = []
+        view.zone_changed.connect(changes.append)
+        view.set_zone("Fictional Uncharted Zone")
+        view._native.finish()
+        self.assertEqual(view._zone, "Fictional Uncharted Zone")
+        self.assertEqual(changes, [])
+        self.assertEqual(view._document_url.toString(), atlas_url())
 
-    def test_programmatic_unknown_zone_after_known_map_keeps_host_context(self):
-        view = self.view()
-        view.activate("Night Harbor")
-        view._page.finish()
-        changed = []
-        view.zone_changed.connect(changed.append)
-        view.set_zone("Uncharted fictional zone")
-        view._page.finish()
-        self.assertEqual(changed, [])
-        self.assertEqual(view._zone, "Uncharted fictional zone")
-        view.deactivate()
-        view.activate("Uncharted fictional zone")
-        self.assertEqual(len(view._page.calls), 2)
-
-    def test_shutdown_remains_safe_after_application_quit_disposes_page(self):
-        view = self.view()
-        view.activate("Night Harbor")
-        atlas_view._profiles.shutdown()
-        view.shutdown()
-        self.assertIsNone(view._page)
-
-    def test_pending_changes_offline_then_focus_npc_only_after_activation(self):
+    def test_focus_npc_is_literal_and_hidden_updates_wait(self):
         view = self.view()
         view.set_zone("Night Harbor")
-        self.assertIsNone(view._page)
+        self.assertIsNone(view._native)
         view.activate("Night Harbor")
-        view._page.finish()
-        view.focus_npc("Fictional guardian")
-        self.assertIn("find=Fictional+guardian", view._page.calls[-1].toString())
+        host = view._native
+        host.ready()
+        host.finish()
+        view.focus_npc("Fictional & Guardian")
+        self.assertEqual(host.navigations[-1], atlas_url("Night Harbor", "Fictional & Guardian"))
         view.deactivate()
-        count = len(view._page.calls)
+        count = len(host.navigations)
         view.set_zone("Shaded Dunes")
-        view._page.loadFinished.emit(False)
-        self.assertEqual(len(view._page.calls), count)
+        host.event(native.LOAD_DONE, 0, "Synthetic late failure")
+        self.assertEqual(len(host.navigations), count)
         self.assertFalse(view._timeout.isActive())
 
-    def test_queued_hidden_navigation_does_not_override_pending_zone_or_notify_host(self):
-        view = self.view()
-        view.activate("Night Harbor")
-        view._page.finish()
-        changed = []
-        view.zone_changed.connect(changed.append)
+    def test_hidden_spa_navigation_does_not_override_pending_zone_or_notify(self):
+        view = self.loaded_view()
+        changes = []
+        view.zone_changed.connect(changes.append)
         view.deactivate()
         view.set_zone("Shaded Dunes")
-        view._page._url = QUrl(atlas_url("Fallen Pass"))
-        view._page.urlChanged.emit(view._page.url())
-        self.assertEqual(changed, [])
+        view._native.event(native.URL_CHANGED, 0, atlas_url("Fallen Pass"))
+        self.assertEqual(changes, [])
         self.assertEqual(view._zone, "Shaded Dunes")
         view.activate("Shaded Dunes")
-        self.assertEqual(view._page.calls[-1].toString(), atlas_url("Shaded Dunes"))
+        self.assertEqual(view._native.navigations[-1], atlas_url("Shaded Dunes"))
 
-    def test_shared_profile_path_bounded_cache_and_pages_before_profile(self):
-        first, second = self.view(), self.view()
-        first.activate("Night Harbor")
-        second.activate("Shaded Dunes")
-        profile = first._page.profile
-        self.assertIs(profile, second._page.profile)
-        self.assertEqual(profile.values["HttpCacheMaximumSize"], 64 * 1024 * 1024)
-        self.assertEqual(profile.values["PersistentStoragePath"], str(self.path / "storage"))
-        first.shutdown()
-        self.app.processEvents()
-        self.assertTrue(shiboken6.isValid(profile))
-        second.shutdown()
-        self.app.processEvents()
-        self.assertFalse(shiboken6.isValid(profile))
-
-    def test_profile_survives_immediate_view_replacement_and_parent_deletion(self):
-        first = self.view()
-        first.activate("Night Harbor")
-        profile = first._page.profile
-        first.shutdown()
-        second = self.view()
-        second.activate("Night Harbor")
-        self.assertIs(profile, second._page.profile)
-        self.app.processEvents()
-        self.assertTrue(shiboken6.isValid(profile))
-        shiboken6.delete(second)
-        self.app.processEvents()
-        self.assertFalse(shiboken6.isValid(profile))
-
-    def test_navigation_rejects_foreign_automatic_and_unsafe_links(self):
+    def test_navigation_allows_only_atlas_and_initial_about_blank(self):
         view = self.view()
         view.activate("Night Harbor")
-        page = view._page
+        host = view._native
+        self.assertEqual(host.event(native.NAV_REQUEST, 0, "about:blank"), 1)
+        self.assertEqual(host.event(native.NAV_REQUEST, 0, atlas_url("Shaded Dunes")), 1)
         with patch.object(atlas_view.QDesktopServices, "openUrl") as opened:
-            for url in ("https://www.mnmatlas.com.evil.test/", "http://www.mnmatlas.com/", "file:///private.txt",
-                        "https://user:password@www.mnmatlas.com/", "javascript:alert(1)"):
-                self.assertFalse(page.acceptNavigationRequest(QUrl(url), 2, True))
-            self.assertFalse(page.acceptNavigationRequest(QUrl("https://example.test/"), 2, True))
+            for url in ("https://www.mnmatlas.com.evil.test/", "http://www.mnmatlas.com/",
+                        "file:///private.txt", "https://user:password@www.mnmatlas.com/", "javascript:alert(1)"):
+                self.assertEqual(host.event(native.NAV_REQUEST, 0, url), 0)
+            self.assertEqual(host.event(native.NAV_REQUEST, 2, "https://example.test/redirect"), 0)
             opened.assert_not_called()
-            self.assertFalse(page.acceptNavigationRequest(QUrl("https://example.test/"), 1, True))
+            self.assertEqual(host.event(native.NAV_REQUEST, 1, "https://example.test/"), 0)
             opened.assert_called_once_with(QUrl("https://example.test/"))
-            self.assertTrue(page.acceptNavigationRequest(QUrl(atlas_url("Shaded Dunes")), 2, True))
-            self.assertEqual(page.chooseFiles(None, [], []), [])
+        host.ready()
+        host.finish()
+        self.assertEqual(host.event(native.NAV_REQUEST, 0, "about:blank"), 0)
+        view.deactivate()
+        self.assertEqual(host.event(native.NAV_REQUEST, 0, atlas_url("Shaded Dunes")), 0)
 
-    def test_target_blank_requires_user_action_and_open_full_removes_embed_only(self):
-        view = self.view()
-        view.activate("Night Harbor", "Fictional guardian")
-        view._page.finish()
+    def test_external_user_link_keeps_current_map_without_allowed_load_start(self):
+        view = self.loaded_view()
         with patch.object(atlas_view.QDesktopServices, "openUrl") as opened:
-            request = types.SimpleNamespace(isUserInitiated=lambda: False,
-                requestedUrl=lambda: QUrl("https://example.test/"))
-            view._new_window(request)
-            opened.assert_not_called()
-            request.isUserInitiated = lambda: True
-            view._new_window(request)
-            self.assertEqual(opened.call_count, 1)
-            view.open_button.click()
-            full = opened.call_args.args[0].toString()
-            self.assertNotIn("embed=", full)
-            self.assertIn("find=Fictional+guardian", full)
-
-    def test_external_clicked_link_keeps_existing_map_after_rejected_load(self):
-        view = self.view()
-        view.activate("Night Harbor")
-        view._page.finish()
-        view._page.loadStarted.emit()
-        with patch.object(atlas_view.QDesktopServices, "openUrl"):
-            view._page.acceptNavigationRequest(QUrl("https://example.test/"), 1, True)
-        view._page.loadFinished.emit(False)
-        self.assertEqual(view._stack.currentWidget(), view._browser)
+            self.assertEqual(view._native.event(native.NAV_REQUEST, 1, "https://example.test/"), 0)
+            opened.assert_called_once()
+        self.assertIs(view._stack.currentWidget(), view._browser)
         self.assertFalse(view._failed)
+        self.assertFalse(view._loading)
 
-    def test_fail_timeout_renderer_and_import_failure_offer_native_recovery(self):
-        view = self.view()
+    def test_new_window_requires_user_gesture_and_queues_atlas_navigation(self):
+        view = self.loaded_view()
+        host = view._native
+        with patch.object(atlas_view.QDesktopServices, "openUrl") as opened:
+            host.event(native.NEW_WINDOW, 0, "https://example.test/")
+            opened.assert_not_called()
+            host.event(native.NEW_WINDOW, 1, "https://example.test/")
+            opened.assert_called_once_with(QUrl("https://example.test/"))
+            count = len(host.navigations)
+            target = atlas_url("Shaded Dunes")
+            host.event(native.NEW_WINDOW, 1, target)
+            self.assertEqual(len(host.navigations), count)
+            self.app.processEvents()
+            self.assertEqual(host.navigations[-1], target)
+
+    def test_queued_atlas_new_window_does_nothing_after_hide(self):
+        view = self.loaded_view()
+        host = view._native
+        count = len(host.navigations)
+        host.event(native.NEW_WINDOW, 1, atlas_url("Shaded Dunes"))
+        view.deactivate()
+        self.app.processEvents()
+        self.assertEqual(len(host.navigations), count)
+
+    def test_open_full_retains_spa_location_and_removes_only_embed(self):
+        view = self.loaded_view()
+        current = atlas_url("Shaded Dunes", "Fictional guardian") + "&level=lower&x=120&z=2"
+        view._native.event(native.URL_CHANGED, 0, current)
+        with patch.object(atlas_view.QDesktopServices, "openUrl") as opened:
+            view.open_button.click()
+        full = opened.call_args.args[0].toString()
+        self.assertNotIn("embed=", full)
+        self.assertIn("find=Fictional+guardian", full)
+        self.assertIn("level=lower&x=120&z=2", full)
+        self.assertIn("/shaded-dunes/", full)
+
+    def test_failure_timeout_and_process_failure_offer_saved_map_recovery(self):
+        view = self.loaded_view()
+        host = view._native
         fallbacks = []
         view.fallback_requested.connect(lambda: fallbacks.append(True))
-        view.activate("Night Harbor")
-        view._page.finish(False)
+        view.focus_npc("Fictional guardian")
+        host.finish(ok=False)
         self.assertFalse(view.retry_button.isHidden())
-        self.assertEqual(view._stack.currentWidget(), view._notice)
+        self.assertIs(view._stack.currentWidget(), view._notice)
         view.retry_button.click()
-        self.assertEqual(len(view._page.calls), 2)
+        self.assertEqual(len(host.navigations), 3)
         view._timed_out()
-        self.assertTrue(view._browser.stopped)
+        self.assertIn(("suspend",), host.calls)
         self.assertIn("too long", view._message.text())
-        view._page.renderProcessTerminated.emit(None, -1)
+        host.event(native.PROCESS_FAILED, 1, "")
         self.assertIn("unexpectedly", view._message.text())
         view.saved_maps_button.click()
         self.assertEqual(fallbacks, [True])
-        broken = self.view()
-        with patch.object(broken, "_create_engine", side_effect=ImportError("missing DLL")):
-            broken.activate("Night Harbor")
-        self.assertEqual(broken._stack.currentWidget(), broken._notice)
-        self.assertFalse(broken.retry_button.isHidden())
 
-    def test_shutdown_is_idempotent_and_late_events_are_inert(self):
+    def test_missing_runtime_offers_only_explicit_microsoft_link_and_saved_maps(self):
+        view = self.view()
+        with patch.object(native, "NativeHost", side_effect=native.RuntimeUnavailable("Synthetic missing runtime")):
+            view.activate("Night Harbor")
+        self.assertIsNone(view._native)
+        self.assertFalse(view.runtime_button.isHidden())
+        self.assertIn("Microsoft WebView2", view._message.text())
+        self.assertFalse(view._timeout.isActive())
+        with patch.object(atlas_view.QDesktopServices, "openUrl") as opened:
+            view.runtime_button.click()
+        opened.assert_called_once_with(QUrl(atlas_view.WEBVIEW2_DOWNLOAD))
+
+    def test_failed_async_environment_retry_replaces_closed_host(self):
         view = self.view()
         view.activate("Night Harbor")
+        old = view._native
+        old.event(native.ERROR, -1, "Synthetic environment failure")
+        self.assertFalse(view._native_ready)
+        view.retry_button.click()
+        replacement = view._native
+        self.assertIsNot(old, replacement)
+        self.assertTrue(old.closed)
+        replacement.ready()
+        self.assertEqual(replacement.navigations, [atlas_url("Night Harbor")])
+
+    def test_ready_host_process_or_native_error_retry_creates_fresh_controller(self):
+        for event in (native.PROCESS_FAILED, native.ERROR):
+            with self.subTest(event=event):
+                view = self.loaded_view()
+                old = view._native
+                old.event(event, 0, "Synthetic browser failure")
+                self.assertFalse(view._native_ready)
+                view.retry_button.click()
+                replacement = view._native
+                self.assertIsNot(replacement, old)
+                self.assertTrue(old.closed)
+                replacement.ready()
+                self.assertEqual(replacement.navigations, [atlas_url("Night Harbor")])
+                replacement.finish()
+                self.assertIs(view._stack.currentWidget(), view._browser)
+
+    def test_parent_deletion_closes_host_without_explicit_shutdown(self):
+        view = self.loaded_view()
+        host = view._native
+        shiboken6.delete(view)
+        self.assertTrue(host.closed)
+        self.assertEqual(host.calls.count(("close",)), 1)
+        self.assertIsNone(host.callback)
+
+    def test_disconnected_runtime_during_hide_still_closes_and_can_reopen(self):
+        view = self.loaded_view()
+        host = view._native
+        with patch.object(host, "stop", side_effect=RuntimeError("Runtime already exited")):
+            view.deactivate()
+        self.assertTrue(host.closed)
+        self.assertIsNone(view._native)
+        view.activate("Night Harbor")
+        self.assertIsNot(view._native, host)
+        view._native.ready()
+        self.assertEqual(view._native.navigations, [atlas_url("Night Harbor")])
+
+    def test_shutdown_is_idempotent_and_late_native_events_are_inert(self):
+        view = self.loaded_view()
+        host = view._native
         view.shutdown()
         view.shutdown()
+        calls = list(host.calls)
         view.activate("Shaded Dunes")
         view.set_zone("Shaded Dunes")
         view.focus_npc("Fictional guardian")
-        view._load_finished(False)
-        view._renderer_terminated(None, 1)
-        self.assertIsNone(view._browser)
+        for event in (native.READY, native.LOAD_DONE, native.URL_CHANGED, native.PROCESS_FAILED, native.ERROR):
+            self.assertEqual(view._event(event, 1, atlas_url("Shaded Dunes")), 0)
+        self.assertEqual(host.calls, calls)
+        self.assertEqual(host.calls.count(("close",)), 1)
+        self.assertFalse(view._native_ready)
         self.assertFalse(view._timeout.isActive())
-
-
-class AtlasNoticeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        path = Path(__file__).resolve().parents[1] / "scripts" / "generate_legal_notices.py"
-        spec = importlib.util.spec_from_file_location("atlas_notice_generator", path)
-        cls.notices = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.notices)
-
-    def test_full_license_blocks_preserve_text_without_documentation_markup(self):
-        parser = self.notices._LicenseBlocks()
-        parser.feed('<html>Unrelated prose<pre class="cpp">Copyright Fictional\n'
-                    'Permission &amp;quot;example&amp;quot; &lt;holder&gt;\n</pre>'
-                    '<pre>Second license\n</pre>Footer</html>')
-        self.assertEqual(parser.blocks, ['Copyright Fictional\nPermission "example" <holder>\n',
-                                         'Second license\n'])
-
-    def test_committed_notice_manifest_and_chromium_component_coverage(self):
-        self.notices.verify_upstream()
-        data = (self.notices.DEST / "Qt-6.11.2-Chromium.txt").read_text(encoding="utf-8")
-        self.assertGreater(data.count("Source SHA-256:"), 120)
-        for component in ("boringssl", "webkit", "icu", "sqlite", "ffmpeg", "zlib"):
-            self.assertIn(component, data.lower())
-        self.assertIn("5170777d28bee1ce92cc693a0dbf2ad01492e5cf", data)
-
-    def test_refresh_rejects_changed_documentation_version_without_more_requests(self):
-        with patch.object(self.notices, "download", return_value=b"Qt 6.11.3") as fetched:
-            with self.assertRaisesRegex(RuntimeError, "version changed"):
-                self.notices.chromium_notices()
-        fetched.assert_called_once()
-
-
-class AtlasPackagingTests(unittest.TestCase):
-    def test_qml_payload_is_removed_but_required_native_quick_dependencies_survive(self):
-        path = Path(__file__).resolve().parents[1] / "mnmparser.spec"
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        wanted = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-                  and node.name in {"_keep", "_prune_qt_dlls"}]
-        context = {"Path": Path, "_DROP": ()}
-        exec(compile(ast.Module(body=wanted, type_ignores=[]), str(path), "exec"), context)
-        keep = context["_keep"]
-        for name in ("PySide6/qml/QtQuick3D/qquick3dplugin.dll", "PySide6/qml/QtQuick/Controls/qmldir",
-                     "PySide6/plugins/qmltooling/qmldbg_debugger.dll"):
-            self.assertFalse(keep((name, "fixture", "BINARY")))
-        entries = [(f"PySide6/{name}", name, "BINARY") for name in (
-            "QtWebEngineWidgets.pyd", "plugins/platforms/qwindows.dll", "Qt6Widgets.dll", "Qt6QuickWidgets.dll",
-            "Qt6Quick.dll", "Qt6Qml.dll", "Qt6Core.dll", "Qt6Gui.dll", "Qt6Quick3D.dll", "Qt6Graphs.dll")]
-        dependencies = {"QtWebEngineWidgets.pyd": ("Qt6Widgets.dll", "Qt6QuickWidgets.dll"),
-                        "Qt6QuickWidgets.dll": ("Qt6Quick.dll",), "Qt6Quick.dll": ("Qt6Qml.dll", "Qt6Core.dll"),
-                        "plugins/platforms/qwindows.dll": ("Qt6Gui.dll",), "Qt6Gui.dll": ("Qt6Core.dll",)}
-        context["get_imports"] = lambda path, **_kwargs: [(name, None) for name in dependencies.get(path, ())]
-        actual = [entry[1] for entry in context["_prune_qt_dlls"](entries)]
-        self.assertIn("Qt6QuickWidgets.dll", actual)
-        self.assertIn("Qt6Qml.dll", actual)
-        self.assertIn("Qt6Gui.dll", actual)
-        self.assertNotIn("Qt6Quick3D.dll", actual)
-        self.assertNotIn("Qt6Graphs.dll", actual)
 
 
 if __name__ == "__main__":

@@ -1322,8 +1322,6 @@ class App(QApplication):
     """
 
     def __init__(self, argv: Sequence[str]) -> None:
-        if QApplication.instance() is None:
-            QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
         super().__init__(list(argv))
         self.setApplicationName(APP_NAME)
         self.setApplicationDisplayName(window_title("application"))

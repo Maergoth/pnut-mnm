@@ -376,19 +376,24 @@ class AtlasMapIntegrationTests(unittest.TestCase):
         self.assertIs(window.header.parentWidget(), window)
         self.assertGreaterEqual(window._map_stack.geometry().top(), window.header.geometry().bottom())
 
-    def test_late_accepting_render_child_still_routes_inner_edge_resize(self):
+    def test_native_atlas_cannot_cover_outer_resize_band(self):
         window = self.window()
         window.set_zone("Night Harbor")
         window.set_source("atlas")
         self.show(window)
         render = self.render_child(window)
-        point = window.mapToGlobal(QPoint(3, 100))
-        self.assertTrue(render.rect().contains(render.mapFromGlobal(point)))
-        handle = Mock()
-        handle.startSystemResize.return_value = True
-        with patch.object(window, "windowHandle", return_value=handle):
-            self.mouse(render, QEvent.Type.MouseButtonPress, point)
-        handle.startSystemResize.assert_called_once_with(Qt.Edge.LeftEdge)
+        for local, edge in ((QPoint(3, 100), Qt.Edge.LeftEdge),
+                            (QPoint(window.width() - 3, 100), Qt.Edge.RightEdge),
+                            (QPoint(100, window.height() - 3), Qt.Edge.BottomEdge)):
+            with self.subTest(edge=edge):
+                point = window.mapToGlobal(local)
+                self.assertFalse(render.rect().contains(render.mapFromGlobal(point)))
+                self.assertIsNone(window.childAt(local))
+                handle = Mock()
+                handle.startSystemResize.return_value = True
+                with patch.object(window, "windowHandle", return_value=handle):
+                    self.mouse(window, QEvent.Type.MouseButtonPress, point)
+                handle.startSystemResize.assert_called_once_with(edge)
         self.assertEqual(render.presses, [])
 
     def test_alt_drag_crosses_render_child_while_locked_click_remains_ordinary(self):

@@ -766,6 +766,10 @@ visible while Atlas is selected. Atlas needs an internet connection; **Use saved
 returns to PNUT's cached image view if loading fails. Atlas notes persist locally in
 `atlas_cache/`. Map artwork and markers are provided by
 [MnM Atlas and the original map authors](https://www.mnmatlas.com/).
+The interactive view uses the shared Microsoft WebView2 Runtime, commonly already
+installed on Windows. If it is missing, PNUT offers Microsoft's download page or
+the saved-map fallback. PNUT's monster menu opens the consider panel and searches
+Atlas; Atlas's own markers open its own popups.
 
 Right-click a point on the displayed image and choose **Add label…** to save a name,
 notes and a preset icon. The icon stays visible; hover it to read the name and notes,

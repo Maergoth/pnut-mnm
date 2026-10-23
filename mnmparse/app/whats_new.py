@@ -28,6 +28,18 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.27": ReleaseNotes(
+        changes=(
+            "Choose MnM Atlas (online) from the map header's globe menu for interactive maps, floors, locations and search in Map or Zones.",
+            "PNUT's notable-NPC menu still opens the consider panel and also searches Atlas. Atlas markers open Atlas's own popups.",
+            "Saved maps and their image labels remain available. Atlas notes persist locally, with a saved-map fallback if loading fails.",
+            "Interactive maps use the shared Microsoft WebView2 runtime instead of bundling another browser. Missing-runtime users can keep using saved maps.",
+        ),
+        settings_label="Map settings",
+        settings_target="map_download_button",
+        feature_page="zones",
+        feature_label="Zones",
+    ),
     "1.0.26": ReleaseNotes(
         changes=(
             "Right-click a map to add a persistent label with a preset icon, name and notes. Hover the icon for details; right-click to edit or delete.",

@@ -47,18 +47,20 @@ or mirror its data. Local viewing/notes do not require a separate player login.
 Atlas's credits remain visible. **MnM Atlas and the original map authors** retain
 their attribution; its [source repository](https://github.com/ocombe/mnmatlas)
 documents source-map and third-party credits. Embedding the remote site does not
-grant redistribution rights to its code or dataset. PNUT bundles Qt WebEngine
-for the interactive view, increasing its download and installed size; the
-renderer starts only when Atlas is used. Build checks exercise an offline blank
-document and JavaScript in the delivered executable, without contacting Atlas.
+grant redistribution rights to its code or dataset. PNUT uses a small native
+adapter to the installed **Microsoft WebView2 Runtime**, rather than bundling
+Qt WebEngine/Chromium. The adapter is approximately 109 KB before ZIP compression;
+the renderer starts only when Atlas is used. Windows 11 includes the shared
+runtime and most Windows 10 machines already have it; PNUT checks availability
+and offers Microsoft's download page or saved maps if it is missing. See
+[Microsoft's distribution guide](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution).
 
-The local Windows candidate measures **237.3 MB compressed / 575.8 MB extracted**
-(226.3 / 549.1 MiB), compared with the current 1.0.26 release's 108.8 MB download.
-This includes 532 ZIP entries after removing unused QML/Quick3D/Graphs modules;
-the required native Quick/QML browser dependencies remain. Both the clean build
-and extracted ZIP passed the actual browser renderer/JavaScript startup check.
-CI's clean build may differ slightly in size. This candidate is not a published
-release or a version bump.
+The earlier self-contained Chromium prototype measured 237.3 MB compressed,
+compared with the 1.0.26 release's 108.8 MB download. It was not published. The
+WebView2 integration removes that bundled engine and its Qt dependencies. Build
+checks exercise the actual shared renderer and JavaScript in a hidden native
+window using a synthetic offline document, without contacting Atlas. The final
+clean release ZIP is measured and checked separately before publication.
 
 ## Which wiki better fits PNUT?
 

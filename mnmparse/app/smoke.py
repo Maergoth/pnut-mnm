@@ -37,57 +37,41 @@ WINDOWS_MODULES = (
 
 
 def _exercise_atlas(report: dict[str, Any], temporary_root: Path) -> None:
-    """Start the packaged renderer on a blank, network-blocked synthetic document."""
-    from PySide6.QtCore import QEventLoop, QTimer, QUrl
-    from PySide6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
-    from PySide6.QtWidgets import QApplication
+    """Exercise the native Windows renderer in its own hidden-window process."""
+    if sys.platform != "win32":
+        report["atlas"] = {"windows_renderer_skipped": True}
+        return
+    import subprocess
 
-    from mnmparse.app import atlas_view
-
-    class OfflineOnly(QWebEngineUrlRequestInterceptor):
-        def interceptRequest(self, info):
-            info.block(True)
-
-    view = atlas_view.AtlasView(storage_path=temporary_root / "atlas-smoke")
-    loop, timer = QEventLoop(), QTimer()
-    timer.setSingleShot(True)
-    timer.timeout.connect(loop.quit)
-    observed: list[Any] = []
-
-    def finish(value):
-        observed.append(value)
-        loop.quit()
-
-    def loaded(ok):
-        if not ok:
-            finish(None)
-            return
-        view._page.runJavaScript(
-            "(() => { document.body.textContent = 'PNUT Atlas renderer'; "
-            "return document.body.textContent + ':' + (6 * 7); })()", finish)
-
-    try:
-        # Exercise the production lazy import/profile/page boundary. A blank page
-        # is explicitly allowed by its navigation policy, without accessing Atlas.
-        view._create_engine()
-        page = view._page
-        interceptor = OfflineOnly(page)
-        page.profile().setUrlRequestInterceptor(interceptor)
-        page.loadFinished.connect(loaded)
-        page.setUrl(QUrl("about:blank"))
-        timer.start(8_000)
-        loop.exec()
-        if observed != ["PNUT Atlas renderer:42"]:
-            raise RuntimeError("Packaged Atlas renderer could not execute offline JavaScript")
-        report["atlas"] = {"renderer": True, "javascript": True, "network": False}
-    finally:
-        timer.stop()
-        view.shutdown()
-        view.deleteLater()
-        QApplication.instance().processEvents()
-        # Flush the profile before TemporaryDirectory removes its storage files.
-        if atlas_view._profiles is not None:
-            atlas_view._profiles._cleanup()
+    target = temporary_root / "atlas-renderer.json"
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command += ["-m", "mnmparse.app"]
+    command += ["--atlas-smoke", "--report", str(target), "--storage", str(temporary_root / "atlas-smoke")]
+    child = subprocess.run(command, capture_output=True, timeout=12,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+    result = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+    if child.returncode or not result.get("ok"):
+        raise RuntimeError("Packaged Atlas renderer failed: " + result.get("error", "No diagnostic report"))
+    report["atlas"] = {key: result[key] for key in ("renderer", "javascript", "network")}
+    # The shared runtime releases its profile files asynchronously after the
+    # last controller/process closes. Retire only this diagnostic's own folder.
+    import shutil
+    profile = (temporary_root / "atlas-smoke").resolve()
+    if profile.parent != temporary_root.resolve() or profile.is_symlink() or profile.is_junction():
+        raise RuntimeError("Unexpected Atlas diagnostic storage path")
+    for attempt in range(60):
+        try:
+            shutil.rmtree(profile)
+            break
+        except FileNotFoundError:
+            break
+        except OSError as exc:
+            # The broker may finish its final writes while retiring, producing
+            # either a sharing violation or a briefly nonempty directory.
+            if getattr(exc, "winerror", None) not in (5, 32, 145) or attempt == 59:
+                raise
+            time.sleep(0.05)
 
 
 def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
@@ -251,9 +235,6 @@ def _exercise(report: dict[str, Any]) -> None:
     # Assignment, rather than setdefault, prevents a developer's platform setting from
     # turning the unattended build check into a visible desktop application.
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    # This unattended renderer check has no display/GPU. Normal Atlas browsing
-    # retains Chromium's ordinary GPU and sandbox configuration.
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
     for name in QT_MODULES:
         full_name = f"PySide6.{name}"
         report["stage"] = f"import {full_name}"
@@ -293,8 +274,6 @@ def _exercise(report: dict[str, Any]) -> None:
             if main._IMPORT_ERRORS:
                 raise RuntimeError(f"Application imports failed: {main._IMPORT_ERRORS}")
             report["stage"] = "construct QApplication"
-            if QApplication.instance() is None:
-                QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
             app = QApplication.instance() or QApplication(["PNUT M&M smoke test"])
             app.setQuitOnLastWindowClosed(False)
             theme.apply_theme(app)

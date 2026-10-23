@@ -500,6 +500,10 @@ class MapOverlay(QWidget):
     def _layout_source(self) -> None:
         docked = self.embedded or self._source == "atlas"
         layout = self.layout()
+        # WebView2 is a native child surface. Keep the unlocked resize band
+        # outside that child so Windows mouse handling cannot swallow its edges.
+        margin = 5 if not self.embedded and self._source == "atlas" else 2
+        layout.setContentsMargins(margin, margin, margin, margin)
         if docked:
             if layout.indexOf(self.header) < 0:
                 layout.insertWidget(0, self.header)
