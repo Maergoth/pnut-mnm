@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -145,6 +145,26 @@ class StatCardTests(unittest.TestCase):
                 self.page.model.sort(coin_column, order)
                 self.assertEqual([entry["coin_looted"] for entry in self.page.model.records], raw)
                 self.assertEqual([self.page.model.index(row, coin_column).data() for row in range(3)], shown)
+
+    def test_repeated_public_notifications_keep_selection_and_skip_model_reset_but_restore_history(self):
+        entries = [sample(1), sample(2)]
+        restore = Mock()
+        self.page.ledger = SimpleNamespace(restore_history=restore)
+        with patch.object(self.page.model, "set_records", wraps=self.page.model.set_records) as reset:
+            self.page._records(entries, "Cached entries")
+            self.page.table.setCurrentIndex(self.page.model.index(1, 0))
+            selected_key = self.page.model.records[self.page.table.currentIndex().row()]["public_key"]
+            self.page._records([dict(entry) for entry in reversed(entries)], "Refreshed entries")
+            older = {**entries[0], "sequence": 0, "captured_at": "2026-10-21T14:00:00Z"}
+            history = [older, *entries]
+            self.page._records(history, "Refreshed history")
+            self.assertEqual(reset.call_count, 1)
+            restore.assert_called_with(history)
+            self.assertEqual(self.page.model.records[self.page.table.currentIndex().row()]["public_key"], selected_key)
+            # A changed payload must update its card and tooltip normally.
+            changed = [{**entries[0], "captured_at": "2026-10-23T14:00:00Z"}, entries[1]]
+            self.page._records(changed, "New update")
+            self.assertEqual(reset.call_count, 2)
 
     def test_paint_stacks_larger_alias_words_bold_and_gold(self):
         class RecordingPainter(QPainter):

@@ -6,3 +6,6 @@
   displays as **10s 50c**; 1,000,000 copper displays as **1p**.
 - Coin sorting continues to compare the complete value, so **9s** sorts below
   **10s 50c**. Existing captured totals retain their full value.
+- Ranks keeps the last complete identity and stat display while the screen reader
+  is busy. Values update when they change, with expired readings and capture
+  eligibility still reflected and Copy/Submit validated when clicked.

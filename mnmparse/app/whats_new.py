@@ -32,6 +32,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Leaderboard coin totals and copied stat blocks use compact platinum, gold, silver and copper: 1,050 copper displays as 10s 50c.",
             "Every denomination converts at 100 to 1, with zero parts omitted. Coin sorting still uses the total value.",
+            "Ranks keeps your anonymous name and stats steady while the screen reader is busy. Unchanged readings no longer redraw the page.",
         ),
         settings_label="Mini stat settings",
         settings_target="player_status_enabled",

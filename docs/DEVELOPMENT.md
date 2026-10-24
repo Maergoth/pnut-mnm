@@ -17,6 +17,13 @@ leaderboard counter/stat evidence only from its actual fresh WGC source; it neve
 from session totals, imports, demo data or alternate capture. Local Copy separately
 uses the fresh stat reader from either backend without producing a submission.
 
+Ranks reads `Engine.leaderboard_view` for one coherent status/stat pair under a
+single nonblocking engine lock. A busy `None` preserves the last complete display;
+a successful pair with no fresh stats clears the current reading. Eligibility is
+derived from that same reading, and Copy/Submit recheck live evidence when clicked.
+Identity changes invalidate the page's saved view. Avoid setting unchanged widget
+text/styles or resetting unchanged public records during status polling.
+
 `app/leaderboard_client.py` uses one bounded plain-Python daemon worker, a queue and a
 GUI-owned active-only polling timer. Opening the page reads the local cache;
 only explicit Refresh or Submit accesses the network. ACKs are delivered to the ledger
