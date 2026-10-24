@@ -82,7 +82,7 @@ class Event:
     estimated: bool = False  #: Dummy Fix: the number was unreadable; ``amount`` is the zone average
     estimated_ts: bool = False  #: tracker had to estimate when a delayed line was printed
     item: str | None = None  #: looted / crafted item name
-    copper: int | None = None  #: coin amount in copper (1 pp = 10 gp = 100 sp = 1000 cp)
+    copper: int | None = None  #: coin amount in copper (1 pp = 100 gp = 10,000 sp = 1,000,000 cp)
     split_copper: int | None = None  #: the viewer's share of a coin loot, in copper
 
 

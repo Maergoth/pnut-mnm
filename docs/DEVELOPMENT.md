@@ -17,6 +17,13 @@ leaderboard counter/stat evidence only from its actual fresh WGC source; it neve
 from session totals, imports, demo data or alternate capture. Local Copy separately
 uses the fresh stat reader from either backend without producing a submission.
 
+Ranks reads `Engine.leaderboard_view` for one coherent status/stat pair under a
+single nonblocking engine lock. A busy `None` preserves the last complete display;
+a successful pair with no fresh stats clears the current reading. Eligibility is
+derived from that same reading, and Copy/Submit recheck live evidence when clicked.
+Identity changes invalidate the page's saved view. Avoid setting unchanged widget
+text/styles or resetting unchanged public records during status polling.
+
 `app/leaderboard_client.py` uses one bounded plain-Python daemon worker, a queue and a
 GUI-owned active-only polling timer. Opening the page reads the local cache;
 only explicit Refresh or Submit accesses the network. ACKs are delivered to the ledger
@@ -33,6 +40,12 @@ uploads replace only that identity's prior rows. Keep unrelated history unchange
 Same-day retries still return the first accepted row, and stale ACKs cannot replace
 a newer displayed row. Keep complete validated cache history for identity recovery
 before selecting the visible rows. Backend publication is separate from a desktop release.
+
+`currency.format_coin` formats captured copper totals with 100-to-1 denominations
+and omitted zero parts. Session views, leaderboard cards/local summaries and copied
+stat blocks share it; `session.format_coin` remains available to existing callers.
+Display labels describe coin rather than copper-only values. Records and sorting
+continue using the original integer copper total, without changing the signed payload.
 
 The desktop defaults to the anonymous hosted Worker at
 `https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
@@ -243,6 +256,7 @@ mnmparse/            library + CLI
   stats.py           Encounter segmentation, per-actor table, OCR-noise name merge (canonical_names)
   interrupts.py      crowd-control registry (categories), cc.json loader, rank/tier matching
   session.py         SessionStats: loot, coin, crafting, party kills and deaths, CC totals, rates
+  currency.py        Compact p/g/s/c display of captured copper totals with 100-to-1 denominations
   session_rates.py   Rolling-hour activity rates, complete participant allocations and personal coin projections
   player_status.py   Anchored mini-stat OCR and original-color XP-bar estimates
   player_telemetry.py Own HP alert episodes and 30-second XP comparisons over a rolling hour

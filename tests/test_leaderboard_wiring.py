@@ -59,6 +59,7 @@ def probe(directory: str, selftest: bool):
         snapshot = make_snapshot({"max_health": 123, "max_mana": 50, "captured_at": utc_stamp(), "capture_backend": "window"},
                                  dict(personal_kills=2, personal_deaths=0, high_hit=100, coin_looted=1200), bytes([1]) * 32, 10)
         app.engine.leaderboard_status = lambda: {**snapshot, "eligible": True, "copy_eligible": True, "submitted_day": "", "error": ""}
+        app.engine.leaderboard_view = lambda: (app.engine.leaderboard_status(), snapshot)
         app.engine.leaderboard_submission = Mock(return_value=snapshot)
         app.engine.leaderboard_copy_text = lambda: clipboard_text(snapshot)
         app._read_area_gears.refresh = Mock()
@@ -73,7 +74,7 @@ def probe(directory: str, selftest: bool):
             app.engine.leaderboard_submission.assert_called_once_with(message="This **** is fun!")
         # The same live engine reading feeds current Copy and independent best-value Submit.
         # No network, capture source, installed profile or real game data is used.
-        for name in ("leaderboard_status", "leaderboard_submission", "leaderboard_copy_text"):
+        for name in ("leaderboard_status", "leaderboard_view", "leaderboard_submission", "leaderboard_copy_text"):
             delattr(app.engine, name)
         app.engine._source = object.__new__(WgcWindowSource)
         app.engine._state = "running"

@@ -344,8 +344,10 @@ all eight resists, alongside lifetime personal kills, deaths, highest hit and co
 looted. **Stat Total** adds STR, STA, AGI, DEX, INT, WIS and CHA; **Resist Total** adds
 Cold, Corruption, Disease, Electricity, Fire, Holy, Magic and Poison. Each total requires
 a complete reading of its group. Each total keeps its highest complete reading, independently
-of the individual stat records. Missing readings appear as —. Coin is shown in copper before party
-splitting. Session resets and imported logs do not change these totals. New totals are
+of the individual stat records. Missing readings appear as —. Coin is shown as the fewest
+platinum/gold/silver/copper coins before party splitting, with 100 of each lower coin
+making the next denomination. Zero parts are omitted: 1,050 copper displays as `10s 50c`.
+Session resets and imported logs do not change these totals. New totals are
 collected from live **Window Capture** only; desktop capture does not contribute.
 
 **Copy current** places the current anonymous summary on your clipboard and never submits it.

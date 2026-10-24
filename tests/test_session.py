@@ -82,6 +82,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(format_coin(0), "0c")
         self.assertEqual(format_coin(7), "7c")
         self.assertEqual(format_coin(234), "2s 34c")
+        self.assertEqual(format_coin(1_050), "10s 50c")
         self.assertEqual(format_coin(10_203), "1g 2s 3c")
         self.assertEqual(format_coin(1_020_304), "1p 2g 3s 4c")
         self.assertEqual(format_coin(2_000_000), "2p")

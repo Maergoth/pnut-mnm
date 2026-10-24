@@ -559,23 +559,42 @@ class Engine(QObject):
         if not self._lock.acquire(blocking=False):
             return {"eligible": False, "reason": "Waiting for the screen reader"}
         try:
-            ledger = self._protected_ledger
-            if ledger is None:
-                return {"eligible": False, "reason": "Leaderboard tracking is unavailable"}
-            eligible = self._leaderboard_capture_eligible()
-            ledger.set_capture_eligible(eligible)
-            result = ledger.status()
-            fresh = self.player_stat_snapshot() is not None
-            result["eligible"] = bool(result.get("eligible") and eligible and fresh)
-            from mnmparse.capture import MssRegionSource, WgcWindowSource
-            result["copy_eligible"] = bool(fresh and not result.get("error")
-                                          and isinstance(self._source, (MssRegionSource, WgcWindowSource)))
-            result["reason"] = (result.get("error") or
-                                ("Leaderboard submission requires Window Capture" if self._cfg.capture_backend != "wgc"
-                                 else "Read current mini stats using Window Capture" if not result["eligible"] else ""))
-            return result
+            return self._leaderboard_status_locked(self.player_stat_snapshot())
         finally:
             self._lock.release()
+
+    def leaderboard_view(self) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
+        """Return one coherent Ranks view, or None while the reader holds the lock.
+
+        A complete view can contain no fresh stats. The distinct busy result lets
+        the UI retain its previous view without hiding a real expiry or error.
+        Copy and Submit continue to validate current capture evidence on click.
+        """
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            stats = self.player_stat_snapshot() if self._protected_ledger is not None else None
+            return self._leaderboard_status_locked(stats), stats
+        finally:
+            self._lock.release()
+
+    def _leaderboard_status_locked(self, stats: dict[str, Any] | None) -> dict[str, Any]:
+        """Build status under the engine lock using the view's freshness check."""
+        ledger = self._protected_ledger
+        if ledger is None:
+            return {"eligible": False, "reason": "Leaderboard tracking is unavailable"}
+        eligible = self._leaderboard_capture_eligible()
+        ledger.set_capture_eligible(eligible)
+        result = ledger.status()
+        fresh = stats is not None
+        result["eligible"] = bool(result.get("eligible") and eligible and fresh)
+        from mnmparse.capture import MssRegionSource, WgcWindowSource
+        result["copy_eligible"] = bool(fresh and not result.get("error")
+                                      and isinstance(self._source, (MssRegionSource, WgcWindowSource)))
+        result["reason"] = (result.get("error") or
+                            ("Leaderboard submission requires Window Capture" if self._cfg.capture_backend != "wgc"
+                             else "Read current mini stats using Window Capture" if not result["eligible"] else ""))
+        return result
 
     def leaderboard_copy_text(self) -> str:
         if not self._lock.acquire(blocking=False):
