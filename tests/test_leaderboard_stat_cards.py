@@ -23,7 +23,7 @@ from mnmparse.leaderboard import COUNTERS, MAX_NUMBER
 def sample(number, **changes):
     fields = {field: number + offset for offset, field in enumerate(field for row in RECORD_ROWS for field in row)}
     return {**fields, "alias": "Fictional Amber Finch", "public_key": str(number),
-            "submission_id": str(number), "captured_at": "2026-10-22T14:00:00Z", **changes}
+            "submission_id": str(number), "sequence": 1, "captured_at": "2026-10-22T14:00:00Z", **changes}
 
 
 class StatCardTests(unittest.TestCase):
@@ -62,7 +62,8 @@ class StatCardTests(unittest.TestCase):
     def test_every_numeric_sort_keeps_legacy_missing_last_and_cards_intact(self):
         model = LeaderboardModel()
         fields = [field for row in RECORD_ROWS for field in row]
-        legacy = {"alias": "Legacy Gray Owl", "public_key": "legacy", "submission_id": "legacy"}
+        legacy = {"alias": "Legacy Gray Owl", "public_key": "legacy", "submission_id": "legacy",
+                  "sequence": 1, "captured_at": "2026-10-21T14:00:00Z"}
         for field in fields:
             with self.subTest(field=field):
                 model.set_records([legacy, sample(1, **{field: 100}), sample(2, **{field: -9})])

@@ -257,7 +257,7 @@ class PageTests(unittest.TestCase):
     def test_numeric_and_timestamp_sort_use_values(self):
         model = LeaderboardModel()
         entries = [dict(self.snapshot, high_hit=9, captured_at="2026-10-20T23:00:00Z"),
-                   dict(self.snapshot, high_hit=100, captured_at="2026-10-21T01:00:00Z")]
+                   dict(record(key=2), high_hit=100, captured_at="2026-10-21T01:00:00Z")]
         model.set_records(entries)
         model.sort(5, Qt.SortOrder.DescendingOrder)
         self.assertEqual([entry["high_hit"] for entry in model.records], [100, 9])

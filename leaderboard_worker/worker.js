@@ -293,12 +293,15 @@ class GitHubStore {
           throw new InvalidSnapshot("Cumulative values cannot decrease");
         }
       }
-      if (records.length >= MAX_RECORDS) throw new StorageError("Storage capacity reached");
-      const bytes = encoder.encode([...records, record].map((row) => JSON.stringify(row) + "\n").join(""));
+      // Only this identity's signatures and rollback floors were checked
+      // above. Preserve unrelated signed history until its owner updates it.
+      const updated = [...records.filter((previous) => previous.public_key !== record.public_key), record];
+      if (updated.length > MAX_RECORDS) throw new StorageError("Storage capacity reached");
+      const bytes = encoder.encode(updated.map((row) => JSON.stringify(row) + "\n").join(""));
       if (bytes.length > MAX_FILE_BYTES) throw new StorageError("Storage capacity reached");
       const contentSha = await blobSha(bytes, this.subtle);
       try {
-        const result = await this.request("PUT", CONTENTS_URL, { branch: BRANCH, message: "Add anonymous leaderboard snapshot",
+        const result = await this.request("PUT", CONTENTS_URL, { branch: BRANCH, message: "Update anonymous leaderboard snapshot",
           content: encodeBase64(bytes), ...(sha === null ? {} : { sha }) });
         if (!result.content || result.content.sha !== contentSha) throw new StorageError("Save was not confirmed");
         return { snapshot: record, created: true };

@@ -25,6 +25,15 @@ fresh readings with the same identity/UTC-day submission ID. Shutdown discards
 late completions without a worker-owned QObject. The public cache is stored beside the
 selected config in `leaderboard-cache.bin`; local counters use `leaderboard-state.bin`.
 
+Public leaderboard rows belong to the stable anonymous public key, rather than the
+daily submission ID or display alias. Validate full signed history before selecting
+`latest_records` for display; retain the original latest payload, ordered by
+sequence then timestamp. After daily idempotency and all prior rollback checks,
+uploads replace only that identity's prior rows. Keep unrelated history unchanged.
+Same-day retries still return the first accepted row, and stale ACKs cannot replace
+a newer displayed row. Keep complete validated cache history for identity recovery
+before selecting the visible rows. Backend publication is separate from a desktop release.
+
 The desktop defaults to the anonymous hosted Worker at
 `https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
 `leaderboard_worker`; the public JSONL is on the `leaderboard-data` branch. The Worker
@@ -91,6 +100,12 @@ run outside the engine lock; a closed but still-running native reader remains ow
 so repeated restarts cannot accumulate threads. Shared-crop stat detection remains
 inline before chat-row filtering. Diagnostics keep chat and stat OCR timings separate
 and never retain the separate stat OCR rows or leaderboard attributes.
+
+XP fills share one horizontal denominator. Scaled bars can connect their beveled
+frame to the detected track; paired neutral outer rails identify a bounded common
+interior for both gold and blue fills. Keep the bucket-agreement tolerance unchanged.
+Do not normalize either fill independently or mistake internal divider ticks for
+the outer edges. The scaled-bar fixture retains only the framed track.
 
 Map labels belong to canonical original image URLs, independently of zone names.
 `map_labels.py` stores each UUID in its own `map_labels/` QSettings entry; shared

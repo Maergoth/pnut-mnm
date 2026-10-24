@@ -166,12 +166,16 @@ class GitHubStore:
             if any(record[field] < existing[field] for existing in prior for field in CUMULATIVE_FIELDS):
                 raise ValueError("Cumulative snapshot values cannot decrease")
             try:
-                content = dump_records(records + [record]).encode("utf-8")
+                # Only this identity's rollback floors were checked above.
+                # Preserve unrelated history until its owner next updates it.
+                content = dump_records(
+                    [existing for existing in records if existing["public_key"] != record["public_key"]] + [record]
+                ).encode("utf-8")
             except ValueError:
                 raise StorageError("Leaderboard capacity has been reached") from None
             payload = {
                 "branch": BRANCH,
-                "message": "Add anonymous leaderboard snapshot",
+                "message": "Update anonymous leaderboard snapshot",
                 "content": base64.b64encode(content).decode("ascii"),
             }
             if sha is not None:

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBox
 
 from mnmparse.app import theme
 from mnmparse.app.widgets import FlowLayout
+from mnmparse.leaderboard import latest_records
 from mnmparse.leaderboard_messages import MAX_MESSAGE_CHARS, normalize_message
 COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "Max Mana"),
            ("personal_kills", "Kills"), ("personal_deaths", "Deaths"), ("high_hit", "Highest hit"),
@@ -122,7 +123,7 @@ class LeaderboardModel(QAbstractTableModel):
 
     def set_records(self, records):
         self.beginResetModel()
-        self.records = list(records)
+        self.records = latest_records(records)
         self._sort()
         self.endResetModel()
 
@@ -207,6 +208,7 @@ class LeaderboardPage(QWidget):
         self.engine, self.ledger, self.client = engine, None, None
         self._demo = self._loaded = False
         self._status = {}
+        self._records_history = []
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(8)
@@ -214,7 +216,8 @@ class LeaderboardPage(QWidget):
         title.setObjectName("Heading")
         root.addWidget(title)
         intro = QLabel("Copy your current mini stats locally. Submit your personal best stats and lifetime personal "
-                       "totals to the anonymous public leaderboard once per UTC day.")
+                       "totals to the anonymous public leaderboard once per UTC day. "
+                       "Each new day's submission replaces your previous entry.")
         intro.setWordWrap(True)
         root.addWidget(intro)
         identity = QHBoxLayout()
@@ -451,15 +454,18 @@ class LeaderboardPage(QWidget):
             self._loaded = True
 
     def _records(self, records, message):
-        self.model.set_records(records)
+        # Recovery needs every validated signed row, including older counter
+        # floors and schema-3 bests. Only the public view selects one per key.
+        self._records_history = list(records)
+        self.model.set_records(self._records_history)
         self._restore_history()
-        self.message.setText(f"{message} · {len(records):,} daily snapshots")
+        self.message.setText(f"{message} · {self.model.rowCount():,} entries")
 
     def _restore_history(self):
         restore = getattr(self.ledger, "restore_history", None)
         if callable(restore):
             try:
-                restore(self.model.records)
+                restore(self._records_history)
             except (ValueError, OSError):
                 self.message.setText("Stats history is unavailable.")
         self.refresh_status()

@@ -96,7 +96,7 @@ class StatSchemaTests(unittest.TestCase):
         self.assertEqual(GitHubStore("fixture", opener=fake).append(next_day), (next_day, True))
         old_client = signed(observation("2026-10-24T14:00:00Z"), legacy=True, sequence=3)
         self.assertEqual(GitHubStore("fixture", opener=fake).append(old_client), (old_client, True))
-        self.assertEqual(model.parse_records(fake.data.decode(), strict=True), [legacy, next_day, old_client])
+        self.assertEqual(model.parse_records(fake.data.decode(), strict=True), [old_client])
 
     def test_personal_best_schema_preserves_totals_instead_of_summing_individual_records(self):
         values = {**observation(), "strength": 100, "stamina": 100, "resist_cold": 100,

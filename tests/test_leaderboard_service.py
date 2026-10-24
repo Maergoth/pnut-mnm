@@ -221,7 +221,7 @@ class GitHubStoreTests(unittest.TestCase):
         fake = FakeGitHub([old])
         incoming = snapshot(sequence=8, personal_kills=5, max_health=300)
         self.assertEqual(self.store(fake).append(incoming), (incoming, True))
-        self.assertEqual(len(leaderboard.parse_records(fake.data.decode(), strict=True)), 2)
+        self.assertEqual(leaderboard.parse_records(fake.data.decode(), strict=True), [incoming])
 
     def test_history_limits_are_per_key_and_daily_duplicate_keeps_original_even_if_newer(self):
         old = snapshot(at=NOW - timedelta(days=1), sequence=7, personal_kills=100)

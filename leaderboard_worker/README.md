@@ -1,6 +1,6 @@
 # Leaderboard upload Worker
 
-This optional Worker adapter supports the desktop's anonymous daily leaderboard submissions without a player sign-in. Copy remains local; Submit publishes a daily record. It serves JSON at `GET /health` and `POST /snapshots`. The health route checks that the Worker is running; it does not confirm that publication is available.
+This optional Worker adapter supports the desktop's anonymous daily leaderboard submissions without a player sign-in. Copy remains local; an accepted new-day Submit replaces that identity's previous public rows. Same-day retries keep the original accepted update. It serves JSON at `GET /health` and `POST /snapshots`. The health route checks that the Worker is running; it does not confirm that publication is available. Publishing this source change to the hosted service is separate from a desktop release.
 
 The trial is deployed through Sites on Cloudflare Workers at [the service health endpoint](https://pnut-leaderboard-upload.maergoth.chatgpt.site/health). PNUT submits to `/snapshots` without an external sign-in. An actual desktop-client probe confirmed a new GitHub record, a duplicate retry returning the original record, and a public read; the synthetic entry was then removed. The initial submit took 1.21 seconds and its retry 0.48 seconds from the test machine. These are observed round trips, not latency guarantees.
 

@@ -351,6 +351,8 @@ collected from live **Window Capture** only; desktop capture does not contribute
 **Copy current** places the current anonymous summary on your clipboard and never submits it.
 It works with a fresh mini-stat reading from either capture backend. **Submit personal bests** publishes
 one anonymous snapshot per UTC day and requires a fresh reading from **Window Capture**.
+Each new day's submission replaces your existing anonymous entry. Older daily entries
+for that same identity are shown as one entry using the latest accepted update.
 The same separate Copy and Submit icons appear beside the mini-stat read area while
 hovering. Submissions run in the background through the hosted service without an
 external sign-in. If the service is unavailable, your local totals remain available to retry.
@@ -379,7 +381,8 @@ is never saved or uploaded.
 Session estimates **XP/hour** by comparing stable bar readings about 30 seconds apart.
 Orange/yellow intervals represent 20% and the thin blue sub-bar refines progress within an interval.
 The reader supports the fill animation's darker shades; small detection jitter and briefly
-missing stat frames do not restart a comparison.
+missing stat frames do not restart a comparison. Scaled bar frames are excluded from
+the fill measurements.
 The footer uses a time-weighted rolling average of the last **hour**, starting with
 the first gaining interval so earlier idle time does not dilute it. Breaks after gains lower
 the estimate; after an hour without gains, the next gaining interval starts a fresh rate.
