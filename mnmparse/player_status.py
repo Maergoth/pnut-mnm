@@ -437,9 +437,43 @@ def _prefix_fraction(mask: np.ndarray) -> float | None:
     return (last + 1) / width
 
 
+def _xp_horizontal_interior(track: np.ndarray) -> np.ndarray:
+    """Exclude paired vertical bevels from the common yellow/blue denominator.
+
+    Some UI scales connect the outer black frame to the detected track. Its
+    neutral side rails then add padding to both measurements. Require a rail
+    at each outer edge, and trim only a small shared border; interior divider
+    marks and a single uncertain edge cannot redefine the track's width.
+    """
+    height, width = track.shape[:2]
+    edge = min(height // 2, round(width * .04))
+    if edge < 2:
+        return track
+    body = track[max(1, height // 5):max(2, height * 4 // 5)]
+    hsv = cv2.cvtColor(np.ascontiguousarray(body), cv2.COLOR_BGR2HSV)
+    neutral = ((hsv[:, :, 1] <= 45) & (hsv[:, :, 2] >= 35)).mean(axis=0) >= .8
+
+    def rails(profile: np.ndarray) -> list[tuple[int, int]]:
+        edges = np.diff(np.r_[False, profile, False].astype(np.int8))
+        return [(int(start), int(stop)) for start, stop in
+                zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1))
+                if stop - start >= 2]
+
+    left_rails, right_rails = rails(neutral[:edge]), rails(neutral[-edge:])
+    if (not left_rails or not right_rails or left_rails[-1][1] == edge
+            or right_rails[0][0] == 0):
+        return track
+    left = left_rails[-1][1]
+    right = width - edge + right_rails[0][0]
+    if right - left < max(40, width * .9):
+        return track
+    return track[:, left:right]
+
+
 def _read_xp(image: np.ndarray, rect: Rect) -> tuple[float, float] | None:
     left, top, right, bottom = rect
-    gold, blue, dark = _colors(image[top:bottom, left:right])
+    track = _xp_horizontal_interior(image[top:bottom, left:right])
+    gold, blue, dark = _colors(track)
     height, width = gold.shape
     blue_rows = np.flatnonzero(blue.sum(axis=1) > 0)
     if len(blue_rows):

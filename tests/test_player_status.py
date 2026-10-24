@@ -1,7 +1,7 @@
 """Anchored local health and pixel-based dual-scale XP recognition."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 import unittest
 from unittest.mock import Mock
@@ -172,6 +172,54 @@ class PlayerStatusTests(unittest.TestCase):
                 self.assertAlmostEqual(reading.xp_resolution_points, 20 / 241)
                 readings.append(reading.xp_percent)
         self.assertEqual(len(set(readings)), 1, "Animation must not change the measured bar position")
+
+    def test_scaled_live_bevel_uses_one_interior_width_for_both_xp_tracks(self):
+        # Only the framed XP track is retained: no stat labels, values or chat.
+        track = cv2.imread(str(Path(__file__).parent / "fixtures" / "xp-scaled-bevel-bar.png"))
+        self.assertIsNotNone(track)
+        self.assertEqual(track.shape, (48, 396, 3))
+        image = np.full((290, 448, 3), 90, dtype=np.uint8)
+        image[188:236, 20:416] = track
+        # This UI scale has larger stat-label anchors and a wider bevel.
+        lines = [replace(line, h=18) for line in panel()]
+        before = image.copy()
+        reading = read_player_status(lines, image, xp_bar_confirmed=True)
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.xp_bar_rect, (28, 196, 412, 227))
+        # The outer detection is 384 pixels wide; the shared interior is 370.
+        # An internal neutral divider must not truncate that interior.
+        self.assertAlmostEqual(reading.xp_percent, 67.1351351351, places=6)
+        self.assertAlmostEqual(reading.xp_resolution_points, 20 / 370)
+        np.testing.assert_array_equal(image, before)
+
+    def test_scaled_live_bevel_still_rejects_disagreeing_blue_refinement(self):
+        track = cv2.imread(str(Path(__file__).parent / "fixtures" / "xp-scaled-bevel-bar.png"))
+        image = np.full((290, 448, 3), 90, dtype=np.uint8)
+        image[188:236, 20:416] = track
+        # Keep both bevels and the yellow fill. Change only the thin blue
+        # refinement to disagree with the coarse track by several percent.
+        image[222:225, 32:402] = 8
+        image[222:225, 32:208] = (255, 80, 0)
+        reading = read_player_status([replace(line, h=18) for line in panel()], image,
+                                     xp_bar_rect=(28, 196, 412, 227))
+        self.assertIsNotNone(reading)
+        self.assertIsNone(reading.xp_percent)
+
+    def test_bevel_normalization_requires_two_bounded_outer_rails(self):
+        from mnmparse.player_status import _xp_horizontal_interior
+
+        for kind in ("none", "left only", "right only", "interior dividers", "too wide"):
+            with self.subTest(kind=kind):
+                track = np.full((30, 384, 3), 8, dtype=np.uint8)
+                if kind == "left only":
+                    track[:, 1:4] = 90
+                elif kind == "right only":
+                    track[:, 374:376] = 90
+                elif kind == "interior dividers":
+                    track[:, 74:78] = track[:, 302:306] = 90
+                elif kind == "too wide":
+                    track[:, :20] = track[:, -20:] = 90
+                self.assertIs(_xp_horizontal_interior(track), track)
 
     def test_orange_text_below_weight_is_not_an_xp_track(self):
         image = np.full((260, 400, 3), 90, dtype=np.uint8)

@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
-import { webcrypto } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign, webcrypto } from "node:crypto";
 import { ADJECTIVES, COLORS, ANIMALS } from "../words.js";
 import { API_ROOT, BRANCH, CONTENTS_URL, MAX_FILE_BYTES, MAX_REQUEST_BYTES,
   canonicalJson, createWorker, normalizeMessage, parseSnapshotJson, validateSnapshot } from "../worker.js";
@@ -22,6 +22,19 @@ function setup(records = [], now = NOW) {
   const github = new FakeGitHub(records);
   const worker = createWorker({ fetchImpl: github.fetch, now: () => now, subtle: webcrypto.subtle });
   return { github, worker, post: (record = R.current) => worker.fetch(request(record), environment) };
+}
+
+function signedRecord(seed, day, sequence, alias, changes = {}) {
+  const privateKey = createPrivateKey({ format: "der", type: "pkcs8",
+    key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.from(seed, "hex")]) });
+  const publicKey = createPublicKey(privateKey).export({ format: "der", type: "spki" }).subarray(-32);
+  const captured_at = `2026-10-${day}T14:00:00Z`;
+  const submission_id = createHash("sha256").update(publicKey).update(":" + captured_at.slice(0, 10))
+    .digest("hex").slice(0, 32);
+  const record = { ...R.current, ...changes, public_key: publicKey.toString("hex"),
+    captured_at, submission_id, sequence, alias };
+  record.signature = sign(null, Buffer.from(canonicalJson(record)), privateKey).toString("hex");
+  return record;
 }
 
 test("curated words and canonical signed bytes exactly match Python fixtures", async () => {
@@ -59,8 +72,61 @@ test("same UTC-day ID returns original signed row without replacing newer values
 });
 
 test("new day accepts increasing sequence and unchanged cumulative fields", async () => {
-  const { post } = setup([R.previous]);
+  const { github, post } = setup([R.older, R.other, R.previous]);
   assert.equal((await post()).status, 201);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [R.other, R.current]);
+});
+
+test("identity upsert preserves separate signed keys with the same anonymous alias", async () => {
+  const firstSeed = "8bcbb4c131df56f7c79066016241cc4bdf4e58db55c4f674e88b22365bd2e2ad";
+  const secondSeed = "0bba869d7f392cbcaca6b8935ddc7fc3a8c50846d884959333fb7da475957511";
+  const first = signedRecord(firstSeed, 21, 1, "Noble Beige Mantis");
+  const second = signedRecord(secondSeed, 21, 1, "Noble Beige Mantis");
+  const updated = signedRecord(firstSeed, 22, 2, "Noble Beige Mantis");
+  assert.notEqual(first.public_key, second.public_key);
+  assert.deepEqual(await validateSnapshot(first), first);
+  assert.deepEqual(await validateSnapshot(second), second);
+  const { github, post } = setup([first, second]);
+  assert.equal((await post(updated)).status, 201);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [second, updated]);
+});
+
+test("all historical rollback floors are checked before daily rows are compacted", async () => {
+  const seed = "01".repeat(32);
+  const old = signedRecord(seed, 20, 8, R.current.alias, { personal_kills: 100 });
+  const previous = signedRecord(seed, 21, 9, R.current.alias, { personal_kills: 10 });
+  const { github, post } = setup([old, previous]);
+  assert.equal((await post()).status, 400);
+  assert.equal(github.puts, 0);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [old, previous]);
+});
+
+test("unrelated publication cannot erase another identity's historical counter floor", async () => {
+  const seed = "01".repeat(32);
+  const old = signedRecord(seed, 20, 8, R.current.alias, { personal_kills: 100 });
+  const previous = signedRecord(seed, 21, 9, R.current.alias, { personal_kills: 10 });
+  const { github, post } = setup([old, previous]);
+  assert.equal((await post(R.other)).status, 201);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [old, previous, R.other]);
+  assert.equal((await post()).status, 400);
+  assert.equal(github.puts, 1);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [old, previous, R.other]);
+});
+
+test("updating an identity at record capacity does not require another slot", async () => {
+  // Lower only the record bound in an isolated module instance; signature,
+  // storage and publication code remain the real implementation.
+  const source = readFileSync(resolve(root, "worker.js"), "utf8");
+  const words = readFileSync(resolve(root, "words.js"), "utf8");
+  const entry = 'import { ADJECTIVES, COLORS, ANIMALS } from "./words.js";';
+  const limit = "export const MAX_RECORDS = 30_000;";
+  assert.ok(source.startsWith(entry) && source.includes(limit));
+  const moduleSource = words + "\n" + source.slice(entry.length).replace(limit, "export const MAX_RECORDS = 2;");
+  const bounded = await import("data:text/javascript;base64," + Buffer.from(moduleSource).toString("base64"));
+  const github = new FakeGitHub([R.previous, R.other]);
+  const worker = bounded.createWorker({ fetchImpl: github.fetch, now: () => NOW, subtle: webcrypto.subtle });
+  assert.equal((await worker.fetch(request(R.current), environment)).status, 201);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [R.other, R.current]);
 });
 
 test("v2 readings and legacy history coexist without changing old signed rows or daily caps", async () => {
@@ -72,7 +138,7 @@ test("v2 readings and legacy history coexist without changing old signed rows or
   const upgraded = setup([R.previous, R.other]);
   assert.equal((await upgraded.post(R.v2_current)).status, 201);
   assert.deepEqual(upgraded.github.bytes.toString().trim().split("\n").map(JSON.parse),
-    [R.previous, R.other, R.v2_current]);
+    [R.other, R.v2_current]);
   const oldClient = setup([R.v2_previous]);
   assert.equal((await oldClient.post(R.current)).status, 201);
 });
@@ -160,7 +226,7 @@ test("optimistic conflict retry preserves concurrent rows and rechecks rollback"
   github.conflicts.push((fake) => { fake.bytes = history([R.older, R.other]); });
   assert.equal((await post()).status, 201);
   assert.equal(github.puts, 2);
-  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [R.older, R.other, R.current]);
+  assert.deepEqual(github.bytes.toString().trim().split("\n").map(JSON.parse), [R.other, R.current]);
   const second = setup([R.older]);
   second.github.conflicts.push((fake) => { fake.bytes = history([R.older, R.previous]); });
   assert.equal((await second.post(R.equal_sequence)).status, 400);

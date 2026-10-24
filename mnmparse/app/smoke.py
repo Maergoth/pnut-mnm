@@ -148,7 +148,8 @@ def _exercise_leaderboard(report: dict[str, Any], temporary_root: Path) -> None:
     model = LeaderboardModel()
     # Presentation records are intentionally synthetic: a lexicographic sort
     # would put 9 ahead of 100 and fail this native-widget check.
-    model.set_records([dict(record, high_hit=9), dict(record, high_hit=100)])
+    model.set_records([dict(record, public_key="presentation-a", high_hit=9),
+                       dict(record, public_key="presentation-b", high_hit=100)])
     model.sort(5, Qt.SortOrder.DescendingOrder)
     if [entry["high_hit"] for entry in model.records] != [100, 9]:
         raise RuntimeError("Packaged leaderboard numeric sorting failed")

@@ -242,6 +242,23 @@ def parse_records(text: str, *, strict: bool = False) -> list[dict[str, Any]]:
     return result
 
 
+def latest_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Select one original, already validated signed row per anonymous key.
+
+    Sequence orders an identity's accepted updates; timestamp breaks ties in
+    legacy files. Names are display labels and can collide across identities.
+    Keep the complete signed payload, rather than combining unrelated fields.
+    Security/recovery callers must validate the complete history first.
+    """
+    selected: dict[str, dict[str, Any]] = {}
+    for record in records:
+        key = record["public_key"]
+        previous = selected.get(key)
+        if previous is None or (record["sequence"], record["captured_at"]) > (previous["sequence"], previous["captured_at"]):
+            selected[key] = record
+    return list(selected.values())
+
+
 def dump_records(records: list[dict[str, Any]]) -> str:
     if len(records) > MAX_RECORDS:
         raise ValueError("Too many leaderboard records")
