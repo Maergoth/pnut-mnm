@@ -34,6 +34,12 @@ Same-day retries still return the first accepted row, and stale ACKs cannot repl
 a newer displayed row. Keep complete validated cache history for identity recovery
 before selecting the visible rows. Backend publication is separate from a desktop release.
 
+`currency.format_coin` formats captured copper totals with 100-to-1 denominations
+and omitted zero parts. Session views, leaderboard cards/local summaries and copied
+stat blocks share it; `session.format_coin` remains available to existing callers.
+Display labels describe coin rather than copper-only values. Records and sorting
+continue using the original integer copper total, without changing the signed payload.
+
 The desktop defaults to the anonymous hosted Worker at
 `https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
 `leaderboard_worker`; the public JSONL is on the `leaderboard-data` branch. The Worker
@@ -243,6 +249,7 @@ mnmparse/            library + CLI
   stats.py           Encounter segmentation, per-actor table, OCR-noise name merge (canonical_names)
   interrupts.py      crowd-control registry (categories), cc.json loader, rank/tier matching
   session.py         SessionStats: loot, coin, crafting, party kills and deaths, CC totals, rates
+  currency.py        Compact p/g/s/c display of captured copper totals with 100-to-1 denominations
   session_rates.py   Rolling-hour activity rates, complete participant allocations and personal coin projections
   player_status.py   Anchored mini-stat OCR and original-color XP-bar estimates
   player_telemetry.py Own HP alert episodes and 30-second XP comparisons over a rolling hour

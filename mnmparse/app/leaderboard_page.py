@@ -12,11 +12,12 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBox
 
 from mnmparse.app import theme
 from mnmparse.app.widgets import FlowLayout
+from mnmparse.currency import format_coin
 from mnmparse.leaderboard import latest_records
 from mnmparse.leaderboard_messages import MAX_MESSAGE_CHARS, normalize_message
 COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "Max Mana"),
            ("personal_kills", "Kills"), ("personal_deaths", "Deaths"), ("high_hit", "Highest hit"),
-           ("coin_looted", "Coin (copper)"), ("captured_at", "Captured (UTC)"),
+           ("coin_looted", "Coin looted"), ("captured_at", "Captured (UTC)"),
            ("strength", "STR"), ("stamina", "STA"), ("agility", "AGI"), ("dexterity", "DEX"),
            ("intelligence", "INT"), ("wisdom", "WIS"), ("charisma", "CHA"), ("armor_class", "AC"),
            ("resist_cold", "Cold"), ("resist_corruption", "Corruption"), ("resist_disease", "Disease"),
@@ -25,7 +26,7 @@ COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "
            ("stat_total", "Stat Total"), ("resist_total", "Resist Total"))
 LABELS = dict(COLUMNS)
 DEFAULT_SORT_COLUMN = next(column for column, (field, _label) in enumerate(COLUMNS) if field == "stat_total")
-CARD_LABELS = {**LABELS, "max_health": "HP", "max_mana": "Mana", "coin_looted": "Copper",
+CARD_LABELS = {**LABELS, "max_health": "HP", "max_mana": "Mana", "coin_looted": "Coin",
                "resist_corruption": "Corr", "resist_disease": "Dis", "resist_electricity": "Elec",
                "resist_magic": "Mag", "resist_poison": "Poi"}
 RECORD_ROWS = (
@@ -40,8 +41,10 @@ FULL_LABELS = {**LABELS, "strength": "Strength", "stamina": "Stamina", "agility"
                "charisma": "Charisma", "armor_class": "Armor class"}
 
 
-def _value(value):
-    return f"{value:,}" if type(value) is int else "—"
+def _value(value, field=None):
+    if type(value) is not int:
+        return "—"
+    return format_coin(value) if field == "coin_looted" else f"{value:,}"
 
 
 def _record_key(record):
@@ -51,7 +54,7 @@ def _record_key(record):
 def record_lines(record):
     """Three accessible lines; missing older fields remain unavailable."""
     alias = record.get("alias", "Anonymous name unavailable")
-    return tuple(alias + " · " + " · ".join(f"{LABELS[field]}: {_value(record.get(field))}" for field in row)
+    return tuple(alias + " · " + " · ".join(f"{LABELS[field]}: {_value(record.get(field), field)}" for field in row)
                  for row in RECORD_ROWS)
 
 
@@ -104,7 +107,8 @@ class LeaderboardModel(QAbstractTableModel):
         if not index.isValid() or not 0 <= index.row() < len(self.records) or not 0 <= index.column() < len(COLUMNS):
             return None
         record = self.records[index.row()]
-        value = record.get(COLUMNS[index.column()][0])
+        field = COLUMNS[index.column()][0]
+        value = record.get(field)
         if role == RECORD_ROLE:
             return record
         if role == Qt.ItemDataRole.ToolTipRole:
@@ -115,7 +119,7 @@ class LeaderboardModel(QAbstractTableModel):
             if value is None:
                 return "—"
             if type(value) is int:
-                return f"{value:,}"
+                return _value(value, field)
             return str(value).replace("T", " ").removesuffix("Z") if index.column() == 7 else str(value)
         if role == Qt.ItemDataRole.TextAlignmentRole and 1 <= index.column() <= 6:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -164,7 +168,7 @@ class LeaderboardCardDelegate(QStyledItemDelegate):
         names = record.get("alias", "Anonymous name unavailable").split(maxsplit=2)
         name_metrics = QFontMetrics(name_font)
         alias_width = max((name_metrics.horizontalAdvance(word) for word in names), default=0) + 24
-        lines = tuple(tuple(f"{CARD_LABELS[field]}: {_value(record.get(field))}" for field in row) for row in RECORD_ROWS)
+        lines = tuple(tuple(f"{CARD_LABELS[field]}: {_value(record.get(field), field)}" for field in row) for row in RECORD_ROWS)
         # Each line grows naturally; large values remain reachable by horizontal scrolling.
         width = alias_width + max(sum(metrics.horizontalAdvance(text) + 18 for text in row) for row in lines) + 24
         return name_font, alias_width, names, lines, max(26, metrics.lineSpacing() + 10,
@@ -368,13 +372,13 @@ class LeaderboardPage(QWidget):
         self.alias.setStyleSheet("color: " + theme.ACCENT + "; font-weight: bold;")
         for field, label in self.totals.items():
             value = self._status.get(field) if field in {"personal_kills", "personal_deaths", "high_hit", "coin_looted"} else (stats or {}).get(field)
-            label.setText(f"{LABELS[field]}: {_value(value)}")
+            label.setText(f"{LABELS[field]}: {_value(value, field)}")
             label.setToolTip(FULL_LABELS[field] + (" · Captured (UTC): " + stats["captured_at"] if stats and stats.get("captured_at") else ""))
         records = self._status.get("records") or {}
         for field, label in self.best_totals.items():
             entry = records.get(field) or {}
             value = self._status.get(field) if field in {"personal_kills", "personal_deaths", "high_hit", "coin_looted"} else entry.get("value")
-            label.setText(f"{LABELS[field]}: {_value(value)}")
+            label.setText(f"{LABELS[field]}: {_value(value, field)}")
             label.setToolTip(FULL_LABELS[field] + (" · Recorded (UTC): " + entry["captured_at"] if entry.get("captured_at") else ""))
         reason = self.action_reason()
         copy_reason = self.action_reason(copy=True)

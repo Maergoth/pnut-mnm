@@ -201,7 +201,7 @@ class PageTests(unittest.TestCase):
         with patch.object(self.client, "submit") as submit:
             text = self.page.copy_stats()
         self.assertIn(self.snapshot["alias"], text)
-        self.assertIn("Coin looted (copper): 1200", text)
+        self.assertIn("Coin looted: 12s", text)
         self.assertEqual(self.app.clipboard().text(), text)
         submit.assert_not_called()
         self.ledger.mark_submitted.assert_not_called()

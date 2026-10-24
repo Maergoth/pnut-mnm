@@ -42,6 +42,20 @@ def resign(record):
 
 
 class StatSchemaTests(unittest.TestCase):
+    def test_compact_coin_copy_preserves_copper_payload_and_signature(self):
+        stats = observation()
+        counters = {**dict.fromkeys(model.COUNTERS, 0), "coin_looted": 1_050}
+        record = model.make_snapshot(stats, counters, KEY, 1)
+        original = model.dump_records([record])
+        for text in (model.clipboard_text(record),
+                     model.local_clipboard_text(stats, {**counters, "alias": record["alias"]})):
+            self.assertIn("Coin looted: 10s 50c", text)
+        self.assertEqual(model.dump_records([record]), original)
+        decoded = model.parse_records(original, strict=True)[0]
+        self.assertEqual(decoded["coin_looted"], 1_050)
+        self.assertIs(type(decoded["coin_looted"]), int)
+        self.assertEqual(decoded["signature"], record["signature"])
+
     def test_legacy_signatures_and_bytes_roundtrip_without_adding_defaults(self):
         fixture = json.loads((Path(__file__).resolve().parents[1] /
                               "leaderboard_worker/test/python-fixtures.json").read_text(encoding="utf-8"))
