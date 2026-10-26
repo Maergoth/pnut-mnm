@@ -17,6 +17,13 @@ leaderboard counter/stat evidence only from its actual fresh WGC source; it neve
 from session totals, imports, demo data or alternate capture. Local Copy separately
 uses the fresh stat reader from either backend without producing a submission.
 
+Ranks reads `Engine.leaderboard_view` for one coherent status/stat pair under a
+single nonblocking engine lock. A busy `None` preserves the last complete display;
+a successful pair with no fresh stats clears the current reading. Eligibility is
+derived from that same reading, and Copy/Submit recheck live evidence when clicked.
+Identity changes invalidate the page's saved view. Avoid setting unchanged widget
+text/styles or resetting unchanged public records during status polling.
+
 `app/leaderboard_client.py` uses one bounded plain-Python daemon worker, a queue and a
 GUI-owned active-only polling timer. Opening the page reads the local cache;
 only explicit Refresh or Submit accesses the network. ACKs are delivered to the ledger
@@ -33,6 +40,12 @@ uploads replace only that identity's prior rows. Keep unrelated history unchange
 Same-day retries still return the first accepted row, and stale ACKs cannot replace
 a newer displayed row. Keep complete validated cache history for identity recovery
 before selecting the visible rows. Backend publication is separate from a desktop release.
+
+`currency.format_coin` formats captured copper totals with 100-to-1 denominations
+and omitted zero parts. Session views, leaderboard cards/local summaries and copied
+stat blocks share it; `session.format_coin` remains available to existing callers.
+Display labels describe coin rather than copper-only values. Records and sorting
+continue using the original integer copper total, without changing the signed payload.
 
 The desktop defaults to the anonymous hosted Worker at
 `https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
@@ -153,6 +166,33 @@ before introducing any new wiki data provider or credentials.
 
 ### Building and publishing Windows releases
 
+Build with the pinned **Python 3.14.10** runtime and **OpenSSL 3.5.9**. Keep the
+`scripts/prepare_build_python.py` runtime and `scripts/generate_legal_notices.py`
+provenance pins aligned. CI uses setup-python only to bootstrap that script;
+the hosted tool cache does not yet provide 3.14.10. The script verifies the exact
+official NuGet package checksum, Python Software Foundation signatures and
+runtime version before returning a workspace-local interpreter. To prepare a
+local build, run `python scripts/prepare_build_python.py`, then use its returned
+`tools/python.exe` to create `.venv` and install the pinned requirements and
+PyInstaller 6.22.3. It does not change the global Python installation.
+Three observed 3.14.3 native failures mapped through matching official symbols
+to `Python/gc.c:1509` in `mark_stacks`. Python 3.14.5 replaced that incremental
+collector; the newer runtime removes the observed crash path without changing
+OCR concurrency or confirmation rules. A clean build and passing startup tests
+are required; a runtime update alone does not prove the underlying trigger.
+
+The entry point enables `app/crash_diagnostics.py` before launch-identity or Qt
+imports, against a retained `logs/native-crash.log` descriptor. It records the
+launch time, app/Python versions and process ID; chained main-thread and worker
+exception hooks also persist tracebacks before ordinary logging is ready. Keep
+it separate from rotating `app.log`, which can close its descriptor during
+rollover. The native handler requests all Python thread stacks without locals
+and C frames when supported; the current Windows interpreter reports that C
+unwinding is unavailable, so it does not replace a native dump. It must fail
+open if storage is unavailable and never close or rotate its active descriptor.
+Startup-only size rotation keeps one backup before enabling the handler. Smoke
+checks write beside their report and self-tests use disposable log directories.
+
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
 searches to the selected Python environment and Windows; third-party tools in the
 caller's PATH must never supply DLLs to the app. Version 0.1.0 accidentally collected a
@@ -243,6 +283,7 @@ mnmparse/            library + CLI
   stats.py           Encounter segmentation, per-actor table, OCR-noise name merge (canonical_names)
   interrupts.py      crowd-control registry (categories), cc.json loader, rank/tier matching
   session.py         SessionStats: loot, coin, crafting, party kills and deaths, CC totals, rates
+  currency.py        Compact p/g/s/c display of captured copper totals with 100-to-1 denominations
   session_rates.py   Rolling-hour activity rates, complete participant allocations and personal coin projections
   player_status.py   Anchored mini-stat OCR and original-color XP-bar estimates
   player_telemetry.py Own HP alert episodes and 30-second XP comparisons over a rolling hour

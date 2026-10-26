@@ -250,7 +250,8 @@ class LaunchIdentityTests(unittest.TestCase):
     def test_entry_point_reports_launch_failure_without_qt(self):
         from mnmparse.app.__main__ import main
         report = self.root / "diagnostics" / "smoke.json"
-        with patch.object(identity, "launch_if_needed", side_effect=identity.LaunchError("not writable")):
+        with patch.object(identity, "launch_if_needed", side_effect=identity.LaunchError("not writable")), \
+             patch("mnmparse.app.crash_diagnostics.enable_startup_diagnostics"):
             self.assertEqual(main(["--smoke-test", "--report", str(report)]), 1)
         result = json.loads(report.read_text())
         self.assertFalse(result["ok"])

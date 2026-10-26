@@ -28,6 +28,19 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.30": ReleaseNotes(
+        changes=(
+            "Coin totals use platinum, gold, silver and copper at 100 to 1: 1,050 copper displays as 10s 50c.",
+            "Ranks keeps your anonymous name and stats steady while the screen reader is busy.",
+            "Keepers Bight now matches Keeper's Bight, restoring the notable-NPC list and named-kill fanfares.",
+            "Crash logging starts before the interface loads and retains background errors and native-failure thread stacks.",
+            "Updated Python to replace the garbage collector where recent native crashes occurred.",
+        ),
+        settings_label="Mini stat settings",
+        settings_target="player_status_enabled",
+        feature_page="leaderboard",
+        feature_label="Leaderboard",
+    ),
     "1.0.29": ReleaseNotes(
         changes=(
             "XP tracking measures the inside of scaled bar frames, keeping XP/hour available when the bevel was being counted as part of the fill track.",

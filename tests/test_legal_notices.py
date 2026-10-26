@@ -44,6 +44,17 @@ class LegalNoticesTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Missing or changed upstream notice"):
                     notices.verify_upstream()
 
+    def test_python_tls_source_must_match_official_runtime_pin(self):
+        with patch.object(notices, "PYTHON_OPENSSL_SOURCE_SHA256", "0" * 64):
+            with self.assertRaisesRegex(RuntimeError, "CPython OpenSSL notice provenance"):
+                notices.verify_upstream()
+
+    def test_python_tls_download_rejects_unexpected_source_bytes(self):
+        with patch.object(notices, "download", return_value=b"unexpected archive"):
+            with self.assertRaisesRegex(RuntimeError, "source checksum mismatch"):
+                notices.archive_notices("OpenSSL", "3.5.9", notices.PYTHON_OPENSSL_SOURCE,
+                                        expected_sha256=notices.PYTHON_OPENSSL_SOURCE_SHA256)
+
     def test_dependency_update_requires_notice_review(self):
         with patch.object(notices.metadata, "version", return_value="99.0.0"):
             with self.assertRaisesRegex(RuntimeError, "Update and review notices before shipping"):
@@ -95,7 +106,7 @@ class LegalNoticesTests(unittest.TestCase):
     def test_distinct_openssl_binaries_and_cffi_native_notices_are_bundled(self):
         build = (notices.DEST / "cryptography-OpenSSL-build.txt").read_text(encoding="utf-8")
         self.assertIn(notices.CRYPTOGRAPHY_OPENSSL_VERSION, build)
-        self.assertIn("separate from CPython's OpenSSL 3.0.18", build)
+        self.assertIn(f"separate from CPython's OpenSSL {notices.OPENSSL_VERSION.split()[1]}", build)
         openssl = (notices.DEST / "OpenSSL-4.0.3.txt").read_text(encoding="utf-8")
         self.assertIn("===== AUTHORS.md =====", openssl)
         self.assertIn("Apache License", openssl)

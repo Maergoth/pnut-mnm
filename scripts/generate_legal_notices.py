@@ -38,15 +38,18 @@ VERSIONS = {
     "typing_extensions": "4.16.0", "pyinstaller": "6.22.3",
     "cryptography": "50.0.2", "cffi": "2.1.1", "pycparser": "3.11",
 }
-PYTHON_VERSION = "3.14.3"
-OPENSSL_VERSION = "OpenSSL 3.0.18 30 Sep 2025"
+PYTHON_VERSION = "3.14.10"
+OPENSSL_VERSION = "OpenSSL 3.5.9 29 Sep 2026"
+# The official Windows runtime's SPDX SBOM pins this matching source archive.
+PYTHON_OPENSSL_SOURCE = "https://codeload.github.com/python/cpython-source-deps/tar.gz/refs/tags/openssl-3.5.9"
+PYTHON_OPENSSL_SOURCE_SHA256 = "d6cf0d9a651f25fe506f6b3dc133a80b9b79a0bc565f570dcf8fdbd597551485"
 CRYPTOGRAPHY_OPENSSL_VERSION = "OpenSSL 4.0.3 29 Sep 2026"
 FFMPEG_VERSION = "7.1.5"
 QT_MODULES = ("qtbase", "qtsvg", "qtmultimedia", "qtspeech", "pyside-setup")
 WEBVIEW2_VERSION = "1.0.4258.31"
 WEBVIEW2_NOTICE = f"Microsoft.Web.WebView2-{WEBVIEW2_VERSION}.txt"
 STATIC_FILES = tuple(f"Qt-6.11.2-{m}.txt" for m in QT_MODULES) + (
-    "FFmpeg-7.1.5.txt", "OpenSSL-3.0.18.txt", "PyWinRT-3.2.1.txt",
+    "FFmpeg-7.1.5.txt", "OpenSSL-3.5.9.txt", "PyWinRT-3.2.1.txt",
     "windows-capture-2.0.1-Rust-dependencies.txt",
     "cryptography-50.0.2-Rust-dependencies.txt", "OpenSSL-4.0.3.txt",
     "cffi-2.1.1-native-notices.txt",
@@ -133,8 +136,10 @@ def qt_notices(module: str) -> tuple[str, bytes, str, str]:
     return f"Qt-6.11.2-{module}.txt", combine(f"{module} 6.11.2 upstream licenses and attributions", selected), url, digest(data)
 
 
-def archive_notices(name: str, version: str, url: str) -> tuple[str, bytes, str, str]:
+def archive_notices(name: str, version: str, url: str, *, expected_sha256: str | None = None) -> tuple[str, bytes, str, str]:
     data = download(url)
+    if expected_sha256 is not None and digest(data) != expected_sha256:
+        raise RuntimeError(f"{name} {version} source checksum mismatch")
     files = source_files(data)
     selected = {p: b for p, b in files.items() if is_notice(p)}
     if name == "OpenSSL":
@@ -249,7 +254,8 @@ def refresh_upstream() -> None:
     jobs = [lambda module=m: qt_notices(module) for m in QT_MODULES]
     jobs.extend((
         lambda: archive_notices("FFmpeg", "7.1.5", "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n7.1.5"),
-        lambda: archive_notices("OpenSSL", "3.0.18", "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.0.18"),
+        lambda: archive_notices("OpenSSL", "3.5.9", PYTHON_OPENSSL_SOURCE,
+                                expected_sha256=PYTHON_OPENSSL_SOURCE_SHA256),
         lambda: archive_notices("OpenSSL", "4.0.3", "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-4.0.3"),
         rust_notices,
         lambda: rust_notices("cryptography", "50.0.2"),
@@ -279,6 +285,10 @@ def verify_upstream() -> None:
     if (manifest[WEBVIEW2_NOTICE]["source"] != sdk["url"]
             or manifest[WEBVIEW2_NOTICE]["source_sha256"] != sdk["sha256"]):
         raise RuntimeError("WebView2 SDK notice provenance does not match the pinned build SDK")
+    python_tls = manifest[f"OpenSSL-{OPENSSL_VERSION.split()[1]}.txt"]
+    if (python_tls["source"] != PYTHON_OPENSSL_SOURCE
+            or python_tls["source_sha256"] != PYTHON_OPENSSL_SOURCE_SHA256):
+        raise RuntimeError("CPython OpenSSL notice provenance does not match the pinned Windows runtime")
     for filename, provenance in manifest.items():
         if digest((DEST / filename).read_bytes()) != provenance["notice_sha256"]:
             raise RuntimeError(f"Missing or changed upstream notice: {filename}")
@@ -321,7 +331,7 @@ def generated_notices() -> dict[str, bytes]:
         "Windows wheel build: https://cryptography.io/en/50.0.2/installation/#building-cryptography-on-windows\n"
         "Wheel source and release files: https://pypi.org/project/cryptography/50.0.2/#files\n"
         "Rust dependency licenses: cryptography-50.0.2-Rust-dependencies.txt\n"
-        "This is separate from CPython's OpenSSL 3.0.18 dependency.\n"
+        f"This is separate from CPython's OpenSSL {OPENSSL_VERSION.split()[1]} dependency.\n"
     ).encode()
     distribution = metadata.distribution("PySide6")
     lib_path = Path(distribution.locate_file("PySide6/avutil-59.dll"))

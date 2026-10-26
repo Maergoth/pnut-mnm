@@ -12,6 +12,10 @@ from typing import Sequence
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch diagnostics before importing Qt, so DLL failures become reports."""
     args = list(sys.argv[1:] if argv is None else argv)
+    from mnmparse.app import APP_VERSION
+    from mnmparse.app.crash_diagnostics import enable_startup_diagnostics
+
+    enable_startup_diagnostics(args, version=APP_VERSION)
     if "--atlas-smoke" in args:
         import argparse
         from pathlib import Path

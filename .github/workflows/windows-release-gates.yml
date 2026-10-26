@@ -22,13 +22,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
+          # Bootstrap only. The verified portable interpreter below builds PNUT;
+          # setup-python's hosted tool cache does not yet contain 3.14.10.
           python-version: '3.14.3'
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install tested runtime and build dependencies
         shell: pwsh
         run: |
-          python -m venv .venv
+          $buildPython = python -B scripts/prepare_build_python.py
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Python runtime preparation failed' }
+          & $buildPython -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw 'Build environment creation failed' }
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
           if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
       - name: Verify Evergreen WebView2 runtime for native browser gates
@@ -110,6 +115,7 @@ jobs:
           name: windows-portable-gates
           path: |
             build/startup-smoke-*.json
+            build/startup-smoke-*.json.crash-logs/
             build/build-info.json
             dist/releases/*
           if-no-files-found: warn

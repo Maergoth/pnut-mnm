@@ -3,9 +3,10 @@ import dataclasses
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
@@ -74,6 +75,71 @@ class CaptureEligibilityTests(unittest.TestCase):
         self.read_stats()
         self.engine._state = "stopped"
         self.assertFalse(self.engine.leaderboard_status()["eligible"])
+
+    def test_busy_view_is_distinct_from_missing_data_and_actions_recheck(self):
+        self.read_stats()
+        expected_alias = self.ledger.status()["alias"]
+        held, release = threading.Event(), threading.Event()
+
+        def hold_reader_lock():
+            with self.engine._lock:
+                held.set()
+                release.wait(5)
+
+        reader = threading.Thread(target=hold_reader_lock)
+        reader.start()
+        try:
+            self.assertTrue(held.wait(2))
+            with patch.object(self.ledger, "status", wraps=self.ledger.status) as status:
+                self.assertIsNone(self.engine.leaderboard_view())
+                status.assert_not_called()
+                for action in (self.engine.leaderboard_submission, self.engine.leaderboard_copy_text):
+                    with self.assertRaisesRegex(ValueError, "Waiting for the screen reader"):
+                        action()
+        finally:
+            release.set()
+            reader.join(2)
+        self.assertFalse(reader.is_alive())
+        status, stats = self.engine.leaderboard_view()
+        self.assertEqual(status["alias"], expected_alias)
+        self.assertTrue(status["eligible"])
+        self.assertEqual(stats["max_health"], 100)
+
+    def test_view_eligibility_uses_the_same_single_freshness_check_as_values(self):
+        self.read_stats()
+        snapshot = self.engine.player_stat_snapshot()
+        # A second freshness check could cross the reading's expiry boundary.
+        with patch.object(self.engine, "player_stat_snapshot", side_effect=[snapshot, None]) as read:
+            status, stats = self.engine.leaderboard_view()
+        read.assert_called_once_with()
+        self.assertIs(stats, snapshot)
+        self.assertTrue(status["eligible"])
+        self.assertTrue(status["copy_eligible"])
+        stats["max_health"] = 999
+        self.assertEqual(self.engine.player_stat_snapshot()["max_health"], 100)
+
+    def test_complete_views_report_real_expiry_and_unavailable_history(self):
+        self.read_stats()
+        expected_alias = self.ledger.status()["alias"]
+        self.engine._stat_snapshot_valid_until = time.time() - 1
+        status, stats = self.engine.leaderboard_view()
+        self.assertIsNone(stats)
+        self.assertEqual(status["alias"], expected_alias)
+        self.assertEqual(status["records"]["max_health"]["value"], 100)
+        self.assertFalse(status["eligible"])
+        self.assertFalse(status["copy_eligible"])
+        self.ledger.error = "Test history unavailable"
+        status, stats = self.engine.leaderboard_view()
+        self.assertIsNone(stats)
+        self.assertEqual(status["error"], "Test history unavailable")
+        self.assertNotIn("alias", status)
+        self.assertFalse(status["eligible"])
+        self.engine._protected_ledger = None
+        status, stats = self.engine.leaderboard_view()
+        self.assertIsNone(stats)
+        self.assertNotIn("alias", status)
+        self.assertIn("unavailable", status["reason"])
+        self.assertFalse(status["eligible"])
 
     def test_only_live_complete_exact_events_enter_new_counter_ledger(self):
         event = parse_line("You have slain a rat.", time.time(), "Owner")

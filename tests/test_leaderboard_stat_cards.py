@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -114,24 +114,79 @@ class StatCardTests(unittest.TestCase):
         self.assertIn("Submit shares these personal bests", self.page.local_tabs.tabToolTip(1))
         self.assertIn("current mini stats", self.page.copy_button.toolTip())
 
+    def test_currency_is_compact_in_public_accessibility_and_both_local_summaries(self):
+        coin_column = next(column for column, (field, _label) in enumerate(COLUMNS) if field == "coin_looted")
+        for copper, expected in ((0, "0c"), (99, "99c"), (100, "1s"), (1050, "10s 50c"),
+                                 (10_000, "1g"), (1_000_000, "1p"), (1_020_304, "1p 2g 3s 4c"),
+                                 (None, "—")):
+            with self.subTest(copper=copper):
+                entry = sample(10, coin_looted=copper)
+                self.page.model.set_records([entry])
+                index = self.page.model.index(0, coin_column)
+                self.assertEqual(index.data(), expected)
+                self.assertIn("Coin looted: " + expected, index.data(Qt.ItemDataRole.AccessibleTextRole))
+                self.assertEqual(entry["coin_looted"], copper, "display must retain the original numeric amount")
+                self.status["coin_looted"] = copper
+                self.page.refresh_status()
+                for labels in (self.page.totals, self.page.best_totals):
+                    self.assertEqual(labels["coin_looted"].text(), "Coin looted: " + expected)
+        self.assertEqual(self.page.model.headerData(coin_column, Qt.Orientation.Horizontal), "Coin looted")
+        self.assertGreaterEqual(self.page.sort_field.findText("Coin looted"), 0)
+
+    def test_currency_sort_uses_raw_copper_instead_of_formatted_text(self):
+        coin_column = next(column for column, (field, _label) in enumerate(COLUMNS) if field == "coin_looted")
+        self.page.model.set_records([sample(1, coin_looted=900), sample(2, coin_looted=1050),
+                                     sample(3, coin_looted=None)])
+        for order, raw, shown in (
+            (Qt.SortOrder.AscendingOrder, [900, 1050, None], ["9s", "10s 50c", "—"]),
+            (Qt.SortOrder.DescendingOrder, [1050, 900, None], ["10s 50c", "9s", "—"]),
+        ):
+            with self.subTest(order=order):
+                self.page.model.sort(coin_column, order)
+                self.assertEqual([entry["coin_looted"] for entry in self.page.model.records], raw)
+                self.assertEqual([self.page.model.index(row, coin_column).data() for row in range(3)], shown)
+
+    def test_repeated_public_notifications_keep_selection_and_skip_model_reset_but_restore_history(self):
+        entries = [sample(1), sample(2)]
+        restore = Mock()
+        self.page.ledger = SimpleNamespace(restore_history=restore)
+        with patch.object(self.page.model, "set_records", wraps=self.page.model.set_records) as reset:
+            self.page._records(entries, "Cached entries")
+            self.page.table.setCurrentIndex(self.page.model.index(1, 0))
+            selected_key = self.page.model.records[self.page.table.currentIndex().row()]["public_key"]
+            self.page._records([dict(entry) for entry in reversed(entries)], "Refreshed entries")
+            older = {**entries[0], "sequence": 0, "captured_at": "2026-10-21T14:00:00Z"}
+            history = [older, *entries]
+            self.page._records(history, "Refreshed history")
+            self.assertEqual(reset.call_count, 1)
+            restore.assert_called_with(history)
+            self.assertEqual(self.page.model.records[self.page.table.currentIndex().row()]["public_key"], selected_key)
+            # A changed payload must update its card and tooltip normally.
+            changed = [{**entries[0], "captured_at": "2026-10-23T14:00:00Z"}, entries[1]]
+            self.page._records(changed, "New update")
+            self.assertEqual(reset.call_count, 2)
+
     def test_paint_stacks_larger_alias_words_bold_and_gold(self):
         class RecordingPainter(QPainter):
             def drawText(self, *args):
+                if args[-1].startswith("Coin:"):
+                    coin_text.append(args[-1])
                 if args[-1] in entry["alias"].split():
                     drawn.append((args[-1], args[0].y(), self.font(), self.pen().color().name()))
                 return super().drawText(*args)
 
-        entry = sample(10, alias="Curious Peach Cheetah")
+        entry = sample(10, alias="Curious Peach Cheetah", coin_looted=1050)
         self.page.model.set_records([entry])
         option = QStyleOptionViewItem()
         option.font = self.page.font()
         option.rect = QRect(0, 0, 1800, 180)
         pixmap = QPixmap(option.rect.size())
         pixmap.fill(QColor(theme.BG0))
-        drawn = []
+        drawn, coin_text = [], []
         painter = RecordingPainter(pixmap)
         LeaderboardCardDelegate().paint(painter, option, self.page.model.index(0, 0))
         painter.end()
+        self.assertEqual(coin_text, ["Coin: 10s 50c"])
         self.assertEqual([word for word, _y, _font, _color in drawn], ["Curious", "Peach", "Cheetah"])
         self.assertEqual(len({row[1] for row in drawn}), 3)
         self.assertTrue(all(font.bold() and color == theme.ACCENT for _word, _y, font, color in drawn))

@@ -175,7 +175,7 @@ def _qt_message_handler(mode: QtMsgType, _context: Any, message: str) -> None:
 
 
 def setup_logging(verbose: bool, log_dir: Path | None = None) -> Path | None:
-    """Configure ``logs/app.log`` (rotating, 1 MB x 3) and uncaught-exception hooks.
+    """Configure rotating app logs, retained native stacks and exception hooks.
 
     Args:
         verbose: DEBUG for the ``mnmparse`` loggers (INFO otherwise); other libraries
@@ -192,7 +192,8 @@ def setup_logging(verbose: bool, log_dir: Path | None = None) -> Path | None:
         root.removeHandler(handler)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     log_path: Path | None = None
-    directory = log_dir or project_path("logs")
+    from mnmparse.app.crash_diagnostics import enable_crash_diagnostics, install_exception_hooks, startup_log_directory
+    directory = log_dir or startup_log_directory() or project_path("logs")
     try:
         directory.mkdir(parents=True, exist_ok=True)
         log_path = directory / "app.log"
@@ -212,18 +213,8 @@ def setup_logging(verbose: bool, log_dir: Path | None = None) -> Path | None:
         root.addHandler(stream)
     logging.getLogger("mnmparse").setLevel(logging.DEBUG if verbose else logging.INFO)
     logging.getLogger("qt").setLevel(logging.DEBUG if verbose else logging.WARNING)
-
-    def _excepthook(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
-        logging.getLogger("mnmparse.app").critical("Uncaught exception", exc_info=(exc_type, exc, tb))
-
-    def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
-        logging.getLogger("mnmparse.app").critical(
-            "Uncaught exception in thread %s", args.thread.name if args.thread else "?",
-            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
-        )
-
-    sys.excepthook = _excepthook
-    threading.excepthook = _thread_excepthook
+    enable_crash_diagnostics(directory, version=APP_VERSION)
+    install_exception_hooks()
     qInstallMessageHandler(_qt_message_handler)
     return log_path
 
@@ -2872,7 +2863,10 @@ def run(argv: Sequence[str] | None = None) -> int:
     # back (5 ms by default): a paint of a few dozen calls then took 20-40 ms and the overlay
     # animations stuttered.  1 ms bounds each of those waits.
     sys.setswitchinterval(GIL_SWITCH_INTERVAL_S)
-    args = build_arg_parser().parse_args(list(sys.argv[1:] if argv is None else argv))
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = build_arg_parser().parse_args(arguments)
+    from mnmparse.app.crash_diagnostics import enable_startup_diagnostics
+    enable_startup_diagnostics(arguments, version=APP_VERSION)
     if not (args.console or args.verbose or args.selftest_seconds is not None):
         _detach_console()
     log_path = setup_logging(args.verbose)

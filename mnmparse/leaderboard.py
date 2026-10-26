@@ -8,6 +8,8 @@ import re
 import unicodedata
 from typing import Any
 
+from .currency import format_coin
+
 READ_URL = "https://raw.githubusercontent.com/Maergoth/pnut-mnm/leaderboard-data/leaderboard.jsonl"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_RECORDS = 30_000
@@ -214,7 +216,7 @@ def _stat_block(record: dict[str, Any]) -> str:
     text = (f"{record['alias']} · {record['captured_at']}\n"
             f"Max Health: {record['max_health']}\nMax Mana: {mana}\n"
             f"Kills: {record['personal_kills']}\nDeaths: {record['personal_deaths']}\n"
-            f"Highest hit: {record['high_hit']}\nCoin looted (copper): {record['coin_looted']}")
+            f"Highest hit: {record['high_hit']}\nCoin looted: {format_coin(record['coin_looted'])}")
     if any(name in record for name in EXTRA_STATS):
         text += "".join(f"\n{STAT_LABELS[name]}: {record.get(name) if record.get(name) is not None else 'Unavailable'}"
                         for name in EXTRA_STATS)

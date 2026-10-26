@@ -1,0 +1,23 @@
+# PNUT M&M 1.0.30
+
+- Leaderboard cards, local coin summaries and copied stat blocks display captured
+  coin totals using the fewest platinum, gold, silver and copper coins.
+- Each denomination converts at 100 to 1, and zero parts are omitted: 1,050 copper
+  displays as **10s 50c**; 1,000,000 copper displays as **1p**.
+- Coin sorting continues to compare the complete value, so **9s** sorts below
+  **10s 50c**. Existing captured totals retain their full value.
+- Ranks keeps the last complete identity and stat display while the screen reader
+  is busy. Values update when they change, with expired readings and capture
+  eligibility still reflected and Copy/Submit validated when clicked.
+- The captured zone name **Keepers Bight** resolves to **Keeper's Bight**, so
+  notable NPCs such as Poacher Tolan use the existing zone cache and celebrate
+  a confirmed group kill while the encounter is still active.
+- Crash logging starts before the interface loads, records uncaught main-thread
+  and background-thread errors, and retains native-failure Python thread stacks
+  in **logs/native-crash.log**. It includes app/runtime versions, process ID and
+  launch time, with a separate startup-rotated backup. This adds diagnostics
+  without changing the capture pipeline; native C frames remain platform-dependent.
+- Updated the bundled runtime from **Python 3.14.3 to 3.14.10**. The later runtime
+  replaces the incremental garbage collector where the recent crashes occurred.
+  This is a tested mitigation; the original invalid-memory trigger has not been
+  established from the Windows crash summaries alone.

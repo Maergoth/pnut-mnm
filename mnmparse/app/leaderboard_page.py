@@ -1,6 +1,7 @@
 """Anonymous personal totals and an explicitly refreshed public leaderboard."""
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from html import escape
 
@@ -12,11 +13,12 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBox
 
 from mnmparse.app import theme
 from mnmparse.app.widgets import FlowLayout
+from mnmparse.currency import format_coin
 from mnmparse.leaderboard import latest_records
 from mnmparse.leaderboard_messages import MAX_MESSAGE_CHARS, normalize_message
 COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "Max Mana"),
            ("personal_kills", "Kills"), ("personal_deaths", "Deaths"), ("high_hit", "Highest hit"),
-           ("coin_looted", "Coin (copper)"), ("captured_at", "Captured (UTC)"),
+           ("coin_looted", "Coin looted"), ("captured_at", "Captured (UTC)"),
            ("strength", "STR"), ("stamina", "STA"), ("agility", "AGI"), ("dexterity", "DEX"),
            ("intelligence", "INT"), ("wisdom", "WIS"), ("charisma", "CHA"), ("armor_class", "AC"),
            ("resist_cold", "Cold"), ("resist_corruption", "Corruption"), ("resist_disease", "Disease"),
@@ -25,7 +27,7 @@ COLUMNS = (("alias", "Anonymous name"), ("max_health", "Max HP"), ("max_mana", "
            ("stat_total", "Stat Total"), ("resist_total", "Resist Total"))
 LABELS = dict(COLUMNS)
 DEFAULT_SORT_COLUMN = next(column for column, (field, _label) in enumerate(COLUMNS) if field == "stat_total")
-CARD_LABELS = {**LABELS, "max_health": "HP", "max_mana": "Mana", "coin_looted": "Copper",
+CARD_LABELS = {**LABELS, "max_health": "HP", "max_mana": "Mana", "coin_looted": "Coin",
                "resist_corruption": "Corr", "resist_disease": "Dis", "resist_electricity": "Elec",
                "resist_magic": "Mag", "resist_poison": "Poi"}
 RECORD_ROWS = (
@@ -40,8 +42,20 @@ FULL_LABELS = {**LABELS, "strength": "Strength", "stamina": "Stamina", "agility"
                "charisma": "Charisma", "armor_class": "Armor class"}
 
 
-def _value(value):
-    return f"{value:,}" if type(value) is int else "—"
+def _value(value, field=None):
+    if type(value) is not int:
+        return "—"
+    return format_coin(value) if field == "coin_looted" else f"{value:,}"
+
+
+def _set_text(widget, text):
+    if widget.text() != text:
+        widget.setText(text)
+
+
+def _set_tooltip(widget, text):
+    if widget.toolTip() != text:
+        widget.setToolTip(text)
 
 
 def _record_key(record):
@@ -51,7 +65,7 @@ def _record_key(record):
 def record_lines(record):
     """Three accessible lines; missing older fields remain unavailable."""
     alias = record.get("alias", "Anonymous name unavailable")
-    return tuple(alias + " · " + " · ".join(f"{LABELS[field]}: {_value(record.get(field))}" for field in row)
+    return tuple(alias + " · " + " · ".join(f"{LABELS[field]}: {_value(record.get(field), field)}" for field in row)
                  for row in RECORD_ROWS)
 
 
@@ -104,7 +118,8 @@ class LeaderboardModel(QAbstractTableModel):
         if not index.isValid() or not 0 <= index.row() < len(self.records) or not 0 <= index.column() < len(COLUMNS):
             return None
         record = self.records[index.row()]
-        value = record.get(COLUMNS[index.column()][0])
+        field = COLUMNS[index.column()][0]
+        value = record.get(field)
         if role == RECORD_ROLE:
             return record
         if role == Qt.ItemDataRole.ToolTipRole:
@@ -115,7 +130,7 @@ class LeaderboardModel(QAbstractTableModel):
             if value is None:
                 return "—"
             if type(value) is int:
-                return f"{value:,}"
+                return _value(value, field)
             return str(value).replace("T", " ").removesuffix("Z") if index.column() == 7 else str(value)
         if role == Qt.ItemDataRole.TextAlignmentRole and 1 <= index.column() <= 6:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -164,7 +179,7 @@ class LeaderboardCardDelegate(QStyledItemDelegate):
         names = record.get("alias", "Anonymous name unavailable").split(maxsplit=2)
         name_metrics = QFontMetrics(name_font)
         alias_width = max((name_metrics.horizontalAdvance(word) for word in names), default=0) + 24
-        lines = tuple(tuple(f"{CARD_LABELS[field]}: {_value(record.get(field))}" for field in row) for row in RECORD_ROWS)
+        lines = tuple(tuple(f"{CARD_LABELS[field]}: {_value(record.get(field), field)}" for field in row) for row in RECORD_ROWS)
         # Each line grows naturally; large values remain reachable by horizontal scrolling.
         width = alias_width + max(sum(metrics.horizontalAdvance(text) + 18 for text in row) for row in lines) + 24
         return name_font, alias_width, names, lines, max(26, metrics.lineSpacing() + 10,
@@ -208,6 +223,7 @@ class LeaderboardPage(QWidget):
         self.engine, self.ledger, self.client = engine, None, None
         self._demo = self._loaded = False
         self._status = {}
+        self._view_stats = None
         self._records_history = []
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
@@ -335,17 +351,30 @@ class LeaderboardPage(QWidget):
         self.model.sort(self.sort_field.currentData(), self.sort_order.currentData())
 
     def bind(self, ledger, client):
+        previous_client = self.client
+        if ledger is not self.ledger or client is not previous_client:
+            self._invalidate_local_view()
+        if previous_client is not None and client is not previous_client:
+            for signal, slot in ((previous_client.records_updated, self._records),
+                                 (previous_client.busy_changed, self._busy_changed),
+                                 (previous_client.finished, self.message.setText),
+                                 (previous_client.submitted, self._submitted)):
+                signal.disconnect(slot)
         self.ledger, self.client = ledger, client
-        client.records_updated.connect(self._records)
-        client.busy_changed.connect(self._busy_changed)
-        client.finished.connect(self.message.setText)
-        client.submitted.connect(self._submitted)
+        if client is not None and client is not previous_client:
+            client.records_updated.connect(self._records)
+            client.busy_changed.connect(self._busy_changed)
+            client.finished.connect(self.message.setText)
+            client.submitted.connect(self._submitted)
         self.refresh_status()
-        if self.isVisible() and not self._loaded:
+        if self.client is not None and self.isVisible() and not self._loaded:
             self._load_cached()
 
     def set_demo_active(self, active):
-        self._demo = bool(active)
+        active = bool(active)
+        if active != self._demo:
+            self._view_stats = None
+        self._demo = active
         self.refresh_status()
 
     def showEvent(self, event):
@@ -360,35 +389,59 @@ class LeaderboardPage(QWidget):
         super().hideEvent(event)
 
     def refresh_status(self):
-        method = getattr(self.engine, "leaderboard_status", None)
-        self._status = method() if callable(method) and self.ledger is not None else {}
-        snapshot = getattr(self.engine, "player_stat_snapshot", None)
-        stats = snapshot() if callable(snapshot) and self.ledger is not None and not self._demo else None
-        self.alias.setText(self._status.get("alias", "Anonymous name unavailable"))
-        self.alias.setStyleSheet("color: " + theme.ACCENT + "; font-weight: bold;")
+        coherent = getattr(self.engine, "leaderboard_view", None)
+        if self.ledger is None:
+            view = ({}, None)
+        elif callable(coherent):
+            # None means lock contention, not a missing identity or reading.
+            view = coherent()
+        else:
+            # Compatibility for older adapters and small UI/test engines.
+            method = getattr(self.engine, "leaderboard_status", None)
+            snapshot = getattr(self.engine, "player_stat_snapshot", None)
+            view = (method() if callable(method) else {},
+                    snapshot() if callable(snapshot) and not self._demo else None)
+        if view is not None:
+            status, stats = view
+            self._status = deepcopy(status)
+            self._view_stats = deepcopy(stats) if not self._demo else None
+        self._render_local_view()
+        reason = self.action_reason()
+        copy_reason = self.action_reason(copy=True)
+        service = self.client.submission_unavailable if self.client else "Leaderboard is unavailable in this mode."
+        _set_text(self.eligibility, (reason + (" Copy current is available locally." if not copy_reason else "")) if reason else ("Already submitted today (UTC). Copy current remains available." if self.submitted_today()
+                                  else "Ready to copy current values. " + service if service else "Ready to copy current values or submit personal bests once per UTC day."))
+        busy = self.client is not None and self.client.busy
+        self.copy_button.setEnabled(not copy_reason)
+        _set_tooltip(self.copy_button, copy_reason or "Copy current mini stats locally without submitting.")
+        self.submit_button.setEnabled(not reason and not service and not busy and not self.submitted_today())
+        _set_tooltip(self.submit_button, reason or service or ("Already submitted today (UTC)." if self.submitted_today() else "Publish your personal best stats and lifetime totals. Requires fresh Window Capture."))
+        self.phrase_button.setEnabled(self.ledger is not None and not busy and not self._demo)
+        self.message_input.setEnabled(self.ledger is not None and not busy and not self._demo)
+        self.refresh_button.setEnabled(self.client is not None and not busy and not self._demo)
+
+    def _invalidate_local_view(self):
+        self._status, self._view_stats = {}, None
+        self._render_local_view()
+
+    def _render_local_view(self):
+        stats = None if self._demo else self._view_stats
+        _set_text(self.alias, self._status.get("alias", "Anonymous name unavailable"))
+        style = "color: " + theme.ACCENT + "; font-weight: bold;"
+        if self.alias.styleSheet() != style:
+            self.alias.setStyleSheet(style)
         for field, label in self.totals.items():
             value = self._status.get(field) if field in {"personal_kills", "personal_deaths", "high_hit", "coin_looted"} else (stats or {}).get(field)
-            label.setText(f"{LABELS[field]}: {_value(value)}")
-            label.setToolTip(FULL_LABELS[field] + (" · Captured (UTC): " + stats["captured_at"] if stats and stats.get("captured_at") else ""))
+            if self._demo:
+                value = None
+            _set_text(label, f"{LABELS[field]}: {_value(value, field)}")
+            _set_tooltip(label, FULL_LABELS[field] + (" · Captured (UTC): " + stats["captured_at"] if stats and stats.get("captured_at") else ""))
         records = self._status.get("records") or {}
         for field, label in self.best_totals.items():
             entry = records.get(field) or {}
             value = self._status.get(field) if field in {"personal_kills", "personal_deaths", "high_hit", "coin_looted"} else entry.get("value")
-            label.setText(f"{LABELS[field]}: {_value(value)}")
-            label.setToolTip(FULL_LABELS[field] + (" · Recorded (UTC): " + entry["captured_at"] if entry.get("captured_at") else ""))
-        reason = self.action_reason()
-        copy_reason = self.action_reason(copy=True)
-        service = self.client.submission_unavailable if self.client else "Leaderboard is unavailable in this mode."
-        self.eligibility.setText((reason + (" Copy current is available locally." if not copy_reason else "")) if reason else ("Already submitted today (UTC). Copy current remains available." if self.submitted_today()
-                                 else "Ready to copy current values. " + service if service else "Ready to copy current values or submit personal bests once per UTC day."))
-        busy = self.client is not None and self.client.busy
-        self.copy_button.setEnabled(not copy_reason)
-        self.copy_button.setToolTip(copy_reason or "Copy current mini stats locally without submitting.")
-        self.submit_button.setEnabled(not reason and not service and not busy and not self.submitted_today())
-        self.submit_button.setToolTip(reason or service or ("Already submitted today (UTC)." if self.submitted_today() else "Publish your personal best stats and lifetime totals. Requires fresh Window Capture."))
-        self.phrase_button.setEnabled(self.ledger is not None and not busy and not self._demo)
-        self.message_input.setEnabled(self.ledger is not None and not busy and not self._demo)
-        self.refresh_button.setEnabled(self.client is not None and not busy and not self._demo)
+            _set_text(label, f"{LABELS[field]}: {_value(value, field)}")
+            _set_tooltip(label, FULL_LABELS[field] + (" · Recorded (UTC): " + entry["captured_at"] if entry.get("captured_at") else ""))
 
     def action_reason(self, *, copy=False):
         if self._demo or self.ledger is None:
@@ -430,7 +483,7 @@ class LeaderboardPage(QWidget):
         except ValueError:
             self.message.setText(f"Use a message of up to {MAX_MESSAGE_CHARS} characters.")
             return False
-        self.message_input.setText(message)
+        _set_text(self.message_input, message)
         try:
             record = self._snapshot(message)
         except ValueError:
@@ -457,9 +510,12 @@ class LeaderboardPage(QWidget):
         # Recovery needs every validated signed row, including older counter
         # floors and schema-3 bests. Only the public view selects one per key.
         self._records_history = list(records)
-        self.model.set_records(self._records_history)
+        displayed = latest_records(self._records_history)
+        if ({record["public_key"]: record for record in displayed}
+                != {record["public_key"]: record for record in self.model.records}):
+            self.model.set_records(displayed)
         self._restore_history()
-        self.message.setText(f"{message} · {self.model.rowCount():,} entries")
+        _set_text(self.message, f"{message} · {self.model.rowCount():,} entries")
 
     def _restore_history(self):
         restore = getattr(self.ledger, "restore_history", None)
@@ -497,6 +553,9 @@ class LeaderboardPage(QWidget):
             self.ledger.set_phrase(phrase)
         except (ValueError, OSError):
             self.message.setText("Could not set identity. Use a secret phrase of 8–1024 characters.")
+            return
+        else:
+            self._invalidate_local_view()
         finally:
             phrase = ""
         self._restore_history()

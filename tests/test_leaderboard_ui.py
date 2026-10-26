@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -201,7 +201,7 @@ class PageTests(unittest.TestCase):
         with patch.object(self.client, "submit") as submit:
             text = self.page.copy_stats()
         self.assertIn(self.snapshot["alias"], text)
-        self.assertIn("Coin looted (copper): 1200", text)
+        self.assertIn("Coin looted: 12s", text)
         self.assertEqual(self.app.clipboard().text(), text)
         submit.assert_not_called()
         self.ledger.mark_submitted.assert_not_called()
@@ -265,3 +265,125 @@ class PageTests(unittest.TestCase):
         self.assertEqual(model.records[0]["captured_at"], "2026-10-20T23:00:00Z")
         model.records[0]["alias"] = "Tidy Teal Tiger"
         self.assertEqual(model.data(model.index(0, 0)), "Tidy Teal Tiger")
+
+    def coherent_view(self):
+        self.status["records"] = {"strength": {"value": 90, "captured_at": "2026-10-21T12:00:00Z"}}
+        stats = {**self.snapshot, "strength": 12}
+        self.engine.leaderboard_view = Mock(return_value=(self.status, stats))
+        self.page.refresh_status()
+        return stats
+
+    def test_coherent_view_is_preferred_and_busy_poll_keeps_labels_without_rewriting_widgets(self):
+        self.coherent_view()
+        self.engine.leaderboard_status = Mock(side_effect=AssertionError("separate status read"))
+        self.engine.player_stat_snapshot = Mock(side_effect=AssertionError("separate snapshot read"))
+        label = self.page.totals["strength"]
+        with patch.object(self.page.alias, "setText") as alias_text, \
+             patch.object(self.page.alias, "setStyleSheet") as alias_style, \
+             patch.object(label, "setText") as stat_text, \
+             patch.object(label, "setToolTip") as stat_tooltip, \
+             patch.object(self.page.best_totals["strength"], "setText") as best_text:
+            self.page.refresh_status()  # An identical complete view also needs no widget mutation.
+            self.engine.leaderboard_view.return_value = None
+            for _ in range(3):
+                self.page.refresh_status()
+        for mutation in (alias_text, alias_style, stat_text, stat_tooltip, best_text):
+            mutation.assert_not_called()
+        self.assertEqual(self.page.alias.text(), self.snapshot["alias"])
+        self.assertEqual(label.text(), "STR: 12")
+        self.assertEqual(self.page.best_totals["strength"].text(), "STR: 90")
+        self.assertTrue(self.page.copy_button.isEnabled())
+        self.assertTrue(self.page.submit_button.isEnabled())
+        self.engine.leaderboard_status.assert_not_called()
+        self.engine.player_stat_snapshot.assert_not_called()
+
+    def test_busy_poll_still_updates_client_service_and_utc_day_controls(self):
+        self.coherent_view()
+        self.engine.leaderboard_view.return_value = None
+        with patch.object(type(self.client), "busy", new_callable=PropertyMock, return_value=True):
+            self.page.refresh_status()
+            self.assertFalse(self.page.submit_button.isEnabled())
+            self.assertFalse(self.page.phrase_button.isEnabled())
+            self.assertFalse(self.page.refresh_button.isEnabled())
+        with patch.object(type(self.client), "submission_unavailable", new_callable=PropertyMock,
+                          return_value="The upload service is unavailable."):
+            self.page.refresh_status()
+            self.assertFalse(self.page.submit_button.isEnabled())
+            self.assertIn("upload service", self.page.submit_button.toolTip())
+        today = datetime.now(timezone.utc)
+        self.page._status["submitted_day"] = today.date().isoformat()
+        self.page.refresh_status()
+        self.assertFalse(self.page.submit_button.isEnabled())
+        with patch("mnmparse.app.leaderboard_page.datetime") as clock:
+            from datetime import timedelta
+            clock.now.return_value = today + timedelta(days=1)
+            self.page.refresh_status()
+        self.assertTrue(self.page.submit_button.isEnabled())
+        self.assertEqual(self.page.alias.text(), self.snapshot["alias"])
+
+    def test_busy_click_still_requires_engine_authorization_before_copy_or_submit(self):
+        self.coherent_view()
+        self.engine.leaderboard_view.return_value = None
+        self.engine.leaderboard_submission.side_effect = ValueError("Waiting for the screen reader; try again")
+        self.engine.leaderboard_copy_text.side_effect = ValueError("Waiting for the screen reader; try again")
+        with patch.object(self.client, "submit") as submit:
+            self.assertFalse(self.page.submit_stats())
+            self.assertEqual(self.page.copy_stats(), "")
+        self.engine.leaderboard_submission.assert_called_once()
+        self.engine.leaderboard_copy_text.assert_called_once()
+        submit.assert_not_called()
+        self.ledger.mark_submitted.assert_not_called()
+        self.assertEqual(self.page.alias.text(), self.snapshot["alias"])
+
+    def test_complete_unavailable_or_error_view_replaces_cached_fresh_values(self):
+        self.coherent_view()
+        unavailable = {**self.status, "eligible": False, "copy_eligible": False,
+                       "reason": "Read current mini stats"}
+        self.engine.leaderboard_view.return_value = (unavailable, None)
+        self.page.refresh_status()
+        self.assertEqual(self.page.totals["max_health"].text(), "Max HP: —")
+        self.assertEqual(self.page.totals["strength"].text(), "STR: —")
+        self.assertEqual(self.page.best_totals["strength"].text(), "STR: 90")
+        self.assertFalse(self.page.copy_button.isEnabled())
+        self.assertFalse(self.page.submit_button.isEnabled())
+        self.engine.leaderboard_view.return_value = ({"error": "private storage detail"}, None)
+        self.page.refresh_status()
+        self.engine.leaderboard_view.return_value = None
+        self.page.refresh_status()
+        self.assertFalse(self.page.copy_button.isEnabled())
+        self.assertFalse(self.page.submit_button.isEnabled())
+        self.assertEqual(self.page.eligibility.text(), "Stats history is unavailable.")
+        self.assertEqual(self.page.best_totals["strength"].text(), "STR: —")
+
+    def test_rebinding_invalidates_previous_identity_before_a_busy_read(self):
+        self.coherent_view()
+        self.engine.leaderboard_view.return_value = None
+        another = SimpleNamespace(restore_history=Mock(), mark_submitted=Mock(), set_phrase=Mock())
+        self.page.bind(another, self.client)
+        self.assertEqual(self.page.alias.text(), "Anonymous name unavailable")
+        self.assertEqual(self.page.totals["strength"].text(), "STR: —")
+        self.assertEqual(self.page.best_totals["strength"].text(), "STR: —")
+        self.assertFalse(self.page.copy_button.isEnabled())
+        self.assertFalse(self.page.submit_button.isEnabled())
+
+    def test_phrase_change_invalidates_previous_identity_before_a_busy_read(self):
+        self.coherent_view()
+        self.engine.leaderboard_view.return_value = None
+        with patch("mnmparse.app.leaderboard_page.QInputDialog.getText", return_value=("sample secret phrase", True)), \
+             patch("mnmparse.app.leaderboard_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Ok):
+            self.page.set_phrase()
+        self.ledger.set_phrase.assert_called_once_with("sample secret phrase")
+        self.assertEqual(self.page.alias.text(), "Anonymous name unavailable")
+        self.assertEqual(self.page.totals["strength"].text(), "STR: —")
+        self.assertEqual(self.page.best_totals["strength"].text(), "STR: —")
+        self.assertFalse(self.page.copy_button.isEnabled())
+
+    def test_demo_transition_clears_fresh_values_even_while_coherent_reader_is_busy(self):
+        self.coherent_view()
+        self.engine.leaderboard_view.return_value = None
+        self.page.set_demo_active(True)
+        self.assertTrue(all(label.text().endswith(": —") for label in self.page.totals.values()))
+        self.assertFalse(self.page.copy_button.isEnabled())
+        self.assertFalse(self.page.submit_button.isEnabled())
+        self.page.set_demo_active(False)
+        self.assertEqual(self.page.totals["strength"].text(), "STR: —")

@@ -6,4 +6,4 @@ Corresponding upstream source: https://github.com/openssl/openssl/tree/openssl-4
 Windows wheel build: https://cryptography.io/en/50.0.2/installation/#building-cryptography-on-windows
 Wheel source and release files: https://pypi.org/project/cryptography/50.0.2/#files
 Rust dependency licenses: cryptography-50.0.2-Rust-dependencies.txt
-This is separate from CPython's OpenSSL 3.0.18 dependency.
+This is separate from CPython's OpenSSL 3.5.9 dependency.

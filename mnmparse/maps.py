@@ -43,7 +43,8 @@ ZONES = (
     "Sunken Resort", "Tel Ekir", "The Hidden Grotto", "Tomb of the Last Wyrmsbane",
     "Underdocks", "Vale of Zintar",
 )
-ALIASES = {"wyrmsbane tomb": "Tomb of the Last Wyrmsbane", "wyrmsbane": "Tomb of the Last Wyrmsbane"}
+ALIASES = {"wyrmsbane tomb": "Tomb of the Last Wyrmsbane", "wyrmsbane": "Tomb of the Last Wyrmsbane",
+           "keepers bight": "Keeper's Bight"}
 
 
 def zone_title(zone: str) -> str:

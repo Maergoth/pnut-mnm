@@ -29,6 +29,11 @@ class MapTests(unittest.TestCase):
         self.assertEqual(zone_title("Night Harbor (West)"), "Night Harbor")
         self.assertEqual(zone_title("Wyrmsbane Tomb"), "Tomb of the Last Wyrmsbane")
         self.assertEqual(zone_title("Sungreet_Strand."), "Sungreet Strand")
+        self.assertEqual(zone_title("Keepers Bight"), "Keeper's Bight")
+        self.assertEqual(zone_title("KEEPERS_BIGHT."), "Keeper's Bight")
+        self.assertEqual(zone_title("Keepers Bight (West)"), "Keeper's Bight")
+        self.assertEqual(wiki_url("Keepers Bight"), wiki_url("Keeper's Bight"))
+        self.assertEqual(zone_title("Keepers Bay"), "Keepers Bay")
         self.assertTrue(wiki_url("Ail'Vorith").endswith("Ail%27Vorith"))
 
     def test_maps_not_overview_photos_and_original_resolution(self):
