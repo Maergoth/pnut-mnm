@@ -28,7 +28,7 @@ class PrepareBuildPythonTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
 
     def test_validated_package_is_prepared_atomically_and_reused_without_download(self):
         data = package()
