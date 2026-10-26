@@ -166,12 +166,32 @@ before introducing any new wiki data provider or credentials.
 
 ### Building and publishing Windows releases
 
-Startup enables `app/crash_diagnostics.py` against a retained `native-crash.log`
-descriptor in the log directory. Keep it separate from rotating `app.log`, which
-can close its descriptor during rollover. The native handler records all Python
-thread stacks without locals; it must fail open if storage is unavailable and
-must never close or rotate its active descriptor. Startup-only size rotation is
-safe before enabling the handler. Python exception hooks remain in place.
+Build with the pinned **Python 3.14.10** runtime and **OpenSSL 3.5.9**. Keep the
+`scripts/prepare_build_python.py` runtime and `scripts/generate_legal_notices.py`
+provenance pins aligned. CI uses setup-python only to bootstrap that script;
+the hosted tool cache does not yet provide 3.14.10. The script verifies the exact
+official NuGet package checksum, Python Software Foundation signatures and
+runtime version before returning a workspace-local interpreter. To prepare a
+local build, run `python scripts/prepare_build_python.py`, then use its returned
+`tools/python.exe` to create `.venv` and install the pinned requirements and
+PyInstaller 6.22.3. It does not change the global Python installation.
+Three observed 3.14.3 native failures mapped through matching official symbols
+to `Python/gc.c:1509` in `mark_stacks`. Python 3.14.5 replaced that incremental
+collector; the newer runtime removes the observed crash path without changing
+OCR concurrency or confirmation rules. A clean build and passing startup tests
+are required; a runtime update alone does not prove the underlying trigger.
+
+The entry point enables `app/crash_diagnostics.py` before launch-identity or Qt
+imports, against a retained `logs/native-crash.log` descriptor. It records the
+launch time, app/Python versions and process ID; chained main-thread and worker
+exception hooks also persist tracebacks before ordinary logging is ready. Keep
+it separate from rotating `app.log`, which can close its descriptor during
+rollover. The native handler requests all Python thread stacks without locals
+and C frames when supported; the current Windows interpreter reports that C
+unwinding is unavailable, so it does not replace a native dump. It must fail
+open if storage is unavailable and never close or rotate its active descriptor.
+Startup-only size rotation keeps one backup before enabling the handler. Smoke
+checks write beside their report and self-tests use disposable log directories.
 
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
 searches to the selected Python environment and Windows; third-party tools in the

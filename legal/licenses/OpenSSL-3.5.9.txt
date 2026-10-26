@@ -1,4 +1,4 @@
-OpenSSL 3.0.18 upstream notices
+OpenSSL 3.5.9 upstream notices
 
 ===== AUTHORS.md =====
 Authors
@@ -15,6 +15,7 @@ Groups
 
  * OpenSSL Software Services, Inc.
  * OpenSSL Software Foundation, Inc.
+ * Google LLC
 
 Individuals
 -----------
@@ -51,6 +52,7 @@ Individuals
  * Tim Hudson
  * Tomáš Mráz
  * Ulf Möller
+ * Valerii Krygin
  * Viktor Dukhovni
 
 

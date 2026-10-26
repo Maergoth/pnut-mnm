@@ -1,6 +1,6 @@
 # Open-source licenses and notices
 
-Effective October 10, 2026. These notices describe the components in the official Windows build. Their full license texts and copyright notices are bundled with the app and can be read offline through the links below. Third-party components retain their own licenses; PNUT's MIT license applies to PNUT's original code.
+Effective October 26, 2026. These notices describe the components in the official Windows build. Their full license texts and copyright notices are bundled with the app and can be read offline through the links below. Third-party components retain their own licenses; PNUT's MIT license applies to PNUT's original code.
 
 ## PNUT
 
@@ -10,7 +10,7 @@ Copyright (c) 2026 PNUT M&M contributors. PNUT is available under the [MIT Licen
 
 | Component | Version | License and full notices |
 | --- | --- | --- |
-| CPython and its Windows runtime components | 3.14.3 | [PSF license, historical Python licenses, and bundled native notices](licenses/CPython-3.14.3.txt) |
+| CPython and its Windows runtime components | 3.14.10 | [PSF license, historical Python licenses, and bundled native notices](licenses/CPython-3.14.10.txt) |
 | PySide6, PySide6 Essentials/Addons, and Shiboken6 | 6.11.2 | LGPL-3.0-only; [PySide and Shiboken license texts and attributions](licenses/Qt-6.11.2-pyside-setup.txt) |
 | Qt Core, GUI, Widgets, Network and OpenGL | 6.11.2 | LGPL-3.0-only and separate third-party licenses; [Qt Base notices](licenses/Qt-6.11.2-qtbase.txt) |
 | Qt SVG | 6.11.2 | LGPL-3.0-only and separate third-party licenses; [Qt SVG notices](licenses/Qt-6.11.2-qtsvg.txt) |
@@ -30,7 +30,7 @@ Copyright (c) 2026 PNUT M&M contributors. PNUT is available under the [MIT Licen
 | CFFI and its Windows libffi code | 2.1.1 | MIT-0 and libffi's MIT-style license; [full wheel license](licenses/cffi-2.1.1.txt) and [bundled libffi source notices](licenses/cffi-2.1.1-native-notices.txt) |
 | pycparser | 3.11 | BSD-3-Clause; [full license](licenses/pycparser-3.11.txt) |
 | PyInstaller bootloader and runtime support | 6.22.3 | GPL-2.0-or-later with the Bootloader Distribution Exception; [full license and exception](licenses/pyinstaller-6.22.3.txt) |
-| OpenSSL used by CPython | 3.0.18 | Apache-2.0; [full license and upstream authors](licenses/OpenSSL-3.0.18.txt) |
+| OpenSSL used by CPython | 3.5.9 | Apache-2.0; [full license and upstream authors](licenses/OpenSSL-3.5.9.txt) |
 | OpenSSL statically linked in cryptography's Windows wheel | 4.0.3 | Apache-2.0; [full license and upstream authors](licenses/OpenSSL-4.0.3.txt) and [binary version and source](licenses/cryptography-OpenSSL-build.txt) |
 
 The Qt archives, WebView2 SDK, OpenCV wheel and Rust lockfiles contain notices for some upstream components and build tools that are not used by PNUT. Their inclusion preserves upstream notices and does not apply their licenses to unrelated PNUT code. GPL-only Qt Virtual Keyboard and the unused Qt PDF, Quick, QML, WebView and WebEngine components are excluded from the Windows build. The unused OpenCV FFmpeg video backend DLL is also excluded; Qt's FFmpeg audio backend remains included. Optional RapidOCR/ONNX is not included in that build.
@@ -55,6 +55,6 @@ Matching upstream source and build materials are available without charge:
 
 ## Notice provenance
 
-The notice generator copies installed wheel license files and the local CPython license without rewriting their text. Missing wheel licenses and native Qt attributions are copied from versioned upstream source archives. The [upstream provenance manifest](licenses/upstream-manifest.json) records source URLs and SHA-256 digests. Rust crate archives are verified against the upstream Cargo.lock checksums; their individual source URLs and digests are retained in the notice collection.
+The notice generator copies installed wheel license files and the local CPython license without rewriting their text. Missing wheel licenses and native Qt attributions are copied from versioned upstream source archives. The [upstream provenance manifest](licenses/upstream-manifest.json) records source URLs and SHA-256 digests. CPython's OpenSSL source archive is verified against the checksum in the [official Python 3.14.10 Windows SBOM](https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip.spdx.json). Rust crate archives are verified against the upstream Cargo.lock checksums; their individual source URLs and digests are retained in the notice collection.
 
 The normal build runs the notice generator offline and rejects unreviewed dependency, Python, OpenSSL, Qt FFmpeg or WebView2 SDK version changes. Maintainers can deliberately refresh the pinned upstream material with `scripts/generate_legal_notices.py --refresh-upstream`, review the notices, and verify them with `--check`. Redistributors must preserve the relevant notices and fulfill the applicable licenses' source and replacement requirements.

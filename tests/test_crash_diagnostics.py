@@ -14,12 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CrashDiagnosticsTests(unittest.TestCase):
-    def run_child(self, source: str, directory: Path) -> subprocess.CompletedProcess:
+    def run_child(self, source: str, directory: Path, *, expected_code: int = 0) -> subprocess.CompletedProcess:
         environment = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONDONTWRITEBYTECODE="1")
         environment.pop("PYTHONFAULTHANDLER", None)
-        child = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(source), str(directory)],
+        # Windows CI can return a TEMP path containing an 8.3 alias. The public
+        # initializer deliberately returns a resolved destination, so compare
+        # it with the same canonical fixture directory inside the child.
+        child = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(source), str(directory.resolve())],
                                cwd=ROOT, env=environment, capture_output=True, text=True, timeout=15)
-        self.assertEqual(child.returncode, 0, child.stdout + "\n" + child.stderr)
+        self.assertEqual(child.returncode, expected_code, child.stdout + "\n" + child.stderr)
         return child
 
     def test_real_thread_tracebacks_use_retained_descriptor_without_crashing(self):
@@ -193,10 +196,164 @@ class CrashDiagnosticsTests(unittest.TestCase):
                     assert diagnostic.enable_crash_diagnostics(Path(sys.argv[1])) is None
                     descriptor = diagnostic._fd
                     os.fstat(descriptor)
-                    enable.assert_called_once_with(file=descriptor, all_threads=True, c_stack=False)
+                    enable.assert_called_once_with(file=descriptor, all_threads=True, c_stack=True)
                 assert diagnostic.enable_crash_diagnostics(Path(sys.argv[1])) is not None
                 assert diagnostic._fd == descriptor and faulthandler.is_enabled()
             """, directory)
+
+    def test_real_worker_c_stack_probe_records_frames_or_explicit_platform_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.run_child("""
+                import faulthandler, os, sys, threading
+                from pathlib import Path
+                from mnmparse.app import crash_diagnostics as diagnostic
+                diagnostic.enable_crash_diagnostics(Path(sys.argv[1]))
+                def native_stack_probe_worker():
+                    os.write(diagnostic._fd, b"Safe worker C-stack probe\\n")
+                    faulthandler.dump_c_stack(file=diagnostic._fd)
+                    faulthandler.dump_traceback(file=diagnostic._fd, all_threads=True)
+                worker = threading.Thread(target=native_stack_probe_worker)
+                worker.start()
+                worker.join(5)
+                assert not worker.is_alive()
+            """, directory)
+            trace = (directory / "native-crash.log").read_text(encoding="utf-8")
+            self.assertIn("Safe worker C-stack probe", trace)
+            self.assertIn("native_stack_probe_worker", trace)
+            self.assertIn("C stack", trace)
+            self.assertTrue("Binary file" in trace or "cannot get C stack" in trace
+                            or "not supported" in trace, trace)
+
+    def test_early_source_entry_captures_qt_import_failure_before_app_logging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            child = self.run_child("""
+                import importlib.abc, runpy, sys
+                from pathlib import Path
+                from mnmparse.app import crash_diagnostics as diagnostic
+                directory = Path(sys.argv[1])
+                diagnostic.__file__ = str(directory / "mnmparse/app/crash_diagnostics.py")
+                class BrokenQt(importlib.abc.MetaPathFinder):
+                    def find_spec(self, fullname, path=None, target=None):
+                        if fullname == "PySide6.QtCore":
+                            assert diagnostic._enabled
+                            raise ImportError("synthetic early Qt DLL failure")
+                sys.meta_path.insert(0, BrokenQt())
+                sys.argv = ["PNUT"]
+                runpy.run_module("mnmparse.app", run_name="__main__")
+            """, directory, expected_code=1)
+            trace = (directory / "logs/native-crash.log").read_text(encoding="utf-8")
+            self.assertIn("Uncaught exception", trace)
+            self.assertIn("ImportError: synthetic early Qt DLL failure", trace)
+            self.assertIn("Traceback", trace)
+            self.assertIn("synthetic early Qt DLL failure", child.stderr)
+            self.assertFalse((directory / "logs/app.log").exists())
+
+    def test_early_frozen_entry_records_import_failure_with_no_stderr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.run_child("""
+                import importlib.abc, runpy, sys
+                from pathlib import Path
+                from mnmparse.app import launch_identity
+                from mnmparse.app import crash_diagnostics as diagnostic
+                directory = Path(sys.argv[1])
+                launch_identity.launch_if_needed = lambda args, wait=False: None
+                sys.frozen = True
+                sys.executable = str(directory / "synthetic-session.exe")
+                sys.stderr = None
+                class BrokenQt(importlib.abc.MetaPathFinder):
+                    def find_spec(self, fullname, path=None, target=None):
+                        if fullname == "PySide6.QtCore":
+                            assert diagnostic._enabled
+                            raise ImportError("synthetic windowed Qt DLL failure")
+                sys.meta_path.insert(0, BrokenQt())
+                sys.argv = ["PNUT"]
+                runpy.run_module("mnmparse.app", run_name="__main__")
+            """, directory, expected_code=1)
+            trace = (directory / "logs/native-crash.log").read_text(encoding="utf-8")
+            self.assertIn("ImportError: synthetic windowed Qt DLL failure", trace)
+            self.assertIn("frozen=True", trace)
+            self.assertIn("synthetic-session.exe", trace)
+            self.assertIn("PID ", trace)
+            self.assertIn("Runtime: ", trace)
+
+    def test_early_smoke_uses_report_destination_without_importing_qt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.run_child("""
+                import sys
+                from pathlib import Path
+                from mnmparse.app import launch_identity
+                from mnmparse.app import crash_diagnostics as diagnostic
+                from mnmparse.app.__main__ import main
+                directory = Path(sys.argv[1])
+                report = directory / "smoke.json"
+                def stop_before_qt(args, wait=False):
+                    assert diagnostic._path == directory / "smoke.json.crash-logs/native-crash.log"
+                    assert not any(name.startswith("PySide6") for name in sys.modules)
+                    return 0
+                launch_identity.launch_if_needed = stop_before_qt
+                assert main(["--smoke-test", "--report", str(report)]) == 0
+            """, directory)
+            self.assertTrue((directory / "smoke.json.crash-logs/native-crash.log").is_file())
+
+    def test_selftest_uses_disposable_logs_even_when_normal_config_is_selected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.run_child("""
+                import sys, types
+                from pathlib import Path
+                from unittest.mock import patch
+                from mnmparse.app import crash_diagnostics as diagnostic
+                from mnmparse.app.__main__ import main
+                directory = Path(sys.argv[1])
+                destination = directory / "disposable-logs"
+                def run(args):
+                    assert diagnostic.startup_log_directory() == destination
+                    assert diagnostic._path == destination / "native-crash.log"
+                    assert not any(name.startswith("PySide6") for name in sys.modules)
+                    return 0
+                sys.modules["mnmparse.app.main"] = types.SimpleNamespace(run=run)
+                with patch.object(diagnostic.tempfile, "mkdtemp", return_value=str(destination)):
+                    assert main(["--selftest-seconds=1", "--config", "config.json"]) == 0
+            """, directory)
+            self.assertTrue((directory / "disposable-logs/native-crash.log").is_file())
+
+    def test_python_and_thread_exceptions_are_persisted_once_and_original_hooks_are_chained(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.run_child("""
+                import sys, threading
+                from pathlib import Path
+                from mnmparse.app import main
+                from mnmparse.app import crash_diagnostics as diagnostic
+                calls = []
+                sys.excepthook = lambda *args: calls.append("main")
+                threading.excepthook = lambda args: calls.append("thread")
+                directory = Path(sys.argv[1])
+                main.setup_logging(False, directory)
+                installed = (sys.excepthook, threading.excepthook)
+                main.setup_logging(False, directory)
+                assert installed == (sys.excepthook, threading.excepthook)
+                try:
+                    raise RuntimeError("synthetic uncaught main failure")
+                except RuntimeError:
+                    sys.excepthook(*sys.exc_info())
+                def failing_worker():
+                    raise ValueError("synthetic uncaught worker failure")
+                worker = threading.Thread(target=failing_worker, name="fixture-worker")
+                worker.start()
+                worker.join(3)
+                assert not worker.is_alive()
+                assert calls == ["main", "thread"]
+            """, directory)
+            for filename in ("native-crash.log", "app.log"):
+                trace = (directory / filename).read_text(encoding="utf-8")
+                self.assertIn("RuntimeError: synthetic uncaught main failure", trace)
+                self.assertIn("ValueError: synthetic uncaught worker failure", trace)
+                self.assertEqual(trace.count("Uncaught exception in thread fixture-worker"), 1)
 
     def test_rotation_failure_preserves_evidence_and_still_enables_reporting(self):
         with tempfile.TemporaryDirectory() as temporary:

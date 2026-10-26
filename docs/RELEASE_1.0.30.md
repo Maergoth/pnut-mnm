@@ -12,6 +12,12 @@
 - The captured zone name **Keepers Bight** resolves to **Keeper's Bight**, so
   notable NPCs such as Poacher Tolan use the existing zone cache and celebrate
   a confirmed group kill while the encounter is still active.
-- Native crash diagnostics retain thread stacks in **native-crash.log**, separate
-  from the rotating app log, to investigate failures that previously left no
-  Python traceback. This adds diagnostics without changing the capture pipeline.
+- Crash logging starts before the interface loads, records uncaught main-thread
+  and background-thread errors, and retains native-failure Python thread stacks
+  in **logs/native-crash.log**. It includes app/runtime versions, process ID and
+  launch time, with a separate startup-rotated backup. This adds diagnostics
+  without changing the capture pipeline; native C frames remain platform-dependent.
+- Updated the bundled runtime from **Python 3.14.3 to 3.14.10**. The later runtime
+  replaces the incremental garbage collector where the recent crashes occurred.
+  This is a tested mitigation; the original invalid-memory trigger has not been
+  established from the Windows crash summaries alone.

@@ -30,11 +30,11 @@ class ReleaseNotes:
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
     "1.0.30": ReleaseNotes(
         changes=(
-            "Leaderboard coin totals and copied stat blocks use compact platinum, gold, silver and copper: 1,050 copper displays as 10s 50c.",
-            "Every denomination converts at 100 to 1, with zero parts omitted. Coin sorting still uses the total value.",
-            "Ranks keeps your anonymous name and stats steady while the screen reader is busy. Unchanged readings no longer redraw the page.",
-            "Keeper's Bight is recognized when the game displays Keepers Bight, restoring named-kill fanfares and the correct notable-NPC list.",
-            "Native crash diagnostics now retain thread stacks in the logs folder to help investigate unexpected app exits.",
+            "Coin totals use platinum, gold, silver and copper at 100 to 1: 1,050 copper displays as 10s 50c.",
+            "Ranks keeps your anonymous name and stats steady while the screen reader is busy.",
+            "Keepers Bight now matches Keeper's Bight, restoring the notable-NPC list and named-kill fanfares.",
+            "Crash logging starts before the interface loads and retains background errors and native-failure thread stacks.",
+            "Updated Python to replace the garbage collector where recent native crashes occurred.",
         ),
         settings_label="Mini stat settings",
         settings_target="player_status_enabled",
