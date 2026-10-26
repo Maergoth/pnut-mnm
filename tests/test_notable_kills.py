@@ -198,6 +198,31 @@ class LiveKillEngineTests(unittest.TestCase):
         self.assertTrue(all(zone == ZONE and event.target == NPC for event, zone in self.kills))
         self.assertEqual(len(self.activity), 1)
 
+    def test_keepers_bight_party_kill_uses_canonical_cache_before_encounter_ends(self):
+        canonical_zone, npc = "Keeper's Bight", "Poacher Tolan"
+        details = _Details()
+        details.record = NotableNpcs(canonical_zone, (npc,))
+        details.repo.cached_notables = Mock(side_effect=lambda zone: details.record if zone == canonical_zone else None)
+        controller = NotableKillController(details, current_zone=lambda: self.engine.current_zone,
+                                          active=lambda: self.engine.state == "running")
+        self.addCleanup(details.deleteLater)
+        self.addCleanup(controller.deleteLater)
+        self.addCleanup(controller.shutdown)
+        celebrated = []
+        controller.celebrated.connect(celebrated.append)
+        self.engine.live_group_kill.connect(controller.on_kill)
+        self.deliver("You have entered Keepers Bight.", 98)
+        self.deliver(f"You crush {npc} for 10 points of damage.", 99)
+        self.deliver("You crush a poacher bruiser for 10 points of damage.", 100)
+        fight = self.engine._stats.current()
+        self.assertIsNotNone(fight)
+        self.deliver(f"Your party member SampleFriend has slain {npc}!", 101)
+        self.assertEqual(celebrated, [npc])
+        details.repo.cached_notables.assert_called_once_with(canonical_zone)
+        details.show_npc.assert_called_once_with(npc)
+        self.assertIs(self.engine._stats.current(), fight)
+        self.assertFalse(fight.closed)
+
     def test_outsiders_group_exclusions_and_player_or_pet_victims_are_rejected(self):
         self.engine._stats.roster.set_manual("SampleFriend", False)
         self.engine._stats.roster.set_pet_owner("Sprout", PLAYER)

@@ -9,3 +9,6 @@
 - Ranks keeps the last complete identity and stat display while the screen reader
   is busy. Values update when they change, with expired readings and capture
   eligibility still reflected and Copy/Submit validated when clicked.
+- The captured zone name **Keepers Bight** resolves to **Keeper's Bight**, so
+  notable NPCs such as Poacher Tolan use the existing zone cache and celebrate
+  a confirmed group kill while the encounter is still active.
