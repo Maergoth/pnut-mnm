@@ -12,3 +12,6 @@
 - The captured zone name **Keepers Bight** resolves to **Keeper's Bight**, so
   notable NPCs such as Poacher Tolan use the existing zone cache and celebrate
   a confirmed group kill while the encounter is still active.
+- Native crash diagnostics retain thread stacks in **native-crash.log**, separate
+  from the rotating app log, to investigate failures that previously left no
+  Python traceback. This adds diagnostics without changing the capture pipeline.

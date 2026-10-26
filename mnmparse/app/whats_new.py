@@ -34,6 +34,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
             "Every denomination converts at 100 to 1, with zero parts omitted. Coin sorting still uses the total value.",
             "Ranks keeps your anonymous name and stats steady while the screen reader is busy. Unchanged readings no longer redraw the page.",
             "Keeper's Bight is recognized when the game displays Keepers Bight, restoring named-kill fanfares and the correct notable-NPC list.",
+            "Native crash diagnostics now retain thread stacks in the logs folder to help investigate unexpected app exits.",
         ),
         settings_label="Mini stat settings",
         settings_target="player_status_enabled",

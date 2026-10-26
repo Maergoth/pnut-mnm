@@ -175,7 +175,7 @@ def _qt_message_handler(mode: QtMsgType, _context: Any, message: str) -> None:
 
 
 def setup_logging(verbose: bool, log_dir: Path | None = None) -> Path | None:
-    """Configure ``logs/app.log`` (rotating, 1 MB x 3) and uncaught-exception hooks.
+    """Configure rotating app logs, retained native stacks and exception hooks.
 
     Args:
         verbose: DEBUG for the ``mnmparse`` loggers (INFO otherwise); other libraries
@@ -212,6 +212,8 @@ def setup_logging(verbose: bool, log_dir: Path | None = None) -> Path | None:
         root.addHandler(stream)
     logging.getLogger("mnmparse").setLevel(logging.DEBUG if verbose else logging.INFO)
     logging.getLogger("qt").setLevel(logging.DEBUG if verbose else logging.WARNING)
+    from mnmparse.app.crash_diagnostics import enable_crash_diagnostics
+    enable_crash_diagnostics(directory, version=APP_VERSION)
 
     def _excepthook(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
         logging.getLogger("mnmparse.app").critical("Uncaught exception", exc_info=(exc_type, exc, tb))

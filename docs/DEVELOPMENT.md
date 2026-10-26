@@ -166,6 +166,13 @@ before introducing any new wiki data provider or credentials.
 
 ### Building and publishing Windows releases
 
+Startup enables `app/crash_diagnostics.py` against a retained `native-crash.log`
+descriptor in the log directory. Keep it separate from rotating `app.log`, which
+can close its descriptor during rollover. The native handler records all Python
+thread stacks without locals; it must fail open if storage is unavailable and
+must never close or rotate its active descriptor. Startup-only size rotation is
+safe before enabling the handler. Python exception hooks remain in place.
+
 Run `build_exe.ps1 -Clean` for a clean dependency analysis. The spec limits native DLL
 searches to the selected Python environment and Windows; third-party tools in the
 caller's PATH must never supply DLLs to the app. Version 0.1.0 accidentally collected a
