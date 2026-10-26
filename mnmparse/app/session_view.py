@@ -1,4 +1,4 @@
-"""Session tab: loot, coin, crafting, kills, deaths and zones as collapsible categories.
+"""Session tab: loot, harvests, coin, crafting, kills, deaths and zones as collapsible categories.
 
 :class:`SessionView` renders a :class:`~mnmparse.session.SessionSnapshot` as a tree: one
 top-level row per category with its total, children with the detail (items by name with
@@ -36,6 +36,7 @@ __all__ = ["SessionView", "CATEGORY_COLORS"]
 CATEGORY_COLORS: dict[str, str] = {
     "experience": theme.ACCENT,
     "items": theme.KIND_COLORS.get("loot", theme.ACCENT),
+    "harvests": theme.KIND_COLORS.get("harvest", "#a5d6a7"),
     "coin": theme.KIND_COLORS.get("coin", "#e0c060"),
     "kills": theme.KIND_COLORS.get("kill", theme.ACCENT),
     "deaths": theme.DANGER,
@@ -113,7 +114,7 @@ class SessionView(QWidget):
         self._snap: SessionSnapshot | None = None
         self._view_mode = "group"
         self._player = ""
-        self._expanded: dict[str, bool] = {"items": True}
+        self._expanded: dict[str, bool] = {"items": True, "harvests": True}
         self._new_session_allowed = bool(show_new_session)
         self._new_session_enabled = True
         self._footer_tip = ""
@@ -219,6 +220,15 @@ class SessionView(QWidget):
                 self._footer_tip = ""
                 return
             self._add_items(snap)
+            harvests = snap.harvests_by_item
+            harvest_tip = "Each successful harvest message counts one item."
+            harvest_tip += "\n\n" + ("\n".join(f"{item}: {count:,}" for item, count in harvests)
+                                       or "Nothing harvested yet.")
+            self._add_category(
+                "harvests", "Harvested", f"{snap.harvests:,}",
+                [(item, f"{count:,}", "") for item, count in harvests],
+                tooltip=harvest_tip,
+            )
             averages = getattr(snap, "group_averages", {})
             if averages:
                 self._add_category("group-averages", f"Group averages ({snap.group_average_count})", "rounded",

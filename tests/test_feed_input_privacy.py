@@ -17,6 +17,7 @@ from mnmparse.app.overlay import OverlayWindow
 from mnmparse.app.pages import FeedPage
 from mnmparse.app.timer_panel import TriggerPopup
 from mnmparse.config import Config
+from mnmparse.parser import parse_line
 
 
 class FeedInputTests(unittest.TestCase):
@@ -59,6 +60,22 @@ class FeedInputTests(unittest.TestCase):
             overlay.set_config(cfg)
             self.assertEqual([entry.text for entry in overlay._feed.entries()], [line])
             self.assertIn(popup, overlay._timer_panel._popups)
+
+    def test_harvest_uses_loot_filter_independently_of_personal_lines(self):
+        page = FeedPage(None, dataclasses.replace(self.cfg, include_personal=False), self.settings)
+        self.addCleanup(page.close)
+        for ts, text in enumerate(("You harvest [Wood]!", "You harvest [Resin]!", "You eat Ration."), 100):
+            event = parse_line(text, ts, self.cfg.player_name)
+            page.append(text, event.kind, True, ts)
+        personal = next(chip for chip, _kinds in page._chips if chip.text() == "Personal")
+        loot = next(chip for chip, _kinds in page._chips if chip.text() == "Loot")
+        personal.setChecked(False)
+        self.assertEqual([entry.kind for entry in page.view.entries() if page.view._visible(entry)],
+                         ["harvest", "harvest"])
+        loot.setChecked(False)
+        personal.setChecked(True)
+        self.assertEqual([entry.kind for entry in page.view.entries() if page.view._visible(entry)],
+                         ["personal"])
 
 
 if __name__ == "__main__":

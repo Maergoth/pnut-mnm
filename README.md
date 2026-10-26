@@ -288,7 +288,12 @@ past without being captured cannot be recovered.
   collapsible categories. It spans all zones; the overlay's fight selector applies to the combat
   tables. With **Show other groups** off, loot and coin show your recognized group only.
   Items looted has one expandable subheader per person, showing the total
-  number of items they looted, with item quantities beneath it. Other categories include coin and your splits
+  number of items they looted, with item quantities beneath it. **Harvested** shows
+  your gathered-item total and an expandable count for each material. Each successful
+  `You harvest [item]!` message adds one item, even with personal-line counting off.
+  These totals continue across restarts and archived sessions, and appear in session
+  JSON exports. Keep harvest messages visible in the captured chat area.
+  Other categories include coin and your splits
   (a split line that wrapped onto a second row is joined to its loot), kills by mob type,
   deaths (yours and your party's; see "Encounters" below), crafted items (your party's only;
   other players' crafts are listed in the tooltip when **Show other groups** is on), quest rewards (kept out of the loot
@@ -906,10 +911,12 @@ not counted, and the same player dying twice within a minute is the same death r
 ### What is deliberately not counted
 
 Lines that only you receive about yourself (skill-ups, faction standing, experience ticks, PvP
-opt-in, eating, loot from your own corpse, camping, harvesting, invites, tells, /who) are
+opt-in, eating, loot from your own corpse, camping, invites, tells, /who) are
 classified as personal and left out of the Session tab unless you turn on "Count personal
 lines" in Settings. A complete local `/who` summary can still identify the current zone.
-The parser is about what the group can see. Vendor trades, NPC chat,
+Successful harvest messages have their own kind and count under **Session > Harvested**.
+Old saved sessions have no harvest totals; reimport their original PNUT logs to
+count any successful harvest messages they contain. Vendor trades, NPC chat,
 level-ups, quest rewards and /con text have kinds of their own: they show in the Feed and are
 no longer counted as unreadable, but only quest rewards reach the Session tab (as rewards, not
 loot).

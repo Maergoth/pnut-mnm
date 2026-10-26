@@ -81,7 +81,7 @@ class Event:
     is_pet: bool = False  #: the actor was written as "Your pet <Name>"
     estimated: bool = False  #: Dummy Fix: the number was unreadable; ``amount`` is the zone average
     estimated_ts: bool = False  #: tracker had to estimate when a delayed line was printed
-    item: str | None = None  #: looted / crafted item name
+    item: str | None = None  #: looted / crafted / harvested item name
     copper: int | None = None  #: coin amount in copper (1 pp = 100 gp = 10,000 sp = 1,000,000 cp)
     split_copper: int | None = None  #: the viewer's share of a coin loot, in copper
 
@@ -110,6 +110,7 @@ KINDS: tuple[str, ...] = (
     "reward",  # "You receive Ancient Chant from Jalwa Noor." (a quest hand-in; no corpse)
     "vendor",  # "You sell Cracked Staff for 5 silver coins." (outcome sell / buy / train, copper = price)
     "craft",  # "Povebizu crafts Heavy Cloth Bandage."
+    "harvest",  # "You harvest [Wood]!": one obtained item
     "cc",  # crowd control landed: "a skeletal defender is mesmerized." / "You are stunned!"
     "cc_fade",  # "a skeletal defender is no longer mesmerized."
     "personal",  # lines only the viewer gets about themselves: skill-ups, faction, PvP opt-in, eating
@@ -346,7 +347,7 @@ _RULE_SOURCES: list[tuple[str, str]] = [
     ("personal", rf"^(?P<actor>You)\s+(?P<outcome>split)\s+{_AMOUNT}\s+(?P<dtype>platinum|gold|silver|copper)\s+coins?\s+with\s+your\s+party,\s+and\s+receive\s+\d+\s+(?:platinum|gold|silver|copper)\s+coins?\s+as\s+your\s+split{_TAIL}"),
     # no experience for the viewer from this kill (outcome "too high level")
     ("personal", r"^Someone\s+in\s+your\s+party\s+is\s+(?P<outcome>too\s+high\s+level)\s+for\s+you\s+to\s+receive\s+experience\b.*$"),
-    ("personal", rf"^You\s+harvest\s+[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)JlI|]?(?:\s*[lI1|])?{_TAIL}"),
+    ("harvest", rf"^(?P<actor>You)\s+harvest\s+[\[\(]?(?P<item>[^\[\]\(\)]+?)[\]\)JlI|]?(?:\s*[lI1|])?{_TAIL}"),
     ("personal", r"^(?:Your\s+camp\s+will\s+be\s+prepared\s+in|You\s+cannot\s+invite|You\s+have\s+not\s+received\s+any\s+tells|No\s+ability\s+memorized\s+in\s+Gem)\b.*$"),
     # /who: "Players in Monsters & Memories" + "There are 35 players in Shaded Dunes who match your search."
     ("personal", rf"^Players\s+in\s+Monsters\s+(?:&|and)\s+Memories{_TAIL}"),

@@ -47,6 +47,13 @@ stat blocks share it; `session.format_coin` remains available to existing caller
 Display labels describe coin rather than copper-only values. Records and sorting
 continue using the original integer copper total, without changing the signed payload.
 
+`SessionStats` counts each successful `harvest` result as one obtained item,
+independently of personal-line filtering. Preserve complete item/actor allocations
+across player-name changes, bounded snapshots, personal/group projections and
+archive recovery. Bounded previews retain those private allocations; public
+session JSON exposes the projected total and item breakdown. Older PNUT `personal`
+harvest events are reparsed from their full text before counting.
+
 The desktop defaults to the anonymous hosted Worker at
 `https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
 `leaderboard_worker`; the public JSONL is on the `leaderboard-data` branch. The Worker

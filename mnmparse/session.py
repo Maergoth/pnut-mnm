@@ -1,12 +1,13 @@
-"""Session-wide, non-combat bookkeeping: loot, coin, crafting, kills, deaths, crowd control.
+"""Session-wide bookkeeping: loot, coin, crafting, harvests, kills, deaths, crowd control.
 
-Everything here is *shared* information - lines the whole group produces in the Combat
-window.  Lines that only the viewer gets about themselves (skill-ups, faction standing, XP
+Most counters use *shared* information - lines the whole group produces in the Combat
+window. Lines that only the viewer gets about themselves (skill-ups, faction standing, XP
 ticks, PvP opt-in, eating) are classified by the parser as ``personal``/``experience`` and
 are ignored unless ``include_personal`` is set.
 
 Own XP-bar measurements are separate from these chat counts and remain available
 regardless of personal-line filtering. Health readings are alert signals only.
+Successful harvests are viewer-only counters, independent of personal-line filtering.
 
 :class:`SessionStats` consumes every :class:`~mnmparse.grammar.Event` of a run (combat and
 non-combat alike) and :meth:`SessionStats.snapshot` returns a plain :class:`SessionSnapshot`
@@ -27,7 +28,7 @@ from .currency import format_coin
 from .grammar import Event, is_npc_name, is_you
 from .interrupts import CC_CATEGORIES
 from .party import PartyRoster
-from .parser import normalize_ocr
+from .parser import normalize_ocr, parse_line
 from .player_telemetry import XP_RATE_WINDOW
 from .session_rates import ACTIVITY_RATE_WINDOW, activity_rate, build_activity_rates, project_activity_rates
 from .stats import canonical_names
@@ -108,7 +109,7 @@ class LootEntry:
 
 @dataclass
 class SessionEntry:
-    """One line of the Session feed (loot, coin, craft, kill, death, cc)."""
+    """One line of the Session feed (loot, coin, craft, harvest, kill, death, cc)."""
 
     ts: float
     kind: str
@@ -182,6 +183,8 @@ class SessionSnapshot:
     emitted_at: float = 0.0
     player_status: dict[str, Any] = field(default_factory=dict)
     activity_rates: dict[str, Any] = field(default_factory=dict)
+    harvests: int = 0  #: successful harvest lines from the viewer, not corpse loot
+    harvests_by_item: list[tuple[str, int]] = field(default_factory=list)
 
     @property
     def kills_per_hour(self) -> float:
@@ -200,6 +203,21 @@ class SessionSnapshot:
 LOOTED_BY_YOU = "Looted by you (gross)"
 
 
+def _harvest_projection(snap: SessionSnapshot, included: Any) -> tuple[int, list[tuple[str, int]], dict[str, Counter[str]]]:
+    """Keep complete item/actor allocations, including earlier viewer identities."""
+    allocations = getattr(snap, "_harvest_item_actors", None)
+    if allocations is None:
+        personal = getattr(snap, "_personal_totals", {})
+        owner = personal.get("player", "")
+        allocations = {item: {owner: count} for item, count in personal.get("harvests_by_item", [])}
+    filtered = {item: Counter({actor: count for actor, count in actors.items() if included(actor)})
+                for item, actors in allocations.items()}
+    filtered = {item: actors for item, actors in filtered.items() if actors}
+    counts = sorted(((item, sum(actors.values())) for item, actors in filtered.items()),
+                    key=lambda pair: (-pair[1], pair[0]))
+    return sum(count for _item, count in counts), counts, filtered
+
+
 def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     """Show current-group totals without changing the collected session.
 
@@ -210,6 +228,7 @@ def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     members = {name.casefold() for name in snap.party if name}
     members.add((player or "You").casefold())
     included = lambda name: bool(name) and name.casefold() in members
+    harvest_total, harvest_items, harvest_actors = _harvest_projection(snap, included)
     item_looters = {item: [(name, count) for name, count in looters if included(name)]
                     for item, looters in snap.item_looters.items()}
     item_looters = {item: looters for item, looters in item_looters.items() if looters}
@@ -289,6 +308,7 @@ def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         rewards=[entry for entry in snap.rewards if included(entry.looter)],
         kills=kill_total, kills_by_killer=killers, kills_by_target=kill_targets, kill_entries=kills,
         crafts=craft_total, crafts_by_crafter=crafters, crafts_by_item=craft_targets, craft_entries=crafts,
+        harvests=harvest_total, harvests_by_item=harvest_items,
         deaths=sum(count for _name, count in deaths), deaths_by_player=deaths,
         recent=[entry for entry in snap.recent if recent_included(entry)],
         outsider_deaths=[], outsider_kills=0, outsider_crafts=[],
@@ -296,6 +316,7 @@ def filter_group_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     )
     if hasattr(snap, "_personal_totals"):
         projected._personal_totals = snap._personal_totals
+    projected._harvest_item_actors = harvest_actors
     if allocations:
         projected._participant_totals = filtered_allocations
     return projected
@@ -311,6 +332,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     """
     player = player or "You"
     own = lambda name: bool(name) and name.casefold() == player.casefold()
+    harvest_total, harvest_items, harvest_actors = _harvest_projection(snap, own)
     loot = [e for e in snap.loot if own(e.looter)]
     items: Counter[str] = (Counter({item: sum(count for name, count in looters if own(name))
                                    for item, looters in snap.item_looters.items()})
@@ -332,7 +354,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     craft_counts = complete.get("crafts_by_item", sorted(by_item.items(), key=lambda kv: (-kv[1], kv[0])))
     craft_total = complete.get("crafts", sum(by_item.values()))
     kill_total = complete.get("kills", len(kills))
-    return dataclasses.replace(
+    projected = dataclasses.replace(
         snap,
         items=item_total,
         items_by_name=item_counts,
@@ -345,6 +367,8 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         crafts=craft_total,
         crafts_by_crafter=[(player, craft_total)] if craft_total else [],
         crafts_by_item=craft_counts,
+        harvests=harvest_total,
+        harvests_by_item=harvest_items,
         kills=kill_total,
         kills_by_killer=[(player, kill_total)] if kill_total else [],
         kills_by_target=complete.get("kills_by_target", sorted(by_target.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -354,6 +378,9 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         craft_entries=crafts,
         activity_rates=project_activity_rates(snap.activity_rates, own, personal_coin=True),
     )
+    projected._personal_totals = complete
+    projected._harvest_item_actors = harvest_actors
+    return projected
 
 
 #: "Your party member X has slain Y!" (also with a dropped first letter).
@@ -402,6 +429,7 @@ class SessionStats:
         self._kill_entries: list[tuple[float, str | None, str]] = []
         #: every craft line, the party's and other players' (told apart in the snapshot)
         self._craft_entries: list[tuple[float, str, str, int]] = []
+        self._harvests_by_item: dict[str, Counter[str]] = {}
         self._coin_by_looter: Counter[str] = Counter()
         self._coins: list[_Coin] = []
         self._rewards: list[LootEntry] = []
@@ -487,7 +515,25 @@ class SessionStats:
                 self._observed_pet_owners[pet] = self._you()
                 self._version += 1
         kind = ev.kind
-        if kind == "loot" and ev.item:
+        # Older imported events classified successful harvests as personal.
+        # Reparse the complete line; personal items also include eating and
+        # retrieving one's corpse, which must never count as gathering.
+        if kind == "personal" and ev.item:
+            reparsed = parse_line(ev.text, ev.ts, self.player_name)
+            if reparsed.kind == "harvest":
+                ev, kind = reparsed, reparsed.kind
+        if kind == "harvest" and ev.item:
+            own_actor = is_you(ev.raw_actor or ev.actor or "") or (
+                bool(ev.actor) and ev.actor.casefold() == self._you().casefold())
+            if not own_actor:
+                return
+            # The configured viewer can change during a session. Keep the
+            # event's original mapped identity rather than assigning history
+            # to whichever player name is configured when snapshotting later.
+            actor = ev.actor if ev.actor and not is_you(ev.actor) else self._you()
+            self._harvests_by_item.setdefault(ev.item, Counter())[actor] += 1
+            self._push(ev.ts, "harvest", actor, f"{actor} harvested {ev.item}")
+        elif kind == "loot" and ev.item:
             looter = self._name(ev.actor) or "?"
             self._loot.append(LootEntry(ev.ts, looter, ev.item, ev.target))
             self._items_by_name[ev.item] += 1
@@ -712,6 +758,7 @@ class SessionStats:
                                    activity_rates=build_activity_rates(content._rate_events, now=now, started=self.started))
         result._personal_totals = content._personal_totals
         result._participant_totals = content._participant_totals
+        result._harvest_item_actors = content._harvest_item_actors
         return result
 
     def _build_snapshot(self, now: float | None = None, *, detail_limit: int | None = None) -> SessionSnapshot:
@@ -765,6 +812,14 @@ class SessionStats:
             merged = item_looters.setdefault(item_name(item), Counter())
             for looter, n in counter.items():
                 merged[who(looter)] += n
+        harvest_actors: dict[str, Counter[str]] = {}
+        for item, actors in self._harvests_by_item.items():
+            harvest_actors.setdefault(item_name(item), Counter()).update(actors)
+        harvest_items = Counter({item: sum(actors.values()) for item, actors in harvest_actors.items()})
+        own_harvests = Counter({item: sum(count for actor, count in actors.items()
+                                        if actor.casefold() == self._you().casefold())
+                               for item, actors in harvest_actors.items()})
+        own_harvests = Counter({item: count for item, count in own_harvests.items() if count})
         zones: list[str] = []
         for zone in self._zones:
             shown = (vocab.canonical("zone", zone) if vocab is not None else zone) or zone
@@ -846,6 +901,8 @@ class SessionStats:
                      for e in (self._rewards if detail_limit is None else self._rewards[-detail_limit:])],
             capture_quality=dict(self.capture_quality),
             player_status=_copy_player_status(self.player_status),
+            harvests=sum(harvest_items.values()),
+            harvests_by_item=fold(harvest_items, lambda n: n),
         )
         own_items = {item: counts.get(you, 0) for item, counts in item_looters.items() if counts.get(you, 0)}
         own_kills = slain["own_targets"]
@@ -853,11 +910,13 @@ class SessionStats:
         # keeps full totals when the live view carries only recent detail rows.
         snap._personal_totals = dict(player=you, items=sum(own_items.values()), items_by_name=fold(Counter(own_items), lambda n: n),
                                     crafts=sum(own_crafts.values()), crafts_by_item=fold(own_crafts, lambda n: n),
+                                    harvests=sum(own_harvests.values()), harvests_by_item=fold(own_harvests, lambda n: n),
                                     kills=sum(own_kills.values()), kills_by_target=fold(own_kills, lambda n: n))
         # Complete participant allocations are internal like _personal_totals;
         # bounded views can filter former members without scanning raw history.
         snap._participant_totals = {"kill_targets": slain["kill_targets"],
                                     "craft_items": craft_items_by_participant}
+        snap._harvest_item_actors = harvest_actors
         # Complete recent activity is separate from bounded display details.
         # Cached timestamps are reprojected as the clock moves, including idle.
         snap._rate_events = rate_events
