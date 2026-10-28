@@ -11,3 +11,7 @@
   exports and imported PNUT logs.
 - Older saved sessions start with no harvest totals. Reimporting their original
   PNUT logs can recover successful harvest messages those logs contain.
+- Resist and slain-NPC lines can avoid a wrap wait when an earlier confirmed,
+  punctuated message proves the final `l`, `I`, `1` or `|` was a misread `!`.
+  Real names, spell ranks, and uncertain wrapped lines retain their existing
+  handling. Two-read confirmation and duplicate protection are unchanged.

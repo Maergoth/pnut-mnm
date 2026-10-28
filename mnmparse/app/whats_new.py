@@ -32,6 +32,7 @@ RELEASE_NOTES: dict[str, ReleaseNotes] = {
         changes=(
             "Session shows harvested items with a total and expandable counts for each material, including Wood and Resin.",
             "Harvest counts work with personal-line counting off and continue across restarts and archived sessions.",
+            "Resist alerts avoid an extra wrap wait when a previously confirmed spell name identifies a misread exclamation mark. Two-read confirmation and duplicate protection are unchanged.",
         ),
         settings_label="Capture settings",
         settings_target="crop_picker",
