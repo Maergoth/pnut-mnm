@@ -214,7 +214,7 @@ class RespawnTimerUiTests(unittest.TestCase):
 
     def test_header_keeps_mob_name_in_combat_views_and_session_has_no_respawn_target(self):
         self.show_fight()
-        for mode, tab in (("self", "damage"), ("group", "feed")):
+        for mode, tab in (("self", "damage"), ("group", "overview")):
             with self.subTest(mode=mode, tab=tab):
                 self.runner.clear_timers()
                 self.overlay.set_view_mode(mode)

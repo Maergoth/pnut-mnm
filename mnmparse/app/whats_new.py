@@ -28,6 +28,17 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.32": ReleaseNotes(
+        changes=(
+            "Party-member death notices count as deaths rather than kills, and self-only Session views exclude nearby players' deaths.",
+            "Feed and Revenge no longer show stale fight headers or offer fight copy, history and respawn actions.",
+            "The self-view fight header shows zero damage when you have no activity, including correct matching of your name's capitalization.",
+        ),
+        settings_label="Overlay settings",
+        settings_target="overlay_enabled",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.31": ReleaseNotes(
         changes=(
             "Session shows harvested items with a total and expandable counts for each material, including Wood and Resin.",

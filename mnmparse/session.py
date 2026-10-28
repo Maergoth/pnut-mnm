@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .currency import format_coin
-from .grammar import Event, is_npc_name, is_you
+from .grammar import PLAYER, Event, is_npc_name, is_you
 from .interrupts import CC_CATEGORIES
 from .party import PartyRoster
 from .parser import normalize_ocr, parse_line
@@ -374,6 +374,7 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
         kills_by_target=complete.get("kills_by_target", sorted(by_target.items(), key=lambda kv: (-kv[1], kv[0]))),
         deaths=sum(n for _n, n in deaths),
         deaths_by_player=deaths,
+        outsider_deaths=[],
         kill_entries=kills,
         craft_entries=crafts,
         activity_rates=project_activity_rates(snap.activity_rates, own, personal_coin=True),
@@ -383,8 +384,11 @@ def filter_session(snap: SessionSnapshot, player: str) -> SessionSnapshot:
     return projected
 
 
-#: "Your party member X has slain Y!" (also with a dropped first letter).
-_PARTY_LINE_RX = re.compile(r"^\W*[YV]?our\s+party\s+member\s", re.IGNORECASE)
+#: Only an active party kill notice proves party kill credit. A passive
+#: "Your party member X has been slain" notice instead identifies a death.
+_PARTY_LINE_RX = re.compile(
+    rf"^\W*[YV]?our\s+party\s+member\s+{PLAYER}\s+has\s+slain\b", re.IGNORECASE
+)
 _OWN_PET_SUBJECT_RX = re.compile(r"^Your\s+pet\s+([A-Z][A-Za-z]*)\b")
 #: The same player cannot die twice this quickly: a second report is a re-read of the first.
 DEATH_DEDUP_S = 60.0
@@ -573,7 +577,9 @@ class SessionStats:
             victim = self._name(ev.target)
             if not victim:
                 return
-            ours = bool(_PARTY_LINE_RX.match(ev.text or "")) or (killer is not None and killer == self._you())
+            ours = bool(_PARTY_LINE_RX.match(normalize_ocr(ev.text or ""))) or (
+                killer is not None and killer == self._you()
+            )
             self._slain.append((float(ev.ts), killer, victim, ours))
             by = f" by {killer}" if killer else ""
             self._push(ev.ts, "kill", killer, f"{victim} slain{by}")
