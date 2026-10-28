@@ -54,6 +54,14 @@ archive recovery. Bounded previews retain those private allocations; public
 session JSON exposes the projected total and item breakdown. Older PNUT `personal`
 harvest events are reparsed from their full text before counting.
 
+Party kill inference must match active **has slain** notices, separately from
+passive **has been slain by** notices that establish the victim's membership.
+Never promote a passive notice's NPC killer into the party. Keep nearby deaths
+out of self-only Session projections while retaining their separate group-view data.
+Fight headers and fight copy/history/respawn actions belong only to combat tabs;
+Session has its own header, and Feed/Revenge cannot reuse a stale encounter.
+Self-view header totals default to zero when the player has no row in that fight.
+
 `terminal_context.py` resolves a narrow final-exclamation ambiguity before the
 tracker's wrap wait. It learns only from independently confirmed, literally
 punctuated complete messages in the current tracker. `_context_trusted` is computed
