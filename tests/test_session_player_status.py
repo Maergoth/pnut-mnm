@@ -77,8 +77,9 @@ class SessionPlayerStatusTests(unittest.TestCase):
 
     def test_invalid_recent_metadata_cannot_masquerade_as_current_or_legacy_rate(self):
         for key, value in (("xp_rate_window_seconds", 3601), ("xp_rate_window_seconds", True),
-                           ("xp_rate_gain_points", -1), ("xp_rate_gain_points", float("nan")),
-                           ("xp_rate_gain_points", 1e308), ("xp_rate_gain_points", 10 ** 1000),
+                           ("xp_rate_gain_points", float("nan")), ("xp_rate_gain_points", float("-inf")),
+                           ("xp_rate_gain_points", 1e308), ("xp_rate_gain_points", -1e308),
+                           ("xp_rate_gain_points", 10 ** 1000),
                            ("xp_rate_observed_seconds", 3601), ("xp_rate_observed_seconds", True),
                            ("xp_rate_observed_seconds", 0), ("xp_rate_observed_seconds", None)):
             with self.subTest(key=key, value=value):
@@ -91,6 +92,46 @@ class SessionPlayerStatusTests(unittest.TestCase):
                 self.assertEqual(snap["xp_rate_observed_seconds"], 0)
                 self.assertEqual(snap["xp_gain_points"], 3)
                 json.dumps(snap, allow_nan=False)
+
+    def test_signed_rolling_totals_and_rate_survive_sanitization_and_projections(self):
+        session = SessionStats(PLAYER, started=0)
+        summary = dict(status(), xp_gain_points=-8.25, xp_rate_gain_points=-3.75,
+                       xp_points_per_hour=999)
+        session.note_player_status(summary)
+        raw = session.snapshot(now=600)
+        for snap in (raw, filter_session(raw, PLAYER), project_session(raw, Config(player_name=PLAYER))):
+            self.assertEqual(snap.player_status["xp_gain_points"], -8.25)
+            self.assertEqual(snap.player_status["xp_rate_gain_points"], -3.75)
+            self.assertEqual(snap.player_status["xp_points_per_hour"], -22.5)
+            self.assertEqual(snap.player_status["xp_observed_seconds"], 600)
+            payload = json.loads(json.dumps(dataclasses.asdict(snap), allow_nan=False))
+            self.assertEqual(payload["player_status"]["xp_gain_points"], -8.25)
+
+    def test_signed_legacy_rate_survives_without_loosening_other_measurements(self):
+        legacy = {key: value for key, value in status().items() if not key.startswith("xp_rate_")}
+        legacy.update(xp_percent=-1, xp_gain_points=-4, xp_observed_seconds=-2,
+                      xp_level_ups=-1, xp_points_per_hour=-24)
+        session = SessionStats(PLAYER, started=0)
+        session.note_player_status(legacy)
+        self.assertEqual(session.player_status, {
+            "xp_gain_points": -4, "xp_points_per_hour": -24, "xp_rate_kind": "session"})
+        for key in ("xp_gain_points", "xp_points_per_hour"):
+            for value in (True, float("nan"), float("inf"), float("-inf"), 10 ** 1000):
+                with self.subTest(key=key, value=value):
+                    session.note_player_status({key: value})
+                    self.assertEqual(session.player_status, {})
+
+    def test_negative_rolling_gain_still_requires_valid_positive_measured_time(self):
+        for seconds in (0, -1, True, None, float("inf"), 3601):
+            with self.subTest(seconds=seconds):
+                session = SessionStats(PLAYER, started=0)
+                session.note_player_status(dict(status(), xp_gain_points=-3,
+                                                xp_rate_gain_points=-3,
+                                                xp_rate_observed_seconds=seconds))
+                self.assertEqual(session.player_status["xp_gain_points"], -3)
+                self.assertIsNone(session.player_status["xp_points_per_hour"])
+                self.assertEqual(session.player_status["xp_rate_gain_points"], 0)
+                self.assertEqual(session.player_status["xp_rate_observed_seconds"], 0)
 
     def test_legacy_rate_is_labeled_as_a_session_average_and_archives_preserve_that(self):
         legacy = {key: value for key, value in status().items() if not key.startswith("xp_rate_")}
@@ -134,6 +175,34 @@ class SessionPlayerStatusTests(unittest.TestCase):
             preview = archive.preview("measured", detail_limit=1)
             self.assertEqual(preview.player_status, status())
             self.assertEqual(archive.preview("measured", detail_limit=0).player_status, status())
+
+    def test_negative_xp_archive_checkpoint_preview_and_legacy_resume_preserve_signs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = SessionArchive(Path(directory) / "sessions.sqlite3")
+            for kind in ("rolling", "session"):
+                with self.subTest(kind=kind):
+                    signed = dict(status(), xp_gain_points=-3, xp_points_per_hour=-18,
+                                  xp_rate_gain_points=-3)
+                    if kind == "session":
+                        signed = {key: value for key, value in signed.items() if not key.startswith("xp_rate_")}
+                    session = SessionStats(PLAYER, started=100)
+                    session.note_player_status(signed)
+                    archive.save_session(kind, session)
+                    recovered = archive.restore(kind)
+                    self.assertEqual(recovered.player_status["xp_gain_points"], -3)
+                    self.assertEqual(recovered.player_status["xp_points_per_hour"], -18)
+                    self.assertEqual(recovered.player_status["xp_rate_kind"], kind)
+                    for limit in (0, 1, 200):
+                        preview = archive.preview(kind, detail_limit=limit)
+                        self.assertEqual(preview.player_status, recovered.player_status)
+                    # The next live summary after a restore must not turn a
+                    # still-negative cumulative total into zero.
+                    recovered.note_player_status(dict(status(), xp_gain_points=-2,
+                                                      xp_rate_gain_points=1))
+                    archive.checkpoint(kind, recovered)
+                    resumed = archive.restore(kind)
+                    self.assertEqual(resumed.player_status["xp_gain_points"], -2)
+                    self.assertEqual(resumed.player_status["xp_points_per_hour"], 6)
 
     def test_legacy_archive_without_player_status_restores_empty_measurements(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -236,6 +305,37 @@ class SessionPlayerStatusViewTests(unittest.TestCase):
                 view.set_snapshot(session.snapshot(now=600))
                 self.assertIn("XP session ~18.0%", view._footer.text())
                 self.assertIn("older version", view._footer.toolTip())
+                self.assertEqual(self.category(view, "experience").text(0), "Experience (est.)")
+
+    def test_both_views_display_net_xp_loss_and_negative_rates(self):
+        session = SessionStats(PLAYER, started=0)
+        session.note_player_status(dict(status(), xp_gain_points=-3.75,
+                                        xp_rate_gain_points=-3.75))
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                view = self.view(compact)
+                view.set_snapshot(session.snapshot(now=600))
+                top = self.category(view, "experience")
+                self.assertEqual(top.text(0), "Net XP (est.)")
+                self.assertEqual(top.text(1), "~-3.75%")
+                self.assertIn("XP ~-22.5%", view._footer.text())
+                self.assertIn("death losses", top.toolTip(0))
+                self.assertIn("resurrection recovery", view._footer.toolTip())
+                self.assertIn("toward zero", view._footer.toolTip())
+                self.app.processEvents()
+                self.assertEqual(clipped_widgets(view), [])
+
+    def test_negative_legacy_session_rate_keeps_its_sign_and_label(self):
+        legacy = {key: value for key, value in status().items() if not key.startswith("xp_rate_")}
+        legacy.update(xp_gain_points=-2, xp_points_per_hour=-12)
+        session = SessionStats(PLAYER, started=0)
+        session.note_player_status(legacy)
+        view = self.view()
+        view.set_snapshot(session.snapshot(now=600))
+        self.assertEqual(self.category(view, "experience").text(1), "~-2.00%")
+        self.assertIn("XP session ~-12.0%", view._footer.text())
+        self.assertIn("Session average recorded by an older version", view._footer.toolTip())
+        self.assertIn("historical XP accounting is unchanged", view._footer.toolTip())
 
     def test_collecting_state_shows_current_bar_without_fake_rate_or_gain(self):
         view = self.view()

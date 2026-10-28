@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Protocol, Sequence
 
 from mnmparse.grammar import starts_message
+from mnmparse.terminal_context import TerminalContext
 
 log = logging.getLogger(__name__)
 
@@ -209,6 +210,9 @@ class Message:
     fragment: bool = False  #: a short unterminated piece that was deliberately not joined
     backlog: bool = False  #: already on screen when a cold-started tracker saw its first frame
     estimated_ts: bool = False  #: ``first_seen`` was spread over a jump / scroll-back / occlusion gap
+    # Internal evidence for contextual punctuation, separate from the total sightings.
+    # A degraded emission can have many frames without two matching clean readings.
+    _context_trusted: bool = field(default=False, repr=False, compare=False)
 
 
 # --------------------------------------------------------------------------------------
@@ -523,6 +527,9 @@ class Tracker:
         self.held: Message | None = None  #: unterminated first half awaiting its tail
         self._held_since: float = 0.0
         self._held_parts: int = 1  #: visual lines already merged into ``held``
+        # Learn only from this run's confirmed, literally complete messages. Saved
+        # normalized history cannot establish how the original punctuation looked.
+        self._terminal_context = TerminalContext()
         self._frames: int = 0
 
         #: No history and no imported state yet: the first frame's rows are backlog.
@@ -1458,6 +1465,13 @@ class Tracker:
         return line.has_tier(TIER_GOOD) or line.good_frames >= self.min_frames
 
     def _emit(self, line: _PendingLine, vote: _Vote) -> list[Message]:
+        context_trusted = (
+            self._is_ready(line)
+            and vote.tier == TIER_GOOD
+            and vote.count >= max(2, self.min_frames)
+            and not line.backlog
+            and not line.estimated
+        )
         self._record(line, vote.norm)
         text = vote.text
         # A "(Block 6)"-style marker wrapped onto the row below belongs to this message.
@@ -1465,13 +1479,19 @@ class Tracker:
         if marker is not None:
             mvote = marker.best_vote(TIER_TOP)
             if mvote is not None:
+                context_trusted = (
+                    context_trusted and self._is_ready(marker) and mvote.tier == TIER_GOOD
+                    and mvote.count >= max(2, self.min_frames)
+                    and not marker.backlog and not marker.estimated
+                )
                 text = text.rstrip() + " " + mvote.text.strip()
                 self._record(marker, mvote.norm)
         log.debug(
             "emit (%d frames, first %.3f): %r", line.frames_seen, line.first_seen, text
         )
         return [
-            Message(text, line.first_seen, line.frames_seen, backlog=line.backlog, estimated_ts=line.estimated)
+            Message(text, line.first_seen, line.frames_seen, backlog=line.backlog, estimated_ts=line.estimated,
+                    _context_trusted=context_trusted)
         ]
 
     def _marker_row_after(self, line: _PendingLine) -> _PendingLine | None:
@@ -1539,6 +1559,23 @@ class Tracker:
 
     # ---- wrapped-line joining -------------------------------------------------------
 
+    def _message_complete(self, msg: Message, *, joined: bool = False) -> bool:
+        """Check punctuation after confirmation, without changing text or row identity."""
+        if is_terminated(msg.text):
+            self._terminal_context.observe(
+                msg.text, trustworthy=msg._context_trusted, backlog=msg.backlog,
+                estimated_ts=msg.estimated_ts, fragment=msg.fragment, joined=joined,
+            )
+            return True
+        if (msg._context_trusted and not msg.backlog and not msg.estimated_ts
+                and self._terminal_context.is_terminal(msg.text)):
+            # Keep the raw uncertainty for ledger/group-event eligibility. The only
+            # change is avoiding a wrap wait that earlier complete spellings disprove.
+            msg.fragment = True
+            log.debug("context confirmed a misread terminal exclamation mark: %r", msg.text)
+            return True
+        return False
+
     def _join(self, msg: Message, now: float) -> list[Message]:
         if self.held is not None:
             held, self.held = self.held, None
@@ -1551,8 +1588,9 @@ class Tracker:
                     min(held.frames_seen, msg.frames_seen),
                     backlog=held.backlog,
                     estimated_ts=held.estimated_ts,
+                    _context_trusted=held._context_trusted and msg._context_trusted,
                 )
-                if is_terminated(joined.text) or parts + 1 >= MAX_JOIN_PARTS:
+                if self._message_complete(joined, joined=True) or parts + 1 >= MAX_JOIN_PARTS:
                     return [joined]
                 # Three-line messages (coin splits): keep accumulating until a terminator.
                 self.held = joined
@@ -1563,7 +1601,7 @@ class Tracker:
             held.fragment = True
             log.debug("held half released unjoined (next line is a new message): %r", held.text)
             return [held, *self._join(msg, now)]
-        if is_terminated(msg.text):
+        if self._message_complete(msg):
             return [msg]
         if MARKER_ONLY_RX.match(msg.text.strip()):
             # Its hit line was already returned to the caller; hand it over on its own.

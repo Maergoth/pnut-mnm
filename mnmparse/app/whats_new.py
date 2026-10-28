@@ -28,6 +28,18 @@ class ReleaseNotes:
 # Every release adds a record here. A regression check keeps a version bump from
 # shipping without its announcement; old records can still describe a rollback.
 RELEASE_NOTES: dict[str, ReleaseNotes] = {
+    "1.0.31": ReleaseNotes(
+        changes=(
+            "Session shows harvested items with a total and expandable counts for each material, including Wood and Resin.",
+            "Harvest counts work with personal-line counting off and continue across restarts and archived sessions.",
+            "Resist alerts avoid an extra wrap wait when a previously confirmed spell name identifies a misread exclamation mark. Two-read confirmation and duplicate protection are unchanged.",
+            "Session XP totals and hourly rates now include observed death losses and XP restored by resurrection.",
+        ),
+        settings_label="Capture settings",
+        settings_target="crop_picker",
+        feature_page="session",
+        feature_label="Session",
+    ),
     "1.0.30": ReleaseNotes(
         changes=(
             "Coin totals use platinum, gold, silver and copper at 100 to 1: 1,050 copper displays as 10s 50c.",

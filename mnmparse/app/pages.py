@@ -190,7 +190,7 @@ FEED_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Kills", ("kill",)),
     ("Casts", ("cast", "interrupt")),
     ("Utility", ("cc", "cc_fade", "debuff", "aggro", "awaken")),
-    ("Loot", ("loot", "coin", "coin_split", "reward", "vendor", "craft")),
+    ("Loot", ("loot", "coin", "coin_split", "reward", "vendor", "craft", "harvest")),
     ("Status", ("status", "cannot_attack", "zone", "chat")),
     ("Personal", ("personal", "experience", "level_up", "consider")),
     ("Unknown", ("unknown", "marker")),

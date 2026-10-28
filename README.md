@@ -288,7 +288,12 @@ past without being captured cannot be recovered.
   collapsible categories. It spans all zones; the overlay's fight selector applies to the combat
   tables. With **Show other groups** off, loot and coin show your recognized group only.
   Items looted has one expandable subheader per person, showing the total
-  number of items they looted, with item quantities beneath it. Other categories include coin and your splits
+  number of items they looted, with item quantities beneath it. **Harvested** shows
+  your gathered-item total and an expandable count for each material. Each successful
+  `You harvest [item]!` message adds one item, even with personal-line counting off.
+  These totals continue across restarts and archived sessions, and appear in session
+  JSON exports. Keep harvest messages visible in the captured chat area.
+  Other categories include coin and your splits
   (a split line that wrapped onto a second row is joined to its loot), kills by mob type,
   deaths (yours and your party's; see "Encounters" below), crafted items (your party's only;
   other players' crafts are listed in the tooltip when **Show other groups** is on), quest rewards (kept out of the loot
@@ -386,13 +391,17 @@ The reader supports the fill animation's darker shades; small detection jitter a
 missing stat frames do not restart a comparison. Scaled bar frames are excluded from
 the fill measurements.
 The footer uses a time-weighted rolling average of the last **hour**, starting with
-the first gaining interval so earlier idle time does not dilute it. Breaks after gains lower
-the estimate; after an hour without gains, the next gaining interval starts a fresh rate.
+the first measured gain or loss so earlier idle time does not dilute it. Later idle
+time moves the rate toward zero; after an hour without movement, the next change starts a fresh rate.
+**Net XP (est.)** subtracts confirmed death losses and adds XP restored by resurrection.
+Backward moves up to 25% of a level, allowing for one bar pixel, count as losses
+unless matching own level-up chat confirms a rollover. Larger unexplained jumps
+remain unmeasured. Both the session total and hourly rate can be negative.
 These are XP-bar percentage points, not exact XP numbers. The first rate appears after a
 complete 30-second comparison. Brief OCR misses are tolerated within the capture cadence;
 longer gaps, a changed region or pausing reset the recent window. Earlier measured totals
 remain. If unstable readings prevent a new comparison for more than a minute, the
-footer returns to **XP collecting…** until a fresh comparison is available. Small gains
+footer returns to **XP collecting…** until a fresh comparison is available. Small changes
 that need several comparisons to clear the pixel threshold age out over their measured
 time instead of all being assigned to the final comparison. A detected own level-up
 confirms a bar wrap; PNUT briefly waits for the bar to catch up when chat arrives first. Log imports
@@ -906,10 +915,12 @@ not counted, and the same player dying twice within a minute is the same death r
 ### What is deliberately not counted
 
 Lines that only you receive about yourself (skill-ups, faction standing, experience ticks, PvP
-opt-in, eating, loot from your own corpse, camping, harvesting, invites, tells, /who) are
+opt-in, eating, loot from your own corpse, camping, invites, tells, /who) are
 classified as personal and left out of the Session tab unless you turn on "Count personal
 lines" in Settings. A complete local `/who` summary can still identify the current zone.
-The parser is about what the group can see. Vendor trades, NPC chat,
+Successful harvest messages have their own kind and count under **Session > Harvested**.
+Old saved sessions have no harvest totals; reimport their original PNUT logs to
+count any successful harvest messages they contain. Vendor trades, NPC chat,
 level-ups, quest rewards and /con text have kinds of their own: they show in the Feed and are
 no longer counted as unreadable, but only quest rewards reach the Session tab (as rewards, not
 loot).

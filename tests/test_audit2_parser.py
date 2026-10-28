@@ -371,7 +371,8 @@ class EverydayMessageTests(unittest.TestCase):
         for line in ("You harvest [Copper Ore)!", "You harvest [Copper Orel!", "You harvest [Copper Ore) I"):
             with self.subTest(line=line):
                 ev = parse(line)
-                self.assertEqual((ev.kind, ev.item), ("personal", "Copper Ore"))
+                self.assertEqual((ev.kind, ev.actor, ev.raw_actor, ev.item),
+                                 ("harvest", PLAYER, "You", "Copper Ore"))
 
     def test_chat(self) -> None:
         for line, actor in [

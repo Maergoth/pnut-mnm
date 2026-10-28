@@ -47,6 +47,23 @@ stat blocks share it; `session.format_coin` remains available to existing caller
 Display labels describe coin rather than copper-only values. Records and sorting
 continue using the original integer copper total, without changing the signed payload.
 
+`SessionStats` counts each successful `harvest` result as one obtained item,
+independently of personal-line filtering. Preserve complete item/actor allocations
+across player-name changes, bounded snapshots, personal/group projections and
+archive recovery. Bounded previews retain those private allocations; public
+session JSON exposes the projected total and item breakdown. Older PNUT `personal`
+harvest events are reparsed from their full text before counting.
+
+`terminal_context.py` resolves a narrow final-exclamation ambiguity before the
+tracker's wrap wait. It learns only from independently confirmed, literally
+punctuated complete messages in the current tracker. `_context_trusted` is computed
+before recording a row: total sightings alone cannot establish two agreeing clean
+reads. Backlog, estimated, degraded and joined messages cannot train the context.
+The context never changes raw text, normalization, alignment or saved history.
+Contextually completed lines retain their fragment flag and existing ledger
+exclusions. Preserve exact known spellings and Roman-rank ambiguity over a guessed
+terminal glyph; unresolved text must still use the ordinary wrap handling.
+
 The desktop defaults to the anonymous hosted Worker at
 `https://pnut-leaderboard-upload.maergoth.chatgpt.site/snapshots`. Its source is in
 `leaderboard_worker`; the public JSONL is on the `leaderboard-data` branch. The Worker
@@ -119,6 +136,17 @@ frame to the detected track; paired neutral outer rails identify a bounded commo
 interior for both gold and blue fills. Keep the bucket-agreement tolerance unchanged.
 Do not normalize either fill independently or mistake internal divider ticks for
 the outer edges. The scaled-bar fixture retains only the framed track.
+
+`PlayerTelemetry` records signed net XP at its existing thirty-second checkpoints.
+Each confirmed backward transition waits for the ordinary eight-second own-level
+grace; absent a matching level-up, a drop of at most 25 percentage points plus one
+bar pixel is a plausible loss. Validate transitions individually so two observed
+deaths can exceed 25 points in one checkpoint. Larger unexplained jumps still
+rebaseline without estimating progress across them. Signed sub-pixel carry and
+rolling intervals must retain earlier losses when resurrection restores XP, even
+when positive and negative intervals cancel. Only XP gains/rates are signed in
+session serialization; bar percent, elapsed time and level-up counts remain bounded
+as before. Legacy archives retain their recorded historical accounting.
 
 Map labels belong to canonical original image URLs, independently of zone names.
 `map_labels.py` stores each UUID in its own `map_labels/` QSettings entry; shared
@@ -275,6 +303,7 @@ mnmparse/            library + CLI
   capture.py         FrameSource: WgcWindowSource (windows-capture) / MssRegionSource; read-only lookup of the game's own window
   ocr.py             Windows.Media.Ocr wrapper (sync), RapidOCR fallback, preprocess() (max-channel, scale)
   tracker.py         scrolling-text de-duplication, occlusion guard, wrapped-line joining -> Message; saved state
+  terminal_context.py Confirmed spell/NPC context for final-exclamation OCR ambiguity before wrap waiting
   maps.py            community wiki map discovery, aliases and disk cache
   npc_wiki.py        public NPC, item and notable-list parsing; revision-aware offline cache
   trigger_presets.py bundled starter triggers, seeded without overwriting user edits

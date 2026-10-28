@@ -180,6 +180,7 @@ class SessionArchive:
         snap = stats.snapshot(now=ended, detail_limit=200)
         preview = dataclasses.asdict(snap)
         preview["_personal_totals"] = getattr(snap, "_personal_totals", {})
+        preview["_harvest_item_actors"] = getattr(snap, "_harvest_item_actors", {})
         with self._lock, self._connect() as db:
             db.execute("INSERT INTO sessions(id,started,updated,ended,player,state,snapshot,preview) VALUES(?,?,?,?,?,?,?,?) "
                        "ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,ended=excluded.ended,player=excluded.player,"
@@ -228,8 +229,8 @@ class SessionArchive:
                                       maxlen=200)
             elif name in COUNTER_FIELDS:
                 setattr(stats, name, Counter(value))
-            elif name == "_item_looters":
-                stats._item_looters = {key: Counter(table) for key, table in value.items()}
+            elif name in {"_item_looters", "_harvests_by_item"}:
+                setattr(stats, name, {key: Counter(table) for key, table in value.items()})
             elif name == "player_status":
                 stats.player_status = _copy_player_status(value)
             elif name in DETAIL_FIELDS:
@@ -273,6 +274,7 @@ class SessionArchive:
             return None
         data = json.loads(row[0])
         personal = data.pop("_personal_totals", {})
+        harvest_actors = data.pop("_harvest_item_actors", None)
         # Retired metric fields may still exist in previews from earlier releases.
         for field in ("mez_breaks", "mez_break_details", "mez_breaks_by_breaker", "mez_breaks_unknown", "mez_breaks_total"):
             data.pop(field, None)
@@ -280,7 +282,7 @@ class SessionArchive:
             data[field] = [LootEntry(**item) for item in data[field]]
         data["recent"] = [SessionEntry(**item) for item in data["recent"] if item.get("kind") != "awaken"]
         for field in ("items_by_name", "items_by_looter", "kill_entries", "craft_entries",
-                      "coin_by_looter", "crafts_by_crafter", "crafts_by_item", "kills_by_killer", "kills_by_target",
+                      "coin_by_looter", "crafts_by_crafter", "crafts_by_item", "harvests_by_item", "kills_by_killer", "kills_by_target",
                       "deaths_by_player", "cc_by_type", "skill_ups", "faction", "outsider_deaths", "outsider_crafts"):
             if field in data:
                 data[field] = [tuple(item) for item in data[field]]
@@ -292,7 +294,11 @@ class SessionArchive:
             if field in data:
                 data[field] = data[field][-size:] if size else []
         snap = SessionSnapshot(**data)
+        if "harvests_by_item" in personal:
+            personal["harvests_by_item"] = [tuple(item) for item in personal["harvests_by_item"]]
         snap._personal_totals = personal
+        if harvest_actors is not None:
+            snap._harvest_item_actors = {item: Counter(actors) for item, actors in harvest_actors.items()}
         return snap
 
     def sessions(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:

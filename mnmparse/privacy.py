@@ -164,6 +164,7 @@ def safe_event_text(event: Any, cfg: Any = None) -> str | None:
                   "cast": "You cast an ability", "resist": "Your ability was resisted",
                   "fizzle": "Your spell fizzled", "kill": "You defeated an enemy",
                   "loot": "You looted an item", "craft": "You crafted an item",
+                  "harvest": "You harvested an item",
                   "coin": "You looted coins", "coin_split": "You received coins",
                   "reward": "You received a reward", "experience": "You gained experience",
                   "personal": "Your personal information changed"}

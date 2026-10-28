@@ -109,6 +109,7 @@ KIND_COLORS: dict[str, str] = {
     "reward": ACCENT,
     "vendor": "#c8b88a",
     "craft": "#a5d6a7",
+    "harvest": "#a5d6a7",
     "cc": "#c792ea",
     "cc_fade": "#8f80ad",
     "personal": "#7a8290",
