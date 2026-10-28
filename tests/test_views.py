@@ -113,7 +113,7 @@ class QtViewTests(unittest.TestCase):
         view.set_snapshot(s.snapshot(now=5.0))
         tree = view._tree
         titles = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
-        self.assertEqual(titles, ["Items looted", "Coin looted", "Kills", "Deaths", "Crafted", "Zones"])
+        self.assertEqual(titles, ["Items looted", "Harvested", "Coin looted", "Kills", "Deaths", "Crafted", "Zones"])
         items = tree.topLevelItem(0)
         self.assertEqual(items.text(1), "1")
         self.assertEqual(items.child(0).text(0), "Abepulifif")

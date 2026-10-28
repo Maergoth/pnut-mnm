@@ -47,7 +47,7 @@ PLAYER_STATUS_FIELDS = {
 
 
 def _copy_player_status(summary: Any) -> dict[str, Any]:
-    """Copy own-XP measurements; HP alerts have no session metrics."""
+    """Copy own net-XP measurements; HP alerts have no session metrics."""
     if not isinstance(summary, dict):
         return {}
 
@@ -66,7 +66,7 @@ def _copy_player_status(summary: Any) -> dict[str, Any]:
         value = summary[key]
         if value is None:
             copied[key] = None
-        elif valid_number(value) and value >= 0:
+        elif valid_number(value) and (key in {"xp_gain_points", "xp_points_per_hour"} or value >= 0):
             if key != "xp_percent" or value <= 100:
                 copied[key] = value
     if not copied:
@@ -84,7 +84,7 @@ def _copy_player_status(summary: Any) -> dict[str, Any]:
     window = summary.get("xp_rate_window_seconds")
     gain = summary.get("xp_rate_gain_points")
     seconds = summary.get("xp_rate_observed_seconds")
-    if (valid_number(window) and window == XP_RATE_WINDOW and valid_number(gain) and gain >= 0
+    if (valid_number(window) and window == XP_RATE_WINDOW and valid_number(gain)
             and valid_number(seconds) and 0 <= seconds <= window and (seconds > 0 or gain == 0)):
         rate = gain * 3600.0 / seconds if seconds else None
         if rate is None or math.isfinite(rate):

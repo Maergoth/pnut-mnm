@@ -137,6 +137,17 @@ interior for both gold and blue fills. Keep the bucket-agreement tolerance uncha
 Do not normalize either fill independently or mistake internal divider ticks for
 the outer edges. The scaled-bar fixture retains only the framed track.
 
+`PlayerTelemetry` records signed net XP at its existing thirty-second checkpoints.
+Each confirmed backward transition waits for the ordinary eight-second own-level
+grace; absent a matching level-up, a drop of at most 25 percentage points plus one
+bar pixel is a plausible loss. Validate transitions individually so two observed
+deaths can exceed 25 points in one checkpoint. Larger unexplained jumps still
+rebaseline without estimating progress across them. Signed sub-pixel carry and
+rolling intervals must retain earlier losses when resurrection restores XP, even
+when positive and negative intervals cancel. Only XP gains/rates are signed in
+session serialization; bar percent, elapsed time and level-up counts remain bounded
+as before. Legacy archives retain their recorded historical accounting.
+
 Map labels belong to canonical original image URLs, independently of zone names.
 `map_labels.py` stores each UUID in its own `map_labels/` QSettings entry; shared
 store notifications update the overlay and embedded Zones map together. Keep label

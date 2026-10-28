@@ -280,13 +280,15 @@ class SessionView(QWidget):
             if rate is not None:
                 if status.get("xp_rate_kind", "session") == "session":
                     footer += f"  ·  XP session ~{rate:,.1f}%"
-                    rate_tip = "Session average recorded by an older version, in estimated level percentage points per hour."
+                    rate_tip = ("Session average recorded by an older version, in estimated level percentage points per hour. "
+                                "Its historical XP accounting is unchanged.")
                 else:
                     footer += f"  ·  XP ~{rate:,.1f}%"
                     measured = _mmss(status.get("xp_rate_observed_seconds") or 0)
-                    rate_tip = ("Rolling one-hour estimate in level percentage points per hour, from 30-second bar comparisons. "
+                    rate_tip = ("Rolling one-hour net XP estimate in level percentage points per hour, from 30-second bar comparisons. "
                                 f"Based on {measured} measured so far. "
-                                "Idle before gains is excluded; breaks after gains lower the rate.")
+                                "Includes death losses and resurrection recovery. "
+                                "Idle before XP changes is excluded; later breaks move the rate toward zero.")
             elif status.get("xp_gain_points") is not None:
                 footer += "  ·  XP collecting…"
                 rate_tip = ("Keep your XP bar visible for 30 seconds of stable comparisons to estimate XP/hour. "
@@ -311,8 +313,11 @@ class SessionView(QWidget):
         percent = status.get("xp_percent")
         if gain is None and percent is None:
             return
-        tip = ("Estimated from 30-second comparisons of your visible XP bar. "
-               "Different levels require different XP amounts.")
+        legacy = status.get("xp_rate_kind", "session") == "session"
+        tip = ("Estimated XP recorded by an older version; its historical accounting is unchanged. "
+               if legacy else "Net XP estimated from 30-second comparisons of your visible XP bar, "
+                              "including death losses and resurrection recovery. ")
+        tip += "Negative values mean a net loss. Different levels require different XP amounts."
         children = []
         if percent is not None:
             children.append(("Current bar", f"~{percent:.1f}%", "Toward next level"))
@@ -320,7 +325,7 @@ class SessionView(QWidget):
         if observed:
             children.append(("Measured time", _mmss(observed), "Completed comparisons"))
         total = f"~{gain:.2f}%" if gain is not None and observed else "Collecting…"
-        top = self._add_category("experience", "Experience (est.)", total,
+        top = self._add_category("experience", "Experience (est.)" if legacy else "Net XP (est.)", total,
                                  children, tooltip=tip)
         for index in range(top.childCount()):
             child = top.child(index)

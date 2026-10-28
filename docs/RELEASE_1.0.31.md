@@ -15,3 +15,7 @@
   punctuated message proves the final `l`, `I`, `1` or `|` was a misread `!`.
   Real names, spell ranks, and uncertain wrapped lines retain their existing
   handling. Two-read confirmation and duplicate protection are unchanged.
+- **Net XP (est.)** and XP/hour now subtract confirmed backward bar movement
+  and add resurrection recovery. Level-up chat still confirms rollovers;
+  unexplained drops beyond the 25%-of-a-level death limit, allowing for bar-pixel
+  resolution, remain unmeasured. Negative totals survive session recovery and exports.
